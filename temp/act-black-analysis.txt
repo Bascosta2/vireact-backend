@@ -1,0 +1,39 @@
+1. Scene Number: 1
+   - Start Time: 0s (00:00)
+   - End Time: 7s (00:07)
+   - What is Visually Happening: A man in a red hoodie is standing in front of a rack of clothes, holding cash and a phone. He approaches another man in an orange sweatshirt who is pushing a shopping cart.
+   - On-Screen Text/Captions: "ACT BLACK FOR 5 DOLLARS"
+   - Audio/Speech Summary: The man in the red hoodie asks the other man if he would act black for $5.
+   - Primary Action or Hook: The offer to act black for $5.
+   - Emotional Tone: Humor
+   - Purpose of the Scene: Hook
+
+2. Scene Number: 2
+   - Start Time: 7s (00:07)
+   - End Time: 14s (00:14)
+   - What is Visually Happening: The scene shifts to a different location outside a store. The man in the red hoodie is now talking to a man in a black shirt and khaki pants, who is holding a helmet and a neon yellow vest.
+   - On-Screen Text/Captions: "WOULD YOU ACT BLACK FOR $62?"
+   - Audio/Speech Summary: The man in the red hoodie asks the other man if he would act black for $62.
+   - Primary Action or Hook: The offer to act black for $62.
+   - Emotional Tone: Humor
+   - Purpose of the Scene: Buildup
+
+3. Scene Number: 3
+   - Start Time: 14s (00:14)
+   - End Time: 16s (00:16)
+   - What is Visually Happening: The man in the red hoodie is walking through a mall, looking at the camera and smiling.
+   - On-Screen Text/Captions: None
+   - Audio/Speech Summary: The man in the red hoodie says "nah no way" and "offended?"
+   - Primary Action or Hook: The man's reaction to the previous offers.
+   - Emotional Tone: Humor
+   - Purpose of the Scene: Filler
+
+4. Scene Number: 4
+   - Start Time: 16s (00:16)
+   - End Time: 25s (00:25)
+   - What is Visually Happening: The scene shifts back to inside the store. The man in the red hoodie is talking to a man in a gray shirt and glasses. The man in the gray shirt grabs the money from the man in the red hoodie.
+   - On-Screen Text/Captions: "BLACK FOR $62?" and "GIMME MY MONEY!"
+   - Audio/Speech Summary: The man in the gray shirt grabs the money and says "gimme my money."
+   - Primary Action or Hook: The man in the gray shirt grabbing the money.
+   - Emotional Tone: Tension
+   - Purpose of the Scene: Reveal

@@ -1,0 +1,12 @@
+never create test files. never make extra REST files. and never create new files just for small changes always work in the same files to keep things clean.
+
+
+Validate inputs and preconditions early (guard clauses).
+
+Place happy-path logic last.
+
+Provide clear, user‑friendly error messages.
+
+Log or report unexpected errors.
+
+use reusable error handling, response sending.
