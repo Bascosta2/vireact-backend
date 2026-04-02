@@ -2,6 +2,9 @@ import { requestChatCompletion } from "../openai-response.service.js";
 import openai from "../../lib/openai.js";
 import { KnowledgeBase } from "../../model/knowledge-base.model.js";
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
+import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+
+const JSON_SYSTEM = "You are a concise video analytics expert. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
 
 export const analyzeAdvancedAnalytics = async (scenes) => {
     if (!scenes || scenes.length === 0) {
@@ -109,6 +112,14 @@ ${Object.keys(emotionalToneDistribution).length > 0
 SCENE BREAKDOWN:
 ${scenesSummary}
 
+RETENTION AND DURATION CONTEXT:
+- Retention rate CAN exceed 100% on short-form videos (typically under 20 seconds). This happens when viewers replay the video, which is a strong positive engagement signal — not a data error.
+- A 13-second video with 180% retention means viewers watched it an average of 1.8 times. This is extremely positive and correlates strongly with viral performance.
+- When retention exceeds 100%, weight it heavily as a virality indicator. A video under 15 seconds with retention over 120% should be treated as having near-perfect hook and loop-ability.
+- For creator videos where retention data is not available, infer retention likelihood from: scene pacing (fast cuts under 2s correlate with higher retention), hook strength (first scene emotional tone and primary action), video duration (shorter videos statistically retain better), audio continuity (consistent audio across scenes correlates with completion), and visual variety (low scene repetition correlates with higher retention).
+- Duration-retention relationship: videos under 15s can achieve 150-300% retention via replays. Videos 15-30s typically see 60-90% retention if well-paced. Videos 30-60s typically see 40-70% retention. Use these benchmarks when retention data is absent.
+- When predicting views, always factor in duration-adjusted retention. A 10-second video with 200% retention is performing better in engagement terms than a 45-second video with 75% retention, even if raw retention percentage looks lower on the longer video.
+
 TASK:
 1. Rate the overall video structure and engagement potential as Weak, Medium, or Strong based on:
    - Structural completeness (hook, buildup, reveal, CTA)
@@ -120,21 +131,19 @@ TASK:
 
 3. List up to two actionable improvements for better video performance.
 
-Respond in plain text (no markdown, no emojis). Keep total length under 140 words.
-Format:
-Rating: <Weak/Medium/Strong>
-Reasoning: <one or two sentences>
-Suggestions:
-- <suggestion 1>
-- <suggestion 2>
+Return ONLY a valid JSON object with this exact shape, no other text:
+{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
 `;
 
     const response = await requestChatCompletion({
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
         maxTokens: 320,
-        systemPrompt: "You are a concise video analytics expert. Keep outputs structured, plain text, and under 140 words.",
+        systemPrompt: JSON_SYSTEM,
     });
 
-    return response;
-};
+    const parsed = parseAnalyzerJson(response);
+    if (parsed) return parsed;
+    const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
+    return { score: fallbackScore, rating: "Unknown", reasoning: response || "", suggestions: [] };
+}

@@ -2,6 +2,9 @@ import { requestChatCompletion } from "../openai-response.service.js";
 import openai from "../../lib/openai.js";
 import { KnowledgeBase } from "../../model/knowledge-base.model.js";
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
+import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+
+const JSON_SYSTEM = "You are a concise caption analyst. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
 
 export const analyzeCaption = async (scenes) => {
     if (!scenes || scenes.length === 0) {
@@ -18,7 +21,7 @@ export const analyzeCaption = async (scenes) => {
         .filter(Boolean);
 
     if (captions.length === 0) {
-        return "Rating: Weak\nReasoning: No on-screen text or captions detected in the video. Captions improve accessibility, engagement, and retention for short-form content.\nSuggestions:\n- Add on-screen text to highlight key points\n- Use captions for spoken dialogue to improve accessibility\n- Consider text overlays that sync with visual cues";
+        return { score: 15, rating: "Weak", reasoning: "No on-screen text or captions detected in the video. Captions improve accessibility, engagement, and retention for short-form content.", suggestions: ["Add on-screen text to highlight key points", "Use captions for spoken dialogue to improve accessibility"] };
     }
 
     const captionsContext = captions.join('\n');
@@ -72,21 +75,19 @@ TASK:
 
 3. List up to two actionable improvements for better caption usage.
 
-Respond in plain text (no markdown, no emojis). Keep total length under 140 words.
-Format:
-Rating: <Weak/Medium/Strong>
-Reasoning: <one or two sentences>
-Suggestions:
-- <suggestion 1>
-- <suggestion 2>
+Return ONLY a valid JSON object with this exact shape, no other text:
+{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
 `;
 
     const response = await requestChatCompletion({
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
         maxTokens: 320,
-        systemPrompt: "You are a concise caption analyst. Keep outputs structured, plain text, and under 140 words.",
+        systemPrompt: JSON_SYSTEM,
     });
 
-    return response;
+    const parsed = parseAnalyzerJson(response);
+    if (parsed) return parsed;
+    const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
+    return { score: fallbackScore, rating: "Unknown", reasoning: response || "", suggestions: [] };
 };

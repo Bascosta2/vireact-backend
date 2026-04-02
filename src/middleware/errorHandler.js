@@ -11,6 +11,7 @@ export const errorHandler = (err, req, res, next) => {
         "vireact-frontend.vercel.app",
         "https://www.vireact.io",
         "http://localhost:5173",
+        "http://localhost:5174",
         "http://192.168.1.112:5173"
     ];
 
@@ -18,7 +19,7 @@ export const errorHandler = (err, req, res, next) => {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, x-admin-key');
     }
 
     if (err instanceof ApiError) {
@@ -29,7 +30,7 @@ export const errorHandler = (err, req, res, next) => {
         // Handle multer errors with specific messages
         if (err.code === 'LIMIT_FILE_SIZE') {
             res.status(413).json(
-                ApiResponse.error(413, "File size exceeds the maximum limit of 100MB", null)
+                ApiResponse.error(413, "File size exceeds the maximum limit of 200MB", null)
             );
         } else if (err.message && err.message.includes('Invalid file type')) {
             res.status(400).json(

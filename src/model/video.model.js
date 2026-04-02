@@ -81,6 +81,11 @@ const videoSchema = new mongoose.Schema({
                 required: true,
                 enum: ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor']
             },
+            score: {
+                type: Number,
+                min: 0,
+                max: 100
+            },
             rating: {
                 type: String
             },
@@ -98,6 +103,57 @@ const videoSchema = new mongoose.Schema({
         }],
         default: []
     },
+    viralityScore: {
+        type: Number,
+        min: 0,
+        max: 100
+    },
+    predictedViewsLow: {
+        type: Number
+    },
+    predictedViewsHigh: {
+        type: Number
+    },
+    predictedViewsExpected: {
+        type: Number
+    },
+    retentionCurve: {
+        type: [Number],
+        default: []
+    },
+    timestampFeedback: {
+        type: [{
+            timestamp: {
+                type: Number,
+                required: true
+            },
+            endTimestamp: {
+                type: Number
+            },
+            category: {
+                type: String,
+                enum: ['pacing', 'visual', 'audio', 'engagement', 'hook', 'cta'],
+                required: true
+            },
+            severity: {
+                type: String,
+                enum: ['critical', 'important', 'minor'],
+                required: true
+            },
+            issue: {
+                type: String,
+                required: true
+            },
+            suggestion: {
+                type: String,
+                required: true
+            },
+            example: {
+                type: String
+            }
+        }],
+        default: []
+    },
     twelveLabsAssetId: {
         type: String,
         default: null,
@@ -109,6 +165,14 @@ const videoSchema = new mongoose.Schema({
         default: null,
         index: true, // Add index for faster queries
         sparse: true // Allow null values but index non-null values
+    },
+    lastError: {
+        type: String,
+        default: null
+    },
+    lastErrorAt: {
+        type: Date,
+        default: null
     },
     uploader_id: {
         type: mongoose.Schema.Types.ObjectId,

@@ -1,7 +1,9 @@
 import {
     getUserProfileService,
     updateUserProfileService,
-    updateUserPasswordService
+    updateUserPasswordService,
+    getNotificationPreferencesService,
+    updateNotificationPreferencesService
 } from "../service/profile.service.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
@@ -97,3 +99,46 @@ export const updatePassword = async (req, res, next) => {
     }
 };
 
+/**
+ * Get notification preferences controller
+ * Returns the authenticated user's email notification preferences
+ */
+export const getNotificationPreferences = async (req, res, next) => {
+    try {
+        if (!req.user || !req.user._id) {
+            throw new ApiError(401, "Authentication required.");
+        }
+
+        const preferences = await getNotificationPreferencesService(req.user._id);
+
+        res.status(200).json(
+            ApiResponse.success(
+                200,
+                "Notification preferences fetched successfully",
+                preferences
+            )
+        );
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Update notification preferences controller
+ * Updates email notification preferences for the authenticated user
+ */
+export const updateNotificationPreferences = async (req, res, next) => {
+    try {
+        if (!req.user || !req.user._id) {
+            throw new ApiError(401, "Authentication required.");
+        }        const updates = req.body;        const preferences = await updateNotificationPreferencesService(req.user._id, updates);        res.status(200).json(
+            ApiResponse.success(
+                200,
+                "Notification preferences updated successfully",
+                preferences
+            )
+        );
+    } catch (error) {
+        next(error);
+    }
+};

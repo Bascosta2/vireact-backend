@@ -253,28 +253,46 @@ export const resendEmailVerificationService = async (email) => {
 
 */
 export const loginUserService = async (email, password) => {
+    console.log(`      [AUTH SERVICE] Starting login service for: ${email}`);
+    
+    // Step 1: Find user in database
+    console.log(`      [AUTH SERVICE] Querying database for user...`);
     const user = await User.findOne({ email });
-
+    
     if (!user) {
+        console.log(`      [AUTH SERVICE] ❌ User not found in database`);
         throw new ApiError(400, "User Not Found");
     }
+    console.log(`      [AUTH SERVICE] ✅ User found: ${user._id}`);
 
-    // Check if user is trying to login with password but account was created with OAuth
+    // Step 2: Check provider
+    console.log(`      [AUTH SERVICE] Checking authentication provider...`);
     if (user.provider !== OAUTH_PROVIDERS.LOCAL) {
         const providerName = getProviderDisplayName(user.provider);
+        console.log(`      [AUTH SERVICE] ❌ User registered via ${providerName}, not local`);
         throw new ApiError(409, `This email is already registered via ${providerName}. Please log in with ${providerName} instead.`);
     }
+    console.log(`      [AUTH SERVICE] ✅ Provider check passed (local)`);
 
+    // Step 3: Check email verification
+    console.log(`      [AUTH SERVICE] Checking email verification status...`);
     if (!user.isEmailVerified) {
+        console.log(`      [AUTH SERVICE] ❌ Email not verified`);
         throw new ApiError(401, "Please verify your email first.");
     }
+    console.log(`      [AUTH SERVICE] ✅ Email verified`);
 
+    // Step 4: Verify password
+    console.log(`      [AUTH SERVICE] Verifying password...`);
     const isPasswordValid = await user.comparePassword(password);
 
     if (!isPasswordValid) {
+        console.log(`      [AUTH SERVICE] ❌ Invalid password`);
         throw new ApiError(401, "Invalid Password");
     }
+    console.log(`      [AUTH SERVICE] ✅ Password verified`);
 
+    console.log(`      [AUTH SERVICE] ✅ Login service completed successfully`);
     return user;
 };
 

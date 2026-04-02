@@ -54,6 +54,19 @@ const userSchema = new mongoose.Schema({
     avatar: {
         type: String,
         default: null
+    },
+    // Email notification preferences
+    notifyShortsReady: {
+        type: Boolean,
+        default: true
+    },
+    notifyExportReady: {
+        type: Boolean,
+        default: true
+    },
+    notifyProductUpdates: {
+        type: Boolean,
+        default: true
     }
 }, { timestamps: true });
 

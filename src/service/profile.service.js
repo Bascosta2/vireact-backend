@@ -142,3 +142,71 @@ export const updateUserPasswordService = async (userId, newPassword, confirmPass
     }
 };
 
+/**
+ * Get notification preferences service
+ * Returns the authenticated user's email notification preferences
+ */
+export const getNotificationPreferencesService = async (userId) => {
+    try {
+        if (!userId) {
+            throw new ApiError(400, "User ID is required.");
+        }        const user = await User.findById(userId)
+            .select("notifyShortsReady notifyExportReady notifyProductUpdates")
+            .lean();        if (!user) {
+            throw new ApiError(404, "User not found.");
+        }
+
+        return {
+            notifyShortsReady: user.notifyShortsReady ?? true,
+            notifyExportReady: user.notifyExportReady ?? true,
+            notifyProductUpdates: user.notifyProductUpdates ?? true
+        };
+    } catch (error) {
+        if (error instanceof ApiError) {
+            throw error;
+        }
+        throw new ApiError(500, error?.message || "Failed to fetch notification preferences.");
+    }
+};/**
+ * Update notification preferences service
+ * Updates email notification preferences for the authenticated user
+ */
+export const updateNotificationPreferencesService = async (userId, updates) => {
+    try {
+        if (!userId) {
+            throw new ApiError(400, "User ID is required.");
+        }
+
+        const allowedFields = ["notifyShortsReady", "notifyExportReady", "notifyProductUpdates"];
+        const sanitizedUpdates = {};
+
+        for (const field of allowedFields) {
+            if (field in updates && typeof updates[field] === "boolean") {
+                sanitizedUpdates[field] = updates[field];
+            }
+        }
+
+        if (Object.keys(sanitizedUpdates).length === 0) {
+            throw new ApiError(400, "No valid fields to update.");
+        }
+
+        const user = await User.findByIdAndUpdate(
+            userId,
+            { $set: sanitizedUpdates },
+            { new: true, runValidators: true }
+        )
+            .select("notifyShortsReady notifyExportReady notifyProductUpdates")
+            .lean();
+
+        if (!user) {
+            throw new ApiError(404, "User not found.");
+        }
+
+        return user;
+    } catch (error) {
+        if (error instanceof ApiError) {
+            throw error;
+        }
+        throw new ApiError(500, error?.message || "Failed to update notification preferences.");
+    }
+};

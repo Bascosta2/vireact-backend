@@ -30,14 +30,20 @@ class DatabaseConnection {
 
   setupEventHandlers() {
     mongoose.connection.on('connected', () => {
+      const dbName = mongoose.connection.db?.databaseName || 'unknown';
+      console.log(`✅ [MONGODB] Connected to database: ${dbName}`);
+      console.log(`   Host: ${mongoose.connection.host || 'unknown'}`);
       dbDebug('Mongoose connected to MongoDB');
     });
 
     mongoose.connection.on('error', (err) => {
+      console.error(`❌ [MONGODB] Connection error: ${err.message}`);
+      console.error(`   Full error:`, err);
       dbDebug(`Mongoose connection error: ${err}`);
     });
 
     mongoose.connection.on('disconnected', () => {
+      console.log('⚠️ [MONGODB] Disconnected from MongoDB');
       dbDebug('Mongoose disconnected from MongoDB');
       // Clear cached connection on disconnect
       cachedConnection = null;
@@ -76,6 +82,9 @@ class DatabaseConnection {
       }
 
       await mongoose.connect(mongoURI, connectionOptions);
+      const dbName = mongoose.connection.db?.databaseName || 'unknown';
+      console.log(`✅ [MONGODB] Connected successfully to database: ${dbName}`);
+      console.log(`   Host: ${mongoose.connection.host || 'unknown'}`);
       dbDebug('MongoDB connected successfully');
       this.retryCount = 0;
       this.isConnecting = false;
@@ -85,19 +94,22 @@ class DatabaseConnection {
       return cachedConnection;
     } catch (err) {
       this.isConnecting = false;
+      console.error(`❌ [MONGODB] Connection error: ${err.message}`);
+      console.error(`   Error code: ${err.code || 'unknown'}`);
+      console.error(`   Full error:`, err);
       dbDebug(`MongoDB connection error: ${err}`);
 
       if (this.retryCount < MAX_RETRIES) {
         this.retryCount++;
+        console.log(`   ⏳ Retrying connection... Attempt ${this.retryCount} of ${MAX_RETRIES}`);
         dbDebug(`Retrying connection... Attempt ${this.retryCount} of ${MAX_RETRIES}`);
         // Wait before retrying
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
         return this.connectWithRetry();
       } else {
+        console.error(`❌ [MONGODB] Max retries (${MAX_RETRIES}) reached. Could not connect to MongoDB`);
         dbDebug('Max retries reached. Could not connect to MongoDB');
-        // console.log(err)
-        throw new Error('Failed to connect to MongoDB after maximum retries');
-
+        throw new Error(`Failed to connect to MongoDB after ${MAX_RETRIES} retries: ${err.message}`);
       }
     }
   }

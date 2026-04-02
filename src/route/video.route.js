@@ -5,23 +5,28 @@ import {
     getUserVideos,
     deleteVideo,
     markAnalysisViewed,
-    processVideoAnalysis,
+    reanalyzeVideo,
     uploadVideoToTwelveLabs,
-    uploadVideoUrlToTwelveLabs
+    uploadVideoUrlToTwelveLabs,
+    getVideoFeedback,
+    getVideoStatus,
+    getVideoById
 } from '../controller/video.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { uploadSingle } from '../middleware/fileUpload.js';
 
 const videoRoutes = Router();
 
-// QStash webhook endpoint (no authentication - QStash signature verification handles security)
-videoRoutes.post('/analyze', processVideoAnalysis);
+// QStash webhook: registered in app.js with raw body + verifyQStashAndParseBody (before express.json)
 
 // All other video routes require authentication
 videoRoutes.use(authenticateToken);
 
 // Get presigned URL for upload
 // videoRoutes.post('/presigned-url', getPresignedUploadUrl);
+
+// Re-queue analysis for an existing indexed video (authenticated)
+videoRoutes.post('/:videoId/reanalyze', reanalyzeVideo);
 
 // Confirm video upload
 videoRoutes.patch('/:videoId/confirm', confirmVideoUpload);
@@ -34,6 +39,15 @@ videoRoutes.delete('/:videoId', deleteVideo);
 
 // Mark analysis as viewed
 videoRoutes.patch('/:videoId/mark-viewed', markAnalysisViewed);
+
+// Get video status (upload + analysis) for progress polling
+videoRoutes.get('/:videoId/status', getVideoStatus);
+
+// Get timestamp-specific video feedback
+videoRoutes.get('/:videoId/feedback', getVideoFeedback);
+
+// Get single video with analysis DTO (slash-doc shape)
+videoRoutes.get('/:videoId', getVideoById);
 
 // Upload video file to TwelveLabs
 videoRoutes.post('/upload-file', uploadSingle, uploadVideoToTwelveLabs);

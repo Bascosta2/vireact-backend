@@ -3,7 +3,9 @@ import { authenticateToken } from "../middleware/auth.js";
 import {
     getProfile,
     updateProfile,
-    updatePassword
+    updatePassword,
+    getNotificationPreferences,
+    updateNotificationPreferences
 } from "../controller/profile.controller.js";
 
 const profileRoutes = Router();
@@ -19,6 +21,10 @@ profileRoutes.patch("/", updateProfile);
 
 // Update user password
 profileRoutes.patch("/password", updatePassword);
+
+// Notification preferences
+profileRoutes.get("/notification-preferences", getNotificationPreferences);
+profileRoutes.patch("/notification-preferences", updateNotificationPreferences);
 
 export default profileRoutes;
 

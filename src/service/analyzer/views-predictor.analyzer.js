@@ -2,6 +2,7 @@ import { requestChatCompletion } from "../openai-response.service.js";
 import openai from "../../lib/openai.js";
 import { KnowledgeBase } from "../../model/knowledge-base.model.js";
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
+import { parseViewsPredictorJson } from "./parse-analyzer-json.js";
 
 export const analyzeViewsPredictor = async (scenes) => {
     if (!scenes || scenes.length === 0) {
@@ -109,33 +110,47 @@ ENGAGEMENT SIGNALS:
 SCENE BREAKDOWN:
 ${scenesSummary}
 
+RETENTION AND DURATION CONTEXT:
+- Retention rate CAN exceed 100% on short-form videos (typically under 20 seconds). This happens when viewers replay the video, which is a strong positive engagement signal — not a data error.
+- A 13-second video with 180% retention means viewers watched it an average of 1.8 times. This is extremely positive and correlates strongly with viral performance.
+- When retention exceeds 100%, weight it heavily as a virality indicator. A video under 15 seconds with retention over 120% should be treated as having near-perfect hook and loop-ability.
+- For creator videos where retention data is not available, infer retention likelihood from: scene pacing (fast cuts under 2s correlate with higher retention), hook strength (first scene emotional tone and primary action), video duration (shorter videos statistically retain better), audio continuity (consistent audio across scenes correlates with completion), and visual variety (low scene repetition correlates with higher retention).
+- Duration-retention relationship: videos under 15s can achieve 150-300% retention via replays. Videos 15-30s typically see 60-90% retention if well-paced. Videos 30-60s typically see 40-70% retention. Use these benchmarks when retention data is absent.
+- When predicting views, always factor in duration-adjusted retention. A 10-second video with 200% retention is performing better in engagement terms than a 45-second video with 75% retention, even if raw retention percentage looks lower on the longer video.
+
 TASK:
-1. Rate view potential as Low, Medium, or High based on:
-   - Hook strength and early engagement
-   - Structural completeness (hook, reveal, CTA)
-   - Engagement elements (text, audio, emotional variety)
-   - Pacing and rhythm
-   - Overall production quality indicators
+1. Rate view potential as Low, Medium, or High (tier).
+2. Estimate view bands in whole numbers (e.g. 50000 for 50K):
+   - conservative: low end of realistic range
+   - expected: most likely range
+   - optimistic: high end if everything goes well
+3. Set confidence 0-1 for the prediction.
+4. Provide reasoning and up to two improvements (for context; bands are required).
 
-2. Provide concise reasoning (1-2 sentences) explaining the prediction.
-
-3. List up to two key improvements that would most likely increase view potential.
-
-Respond in plain text (no markdown, no emojis). Keep total length under 140 words.
-Format:
-Rating: <Low/Medium/High>
-Reasoning: <one or two sentences>
-Suggestions:
-- <suggestion 1>
-- <suggestion 2>
+Return ONLY a valid JSON object with this exact shape, no other text:
+{"tier": "<low|medium|high>", "conservativeLow": <number>, "conservativeHigh": <number>, "expectedLow": <number>, "expectedHigh": <number>, "optimisticLow": <number>, "optimisticHigh": <number>, "confidence": <0-1>, "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
 `;
 
     const response = await requestChatCompletion({
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
-        maxTokens: 320,
-        systemPrompt: "You are a concise video performance predictor. Keep outputs structured, plain text, and under 140 words.",
+        maxTokens: 400,
+        systemPrompt: "You are a video performance predictor. Return only valid JSON with tier, view band numbers (conservativeLow/High, expectedLow/High, optimisticLow/High), confidence, reasoning, suggestions. No markdown.",
     });
 
-    return response;
+    const parsed = parseViewsPredictorJson(response);
+    if (parsed) return parsed;
+    const fallback = {
+        tier: 'medium',
+        conservativeLow: 5000,
+        conservativeHigh: 15000,
+        expectedLow: 10000,
+        expectedHigh: 50000,
+        optimisticLow: 25000,
+        optimisticHigh: 100000,
+        confidence: 0.5,
+        reasoning: response || 'Unable to parse view prediction.',
+        suggestions: []
+    };
+    return fallback;
 };

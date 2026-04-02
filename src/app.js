@@ -13,8 +13,9 @@ import { ApiResponse } from './utils/ApiResponse.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 
-import { FRONTEND_URL, NODE_ENV, SESSION_SECRET,DB_URL } from './config/index.js';
+import { FRONTEND_URL, NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
 import { EarlyAccess } from './model/early-access.model.js';
+import mongoose from 'mongoose';
 
 // route imports
 import authRoutes from './route/auth.route.js';
@@ -23,8 +24,14 @@ import videoRoutes from './route/video.route.js';
 import chatRoutes from './route/chat.route.js';
 import profileRoutes from './route/profile.route.js';
 import subscriptionRoutes from './route/subscription.route.js';
+import adminRoutes from './route/admin.routes.js';
+import { verifyQStashAndParseBody } from './middleware/qstash-verify.js';
+import { processVideoAnalysis } from './controller/video.controller.js';
 
 const app = express();
+
+// So req.protocol matches HTTPS when behind ngrok / reverse proxy (needed for QStash signature URL)
+app.set('trust proxy', 1);
 
 // Security
 app.use(helmet({
@@ -32,17 +39,34 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
+// CORS configuration - allow both ports 5173 and 5174
+const allowedOrigins = [
+    "https://vireact.io",
+    'https://vireact-frontend.vercel.app',
+    "https://www.vireact.io",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://192.168.1.112:5173"
+].filter(Boolean);
+
 app.use(cors({
-    origin: [
-        "https://vireact.io",
-        'https://vireact-frontend.vercel.app',
-        "https://www.vireact.io",
-        "http://localhost:5173",
-        "http://192.168.1.112:5173"
-    ].filter(Boolean), // Remove any undefined values
+    origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. curl, Postman)
+        if (!origin) return callback(null, true);
+        // In non-production, allow null origin (file:// / local HTML opened from filesystem)
+        if (NODE_ENV !== 'production' && (origin === null || origin === 'null')) {
+            return callback(null, true);
+        }
+        if (allowedOrigins.includes(origin) || FRONTEND_URL === origin) {
+            callback(null, true);
+        } else {
+            console.warn(`⚠️ CORS: Blocked origin ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-admin-key'],
     exposedHeaders: ['Set-Cookie'],
     maxAge: 86400 // 24 hours - cache preflight requests
 }));
@@ -58,6 +82,14 @@ const limiter = rateLimit({
 // Logging
 app.use(morgan('dev'));
 
+// Request logging middleware - log all incoming requests
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const origin = req.get('origin') || 'no origin';
+  console.log(`[${timestamp}] ${req.method} ${req.path} from ${origin}`);
+  next();
+});
+
 // Stripe webhook route MUST come before express.json() to receive raw body
 // This is required for webhook signature verification
 app.post('/api/v1/subscription/webhook', 
@@ -66,6 +98,14 @@ app.post('/api/v1/subscription/webhook',
         const { handleWebhook } = await import('./controller/subscription.controller.js');
         return handleWebhook(req, res, next);
     }
+);
+
+// QStash analyze webhook: raw body required for signature verification
+app.post(
+    '/api/v1/videos/analyze',
+    express.raw({ type: 'application/json' }),
+    verifyQStashAndParseBody,
+    processVideoAnalysis
 );
 
 // Body parsers (applied after webhook route)
@@ -97,14 +137,99 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Health check
+// Health check endpoint
 app.get('/health', (req, res) => {
-    res.
-        status(200).
-        json(
-            ApiResponse
-                .success(200, 'Health check successful', null)
-        );
+    res.status(200).json({
+        status: 'ok',
+        timestamp: Date.now(),
+        services: {
+            mongo: mongoose.connection.readyState === 1,
+            server: true
+        }
+    });
+});
+
+// API health check
+app.get('/api/health', async (req, res) => {
+    try {
+        const mongoose = (await import('mongoose')).default;
+        const { isConnected } = await import('./db/index.js');
+        
+        // Check Redis connection (optional)
+        let redisStatus = false;
+        try {
+            const { Redis } = await import('@upstash/redis');
+            const { UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = await import('./config/index.js');
+            if (UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN) {
+                const redis = new Redis({
+                    url: UPSTASH_REDIS_REST_URL,
+                    token: UPSTASH_REDIS_REST_TOKEN
+                });
+                await redis.ping();
+                redisStatus = true;
+            }
+        } catch (redisError) {
+            console.log('Redis not configured or unavailable (optional service)');
+        }
+        
+        // Check external service configurations
+        const { TWELVE_LABS_API_KEY, TWELVE_LABS_INDEX_ID, OPENAI_API_KEY, JWT_SECRET } = await import('./config/index.js');
+        
+        res.status(200).json({
+            status: 'ok',
+            timestamp: Date.now(),
+            environment: process.env.NODE_ENV || 'development',
+            services: {
+                mongo: isConnected(),
+                redis: redisStatus,
+                server: true,
+                twelveLabs: !!TWELVE_LABS_API_KEY,
+                twelveLabsIndexId: !!TWELVE_LABS_INDEX_ID,
+                openai: !!OPENAI_API_KEY,
+                jwt: !!JWT_SECRET
+            },
+            mongodb: {
+                connected: isConnected(),
+                host: mongoose.connection.host || 'unknown',
+                database: mongoose.connection.db?.databaseName || 'unknown'
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            timestamp: Date.now(),
+            error: error.message
+        });
+    }
+});
+
+// Database status endpoint
+app.get('/api/db-status', async (req, res) => {
+    try {
+        const mongoose = (await import('mongoose')).default;
+        const { isConnected } = await import('./db/index.js');
+        
+        res.status(200).json({
+            connected: isConnected(),
+            readyState: mongoose.connection.readyState,
+            dbName: mongoose.connection.db?.databaseName || 'unknown',
+            host: mongoose.connection.host || 'unknown'
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: error.message
+        });
+    }
+});
+
+// Auth test endpoint
+app.post('/api/v1/auth/test', (req, res) => {
+    console.log('✅ [AUTH TEST] Endpoint reached successfully');
+    res.status(200).json({
+        message: 'Auth routes working',
+        timestamp: Date.now(),
+        body: req.body
+    });
 });
 
 app.get('/early-access-list', async (req, res) => {
@@ -123,6 +248,7 @@ app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

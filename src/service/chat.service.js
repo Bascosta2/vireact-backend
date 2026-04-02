@@ -5,6 +5,7 @@ import { ANALYSIS_STATUS } from '../constants.js';
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../config/index.js';
 import { requestChatCompletion } from './openai-response.service.js';
 import { checkChatLimit, incrementChatUsage } from './subscription.service.js';
+import { generateVideoFeedbackService } from './video-feedback.service.js';
 
 export const getChatMessagesService = async (videoId, userId) => {
     if (!videoId || !userId) {
@@ -124,6 +125,22 @@ export const sendChatMessageService = async (videoId, userId, messageText) => {
         throw new ApiError(404, 'Video not found');
     }
 
+    // Generate timestamp feedback if analysis is complete but feedback doesn't exist
+    if (video.analysisStatus === ANALYSIS_STATUS.COMPLETED && 
+        (!video.timestampFeedback || video.timestampFeedback.length === 0)) {
+        try {
+            await generateVideoFeedbackService(videoId, userId);
+            // Reload video to get updated feedback
+            const updatedVideo = await Video.findById(videoId);
+            if (updatedVideo) {
+                Object.assign(video, updatedVideo.toObject());
+            }
+        } catch (feedbackError) {
+            console.error('[Chat] Error generating feedback:', feedbackError.message);
+            // Continue without feedback if generation fails
+        }
+    }
+
     // Find or create chat
     let chat = await Chat.findOne({ videoId, userId });
     
@@ -146,8 +163,9 @@ export const sendChatMessageService = async (videoId, userId, messageText) => {
     // Classify user intent
     const intent = await classifyUserIntent(messageText);
 
-    // Generate AI response using OpenAI based on intent
-    const aiResponse = await generateAIResponse(messageText, video, intent);
+    // Generate AI response using OpenAI based on intent (pass prior messages for context)
+    const priorMessages = (chat.messages || []).slice(0, -1);
+    const aiResponse = await generateAIResponse(messageText, video, intent, priorMessages);
 
     // Add AI message
     const aiMessage = {
@@ -204,8 +222,37 @@ Respond with ONLY the category name (question, greeting, thanks, feedback, or ot
     }
 }
 
-// Helper function to generate AI response using OpenAI based on video scenes
-async function generateAIResponse(userMessage, video, intent = 'question') {
+function buildNumericScoresBlock(video) {
+    const parts = [];
+    if (video.viralityScore != null) parts.push(`Virality Score: ${video.viralityScore}/100`);
+    const analysis = video.analysis || [];
+    const featureLabels = { hook: 'Hook', caption: 'Caption', pacing: 'Pacing', audio: 'Audio', advanced_analytics: 'Advanced', views_predictor: 'Views' };
+    analysis.forEach(a => {
+        const label = featureLabels[a.feature] || a.feature;
+        const score = a.score != null ? a.score : (a.rating ? (a.rating.toLowerCase().includes('strong') || a.rating.toLowerCase().includes('high') ? 85 : a.rating.toLowerCase().includes('medium') ? 55 : 25) : null);
+        if (score != null) parts.push(`${label}: ${score}/100`);
+    });
+    if (video.predictedViewsLow != null && video.predictedViewsHigh != null) {
+        const low = video.predictedViewsLow >= 1000 ? `${(video.predictedViewsLow / 1000).toFixed(1)}K` : String(video.predictedViewsLow);
+        const high = video.predictedViewsHigh >= 1000 ? `${(video.predictedViewsHigh / 1000).toFixed(1)}K` : String(video.predictedViewsHigh);
+        parts.push(`Predicted views: ${low} - ${high}`);
+        if (video.predictedViewsExpected != null) {
+            const exp = video.predictedViewsExpected >= 1000 ? `${(video.predictedViewsExpected / 1000).toFixed(1)}K` : String(video.predictedViewsExpected);
+            parts.push(`Expected: ~${exp}`);
+        }
+    }
+    const curve = video.retentionCurve || [];
+    if (curve.length > 0) {
+        const first = curve[0];
+        const mid = curve[Math.floor(curve.length / 2)];
+        const last = curve[curve.length - 1];
+        parts.push(`Retention: start ${first}%, mid ${mid}%, end ${last}%`);
+    }
+    return parts.length > 0 ? 'VIDEO SCORES AND METRICS:\n' + parts.join('\n') + '\n\n' : '';
+}
+
+// Helper function to generate AI response using OpenAI based on video scenes and prior conversation
+async function generateAIResponse(userMessage, video, intent = 'question', priorMessages = []) {
     const openai = (await import('../lib/openai.js')).default;
     const { KnowledgeBase } = await import('../model/knowledge-base.model.js');
 
@@ -234,6 +281,47 @@ async function generateAIResponse(userMessage, video, intent = 'question') {
 - Emotional Tone: ${scene.emotionalTone || 'N/A'}
 - Purpose: ${scene.purpose || 'N/A'}`
     ).join('\n\n');
+
+    // Build numeric VideoAnalysis summary for grounding (scores, view bands, retention)
+    const scoresBlock = buildNumericScoresBlock(video);
+
+    // Format timestamp-specific feedback for context
+    let feedbackContext = '';
+    if (video.timestampFeedback && video.timestampFeedback.length > 0) {
+        const feedbackByCategory = {
+            critical: video.timestampFeedback.filter(f => f.severity === 'critical'),
+            important: video.timestampFeedback.filter(f => f.severity === 'important'),
+            minor: video.timestampFeedback.filter(f => f.severity === 'minor')
+        };
+
+        feedbackContext = `\n\nTIMESTAMP-SPECIFIC FEEDBACK:\n`;
+        
+        if (feedbackByCategory.critical.length > 0) {
+            feedbackContext += `\nCRITICAL ISSUES:\n`;
+            feedbackByCategory.critical.forEach(f => {
+                const timeRange = f.endTimestamp 
+                    ? `${f.timestamp}s - ${f.endTimestamp}s` 
+                    : `${f.timestamp}s`;
+                feedbackContext += `⏱️ ${timeRange} [${f.category.toUpperCase()}]: ${f.issue}\n`;
+                feedbackContext += `💡 Suggestion: ${f.suggestion}\n`;
+                if (f.example) {
+                    feedbackContext += `📝 Example: ${f.example}\n`;
+                }
+                feedbackContext += '\n';
+            });
+        }
+
+        if (feedbackByCategory.important.length > 0) {
+            feedbackContext += `\nIMPORTANT ISSUES:\n`;
+            feedbackByCategory.important.forEach(f => {
+                const timeRange = f.endTimestamp 
+                    ? `${f.timestamp}s - ${f.endTimestamp}s` 
+                    : `${f.timestamp}s`;
+                feedbackContext += `⏱️ ${timeRange} [${f.category.toUpperCase()}]: ${f.issue}\n`;
+                feedbackContext += `💡 Suggestion: ${f.suggestion}\n\n`;
+            });
+        }
+    }
 
     // Get relevant knowledge base chunks based on user message (only for questions)
     let relevantChunks = [];
@@ -283,8 +371,8 @@ async function generateAIResponse(userMessage, video, intent = 'question') {
         prompt = `
 You are an expert video content advisor helping a creator improve their short-form social media video.
 
-VIDEO SCENES BREAKDOWN:
-${scenesContext}
+${scoresBlock}VIDEO SCENES BREAKDOWN:
+${scenesContext}${feedbackContext}
 
 RELEVANT EXPERT KNOWLEDGE:
 ${knowledgeContext}
@@ -293,16 +381,16 @@ USER QUESTION:
 "${userMessage}"
 
 TASK:
-Provide a concise, actionable response grounded in the scenes above and the knowledge base. Reference specific scenes when relevant. Keep the response structured in short paragraphs with clear recommendations. Avoid markdown and emojis. Limit to about 180 words.
+Provide a concise, actionable response grounded in the VIDEO SCORES and scenes above. Reference specific numbers (e.g. "your hook scored 91 but your captions 65 — here's why that gap matters"). When the user asks about specific timestamps or moments, reference the timestamp-specific feedback. Keep the response structured in short paragraphs. Avoid markdown and emojis. Limit to about 180 words.
 `;
-        systemPrompt = "You are a precise video content advisor. Deliver concise, actionable guidance in plain text. Keep responses under 180 words.";
+        systemPrompt = "You are a precise video content advisor. Reference the video's numeric scores and metrics in your response when relevant. Keep responses under 180 words.";
     } else {
         // For 'other' intent, provide general helpful response
         prompt = `
 You are an expert video content advisor helping a creator improve their short-form social media video.
 
-VIDEO SCENES BREAKDOWN:
-${scenesContext}
+${scoresBlock}VIDEO SCENES BREAKDOWN:
+${scenesContext}${feedbackContext}
 
 USER MESSAGE:
 "${userMessage}"
@@ -313,9 +401,14 @@ Provide a helpful, concise response. If the message seems unclear, politely ask 
         systemPrompt = "You are a helpful video content advisor. Provide brief, professional responses in plain text.";
     }
 
+    const maxHistory = 10;
+    const historyMessages = (priorMessages || [])
+        .slice(-maxHistory)
+        .map((msg) => ({ role: msg.isUser ? 'user' : 'assistant', content: msg.text }));
+
     try {
         return await requestChatCompletion({
-            messages: [{ role: "user", content: prompt }],
+            messages: [...historyMessages, { role: "user", content: prompt }],
             temperature: 0.7,
             maxTokens: intent === 'question' ? 700 : 400,
             systemPrompt

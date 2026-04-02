@@ -9,7 +9,7 @@ import { AWS_S3_BUCKET_NAME, TWELVE_LABS_INDEX_ID } from '../config/index.js';
 import TwelveLabsClient from '../lib/twelve-labs.js';
 import { Readable } from 'stream';
 
-const waitForAssetReady = async (assetId, initialStatus) => {
+export const waitForAssetReady = async (assetId, initialStatus) => {
     let assetStatus = initialStatus;
     let attempts = 0;
     const maxAttempts = 30; // Wait up to 5 minutes (30 * 10 seconds)
@@ -31,7 +31,7 @@ const waitForAssetReady = async (assetId, initialStatus) => {
     }
 };
 
-const indexAssetWithRetry = async (assetId) => {
+export const indexAssetWithRetry = async (assetId) => {
     if (!TWELVE_LABS_INDEX_ID) {
         throw new Error('TWELVE_LABS_INDEX_ID is not configured. Please set it in your environment variables.');
     }

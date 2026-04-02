@@ -3,19 +3,27 @@ import { BACKEND_URL } from '../config/index.js';
 
 /**
  * Publish video analysis job to QStash
- * @param {Object} jobData - Job data containing videoId and videoUrl
- * @returns {Promise<string>} Message ID from QStash
+ * @param {Object} jobData - Job data containing videoId and twelveLabsVideoId / userId
+ * @returns {Promise<string>} Message ID (normalized string for v1 or v2 SDK)
  */
 export const publishVideoAnalysisJob = async (jobData) => {
     const qstash = getQStashClient();
     const webhookUrl = `${BACKEND_URL}/api/v1/videos/analyze`;
-    
-    const messageId = await qstash.publishJSON({
+
+    console.log('[QStash] Publishing job to webhook URL:', webhookUrl);
+    console.log('[QStash] Job data:', JSON.stringify(jobData));
+
+    const result = await qstash.publishJSON({
         url: webhookUrl,
         body: jobData,
-        retries: 3, // QStash will retry up to 3 times on failure
+        retries: 3,
     });
-    
+
+    const messageId =
+        typeof result === 'string'
+            ? result
+            : result?.messageId ?? JSON.stringify(result);
+
+    console.log('[QStash] Job published successfully, messageId:', messageId);
     return messageId;
 };
-

@@ -2,6 +2,9 @@ import openai from "../../lib/openai.js";
 import { KnowledgeBase } from "../../model/knowledge-base.model.js";
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
 import { requestChatCompletion } from "../openai-response.service.js";
+import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+
+const JSON_SYSTEM = "You are a concise hook analyst. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
 
 export const analyzeHook = async (hook, scenes) => {
     if (!hook) {
@@ -66,26 +69,28 @@ SCENE BREAKDOWN (for context):
 ${scenesContext}
 
 TASK:
-1. Rate the hook as Weak, Medium, or Strong based on Bas's principles.
-2. Provide a concise reasoning (1-2 sentences) that cites the most relevant insight.
+1. Rate the hook as Weak, Medium, or Strong based on Bas's principles (map to score 0-100: Weak 1-40, Medium 41-70, Strong 71-100).
+2. Provide concise reasoning (1-2 sentences) that cites the most relevant insight.
 3. List up to two actionable improvements.
 
-Respond in plain text (no markdown, no emojis). Keep total length under 140 words.
-Format:
-Rating: <Weak/Medium/Strong>
-Reasoning: <one or two sentences>
-Suggestions:
-- <suggestion 1>
-- <suggestion 2>
+Return ONLY a valid JSON object with this exact shape, no other text:
+{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
 `;
 
     const response = await requestChatCompletion({
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
         maxTokens: 320,
-        systemPrompt:
-            "You are a concise hook analyst. Keep outputs structured, plain text, and under 140 words.",
+        systemPrompt: JSON_SYSTEM,
     });
 
-    return response;
+    const parsed = parseAnalyzerJson(response);
+    if (parsed) return parsed;
+    const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
+    return {
+        score: fallbackScore,
+        rating: 'Unknown',
+        reasoning: response || '',
+        suggestions: []
+    };
 };

@@ -12,36 +12,43 @@ const KnowledgeBaseSchema = new mongoose.Schema({
   },
   metadata: {
     topic: {
-      type: String, // hook | caption | pacing | audio | advanced_analytics | views_predictor
+      type: String,
       required: true,
-      enum: ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor'],
+      enum: ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor', 'general'],
       index: true,
     },
     layer: {
-      type: String, // raw | pattern | example
+      type: String,
       enum: ['raw', 'pattern', 'example'],
       required: true,
       index: true,
     },
     author: {
-      type: String, // Usually "Bas", but flexible for future contributors
+      type: String,
       default: "Bas Costa",
     },
     date: {
-      type: Date, // Date of content/insight creation
+      type: Date,
       default: Date.now,
       index: true,
     },
     source: {
-      type: String, // transcript | breakdown | manual_note | trend_scrape
+      type: String,
       default: "manual_note",
     },
     score: {
-      type: Number, // Optional score (0–1) for ranking certainty
+      type: Number,
       required: true,
       min: 0.1,
       max: 1,
     },
+    platform: { type: String },
+    niche: { type: String },
+    sourceType: { type: String },
+    contentType: { type: String },
+    chunkIndex: { type: Number },
+    totalChunks: { type: Number },
+    ingestedAt: { type: Date },
   },
 });
 
