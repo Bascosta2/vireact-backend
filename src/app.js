@@ -4,8 +4,6 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
-import { Redis } from '@upstash/redis';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 
@@ -15,7 +13,7 @@ import { ApiResponse } from './utils/ApiResponse.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 
-import { FRONTEND_URL, NODE_ENV, SESSION_SECRET, DB_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } from './config/index.js';
+import { FRONTEND_URL, NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
 import { EarlyAccess } from './model/early-access.model.js';
 import mongoose from 'mongoose';
 
@@ -75,58 +73,17 @@ app.use(cors({
     maxAge: 86400 // 24 hours - cache preflight requests
 }));
 
-// Rate limiting: auth + video uploads only (never global — QStash/Stripe webhooks must not be limited)
-// Each limiter needs its own RedisStore (express-rate-limit forbids sharing one store across limiters).
-let authRateLimitStore;
-let videoUploadRateLimitStore;
-try {
-    if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
-        throw new Error('Upstash credentials are missing');
-    }
-    const upstashRedisClient = new Redis({
-        url: UPSTASH_REDIS_REST_URL,
-        token: UPSTASH_REDIS_REST_TOKEN
-    });
-    const redisClient = {
-        async sendCommand(args) {
-            const [command, ...rest] = args;
-            const method = String(command || '').toLowerCase();
-            if (typeof upstashRedisClient[method] !== 'function') {
-                throw new Error(`Unsupported Redis command for rate limiter: ${command}`);
-            }
-            return upstashRedisClient[method](...rest);
-        }
-    };
-    authRateLimitStore = new RedisStore({
-        sendCommand: (...args) => redisClient.sendCommand(args),
-        prefix: 'rl:auth:',
-    });
-    videoUploadRateLimitStore = new RedisStore({
-        sendCommand: (...args) => redisClient.sendCommand(args),
-        prefix: 'rl:upload:',
-    });
-    console.log('[RateLimit] Using Upstash Redis store (separate store per limiter)');
-} catch (error) {
-    console.warn(`[RateLimit] Falling back to in-memory store: ${error.message}`);
-    authRateLimitStore = undefined;
-    videoUploadRateLimitStore = undefined;
-}
-
+// Rate limiting: auth + video uploads only (in-memory; never global — QStash/Stripe webhooks are not limited).
+// Upstash REST Redis does not support Lua SCRIPT used by rate-limit-redis, so no external store here.
 const authRateLimit = rateLimit({
-    ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     windowMs: 15 * 60 * 1000,
-    max: 100,
-    message: 'Too many requests, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false
+    max: 20,
+    message: { error: 'Too many attempts, please try again later' },
 });
 const videoUploadRateLimit = rateLimit({
-    ...(videoUploadRateLimitStore ? { store: videoUploadRateLimitStore } : {}),
-    windowMs: 15 * 60 * 1000,
-    max: 60,
-    message: 'Too many upload requests, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    message: { error: 'Upload limit reached, please try again later' },
 });
 
 // Logging
