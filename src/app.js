@@ -76,7 +76,9 @@ app.use(cors({
 }));
 
 // Rate limiting: auth + video uploads only (never global — QStash/Stripe webhooks must not be limited)
-let sharedRateLimitStore;
+// Each limiter needs its own RedisStore (express-rate-limit forbids sharing one store across limiters).
+let authRateLimitStore;
+let videoUploadRateLimitStore;
 try {
     if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
         throw new Error('Upstash credentials are missing');
@@ -95,17 +97,23 @@ try {
             return upstashRedisClient[method](...rest);
         }
     };
-    sharedRateLimitStore = new RedisStore({
+    authRateLimitStore = new RedisStore({
         sendCommand: (...args) => redisClient.sendCommand(args),
+        prefix: 'rl:auth:',
     });
-    console.log('[RateLimit] Using Upstash Redis store');
+    videoUploadRateLimitStore = new RedisStore({
+        sendCommand: (...args) => redisClient.sendCommand(args),
+        prefix: 'rl:upload:',
+    });
+    console.log('[RateLimit] Using Upstash Redis store (separate store per limiter)');
 } catch (error) {
     console.warn(`[RateLimit] Falling back to in-memory store: ${error.message}`);
-    sharedRateLimitStore = undefined;
+    authRateLimitStore = undefined;
+    videoUploadRateLimitStore = undefined;
 }
 
 const authRateLimit = rateLimit({
-    ...(sharedRateLimitStore ? { store: sharedRateLimitStore } : {}),
+    ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     windowMs: 15 * 60 * 1000,
     max: 100,
     message: 'Too many requests, please try again later.',
@@ -113,7 +121,7 @@ const authRateLimit = rateLimit({
     legacyHeaders: false
 });
 const videoUploadRateLimit = rateLimit({
-    ...(sharedRateLimitStore ? { store: sharedRateLimitStore } : {}),
+    ...(videoUploadRateLimitStore ? { store: videoUploadRateLimitStore } : {}),
     windowMs: 15 * 60 * 1000,
     max: 60,
     message: 'Too many upload requests, please try again later.',
