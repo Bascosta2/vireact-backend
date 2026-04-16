@@ -28,7 +28,6 @@ const videoPerformanceDatasetSchema = new mongoose.Schema({
         enum: ['tiktok', 'instagram', 'youtube', 'facebook'],
         required: true,
     },
-    niche: { type: String, required: true },
     creatorSize: {
         type: String,
         enum: ['micro', 'small', 'medium', 'large', 'mega'],
@@ -59,6 +58,8 @@ const videoPerformanceDatasetSchema = new mongoose.Schema({
     errorMessage: { type: String },
     ingestedAt: { type: Date, default: Date.now },
     analyzedAt: { type: Date },
+    /** Set when creator file ingest completes successfully */
+    uploadedAt: { type: Date },
 }, { timestamps: true });
 
 export const VideoPerformanceDataset = mongoose.model(

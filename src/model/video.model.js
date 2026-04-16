@@ -96,6 +96,18 @@ const videoSchema = new mongoose.Schema({
                 type: [String],
                 default: []
             },
+            emotionalTriggers: {
+                type: [String],
+            },
+            retentionDrivers: {
+                type: [String],
+            },
+            psychologicalProfile: {
+                type: String,
+            },
+            weakestMoment: {
+                type: String,
+            },
             analyzedAt: {
                 type: Date,
                 default: Date.now
@@ -178,8 +190,25 @@ const videoSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
-    }
+    },
+    /** Original pasted URL when ingest used server-side social download */
+    sourceUrl: {
+        type: String,
+        default: null,
+    },
+    /** Platform title from yt-dlp metadata when available */
+    sourceTitle: {
+        type: String,
+        default: null,
+    },
+    /** Platform description/caption from yt-dlp metadata when available */
+    sourceDescription: {
+        type: String,
+        default: null,
+    },
 }, { timestamps: true });
+
+videoSchema.index({ uploader_id: 1, createdAt: -1 });
 
 export const Video = mongoose.model('Video', videoSchema);
 

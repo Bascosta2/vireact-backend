@@ -86,14 +86,15 @@ export const handleWebhook = async (req, res, next) => {
                 STRIPE_WEBHOOK_SECRET
             );
         } else {
-            // In development without webhook secret, parse body directly
-            console.warn('[Stripe Webhook] No webhook secret configured - skipping signature verification');
-            event = JSON.parse(req.body.toString());
+            console.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET is required to verify webhook signatures');
+            return res.status(500).json(
+                ApiResponse.error(500, 'Webhook signing is not configured')
+            );
         }
     } catch (err) {
         console.error('[Stripe Webhook] Signature verification failed:', err.message);
         return res.status(400).json(
-            ApiResponse.error(400, `Webhook signature verification failed: ${err.message}`)
+            ApiResponse.error(400, 'Webhook signature verification failed')
         );
     }
 

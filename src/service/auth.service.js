@@ -1,5 +1,5 @@
 import { Admin } from "../model/admin.model.js";
-import { FRONTEND_URL, ACCESS_TOKEN_SECRET } from "../config/index.js";
+import { FRONTEND_URL, ACCESS_TOKEN_SECRET, RESEND_FROM_EMAIL } from "../config/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../model/user.model.js";
 import crypto from "crypto"
@@ -142,7 +142,7 @@ export const customSignupUserService = async (
             const verificationUrl = `${FRONTEND_URL}/verify-email?token=${token}`;
 
             await resend.emails.send({
-                from: 'support@vireact.io',
+                from: RESEND_FROM_EMAIL,
                 to: email,
                 subject: 'Verify Your Email',
                 html: `<div>
@@ -216,7 +216,7 @@ export const resendEmailVerificationService = async (email) => {
         const verificationUrl = `${FRONTEND_URL}/verify-email?token=${newToken}`;
 
         await resend.emails.send({
-            from: "support@vireact.io",
+            from: RESEND_FROM_EMAIL,
             to: user.email,
             subject: "Verify your email",
             html: `

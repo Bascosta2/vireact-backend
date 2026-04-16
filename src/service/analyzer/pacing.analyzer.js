@@ -47,7 +47,7 @@ export const analyzePacing = async (scenes) => {
                 index: KNOWLEDGE_BASE_VECTOR_INDEX,
                 queryVector: pacingEmbedding,
                 path: "embedding",
-                filter: { "metadata.topic": "pacing" },
+                filter: { "metadata.topic": { $in: ["pacing", "general"] } },
                 limit: 10,
                 numCandidates: 100
             }

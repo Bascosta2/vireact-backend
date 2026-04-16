@@ -1,6 +1,7 @@
 import { Readable } from 'stream';
 import TwelveLabsClient from '../lib/twelve-labs.js';
-import { TWELVE_LABS_INDEX_ID } from '../config/index.js';
+import { twelveLabsCreateDirectAsset } from '../lib/twelve-labs-ingest.helper.js';
+import { TWELVELABS_DATASET_INDEX } from '../config/index.js';
 import { waitForAssetReady, indexAssetWithRetry } from './video.service.js';
 import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from './scene-parser.service.js';
 import { analyzeHook } from './analyzer/hook.analyzer.js';
@@ -9,11 +10,11 @@ import { analyzePacing } from './analyzer/pacing.analyzer.js';
 import { analyzeAudio } from './analyzer/audio.analyzer.js';
 import { analyzeAdvancedAnalytics } from './analyzer/advanced-analytics.analyzer.js';
 import { analyzeViewsPredictor } from './analyzer/views-predictor.analyzer.js';
-import { VideoPerformanceDataset } from '../model/VideoPerformanceDataset.model.js';
 import { KnowledgeBase } from '../model/knowledge-base.model.js';
 import openai from '../lib/openai.js';
 
 const EMBEDDING_MODEL = 'text-embedding-3-large';
+const CREATOR_PSYCH_MODEL = 'gpt-4o-mini';
 const FEATURES = ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor'];
 const WEIGHTS = { hook: 0.35, pacing: 0.25, audio: 0.20, caption: 0.10, views_predictor: 0.10 };
 
@@ -108,7 +109,7 @@ async function createKnowledgeBaseEntry(content, metadata) {
     if (!Array.isArray(embedding) || embedding.length === 0) {
         throw new Error('Empty embedding returned');
     }
-    await KnowledgeBase.create({
+    const doc = await KnowledgeBase.create({
         content,
         embedding,
         metadata: {
@@ -118,114 +119,75 @@ async function createKnowledgeBaseEntry(content, metadata) {
             date: metadata.date ?? new Date(),
         },
     });
+    return doc;
+}
+
+function fileToReadable(file) {
+    if (Buffer.isBuffer(file)) {
+        return Readable.from(file);
+    }
+    if (file.buffer) {
+        return Readable.from(file.buffer);
+    }
+    if (file instanceof Readable) {
+        return file;
+    }
+    return Readable.from(Buffer.from(file));
+}
+
+/**
+ * Upload file to Twelve Labs dataset index, analyze, parse scenes, run analyzers.
+ * Used for both paired (own_video) and creator file ingest. Never uses TWELVELABS_USER_INDEX.
+ */
+async function ingestFileToDatasetIndex(file, datasetId) {
+    const assetResponse = await twelveLabsCreateDirectAsset(fileToReadable(file));
+
+    const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
+    if (!twelveLabsAssetId) {
+        throw new Error('Failed to get asset ID from TwelveLabs response');
+    }
+
+    await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
+    if (!TWELVELABS_DATASET_INDEX) {
+        throw new Error('TWELVELABS_DATASET_INDEX is not configured. Please set it in your environment variables.');
+    }
+    const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_DATASET_INDEX);
+    const twelveLabsVideoId = indexedAssetId;
+
+    const videoAnalysisResult = await TwelveLabsClient.analyze({
+        videoId: twelveLabsVideoId,
+        prompt: TWELVE_LABS_SCENE_PROMPT,
+        temperature: 0.2,
+    });
+
+    const scenes = await parseScenesWithOpenAI(videoAnalysisResult);
+    const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
+    const hookText = hookScene?.primaryAction || hookScene?.visualDescription || '';
+
+    const durationSeconds = scenes.length > 0
+        ? Math.max(...scenes.map(s => s.endTime || 0))
+        : null;
+
+    const { analysis, scores } = await runAnalyzers(scenes, hookText, datasetId);
+    const viralityScore = computeViralityScore(scores);
+
+    return {
+        twelveLabsAssetId,
+        twelveLabsVideoId,
+        scenes,
+        durationSeconds,
+        analysis,
+        scores,
+        viralityScore,
+    };
 }
 
 export async function ingestPairedVideo(file, fields, datasetId) {
-    const filename = file.originalname || file.name || 'video';
-    let fileToUpload;
-    if (Buffer.isBuffer(file)) {
-        fileToUpload = Readable.from(file);
-    } else if (file.buffer) {
-        fileToUpload = Readable.from(file.buffer);
-    } else if (file instanceof Readable) {
-        fileToUpload = file;
-    } else {
-        fileToUpload = Readable.from(Buffer.from(file));
-    }
-
-    const assetResponse = await TwelveLabsClient.assets.create({
-        method: 'direct',
-        file: fileToUpload,
-    });
-
-    if (assetResponse?.status === 'failed') {
-        throw new Error(`TwelveLabs upload failed: ${assetResponse.error || 'Unknown error'}`);
-    }
-
-    const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
-    if (!twelveLabsAssetId) {
-        throw new Error('Failed to get asset ID from TwelveLabs response');
-    }
-
-    await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
-    const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId);
-    const twelveLabsVideoId = indexedAssetId;
-
-    const videoAnalysisResult = await TwelveLabsClient.analyze({
-        videoId: twelveLabsVideoId,
-        prompt: TWELVE_LABS_SCENE_PROMPT,
-        temperature: 0.2,
-    });
-
-    const scenes = await parseScenesWithOpenAI(videoAnalysisResult);
-    const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
-    const hookText = hookScene?.primaryAction || hookScene?.visualDescription || '';
-
-    // Auto-extract duration from parsed scenes
-    const durationSeconds = scenes.length > 0
-        ? Math.max(...scenes.map(s => s.endTime || 0))
-        : null;
-
-    const { analysis, scores } = await runAnalyzers(scenes, hookText, datasetId);
-    const viralityScore = computeViralityScore(scores);
-
-    return {
-        twelveLabsAssetId,
-        twelveLabsVideoId,
-        scenes,
-        durationSeconds,
-        analysis,
-        scores,
-        viralityScore,
-    };
+    return ingestFileToDatasetIndex(file, datasetId);
 }
 
-export async function ingestCreatorVideo(videoUrl, datasetId) {
-    const assetResponse = await TwelveLabsClient.assets.create({
-        method: 'url',
-        url: videoUrl,
-    });
-
-    if (assetResponse?.status === 'failed') {
-        throw new Error(`TwelveLabs URL upload failed: ${assetResponse.error || 'Unknown error'}`);
-    }
-
-    const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
-    if (!twelveLabsAssetId) {
-        throw new Error('Failed to get asset ID from TwelveLabs response');
-    }
-
-    await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
-    const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId);
-    const twelveLabsVideoId = indexedAssetId;
-
-    const videoAnalysisResult = await TwelveLabsClient.analyze({
-        videoId: twelveLabsVideoId,
-        prompt: TWELVE_LABS_SCENE_PROMPT,
-        temperature: 0.2,
-    });
-
-    const scenes = await parseScenesWithOpenAI(videoAnalysisResult);
-    const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
-    const hookText = hookScene?.primaryAction || hookScene?.visualDescription || '';
-
-    // Auto-extract duration from parsed scenes
-    const durationSeconds = scenes.length > 0
-        ? Math.max(...scenes.map(s => s.endTime || 0))
-        : null;
-
-    const { analysis, scores } = await runAnalyzers(scenes, hookText, datasetId);
-    const viralityScore = computeViralityScore(scores);
-
-    return {
-        twelveLabsAssetId,
-        twelveLabsVideoId,
-        scenes,
-        durationSeconds,
-        analysis,
-        scores,
-        viralityScore,
-    };
+export async function ingestCreatorVideoFromFile(file, datasetId) {
+    return ingestFileToDatasetIndex(file, datasetId);
 }
 
 export function buildPerformanceSummaryPayload(doc, sourceType) {
@@ -235,7 +197,6 @@ export function buildPerformanceSummaryPayload(doc, sourceType) {
     const parts = [
         '[PERFORMANCE DATA]',
         `Platform: ${doc.platform}`,
-        `Niche: ${doc.niche}`,
         `Creator Size: ${doc.creatorSize || 'N/A'}`,
         `Actual Views: ${doc.actualViews}`,
         `Virality Score: ${doc.viralityScore ?? 'N/A'}`,
@@ -247,6 +208,9 @@ export function buildPerformanceSummaryPayload(doc, sourceType) {
         `Swipe rate (1-3s, stayed past hook): ${doc.swipeRate != null ? doc.swipeRate + '%' : 'N/A'}`,
         `Hook scene: ${firstScene}`,
     ];
+    if (sourceType === 'creator_video' && doc.viralCategory) {
+        parts.splice(2, 0, `Viral category: ${doc.viralCategory}`);
+    }
     if (sourceType === 'creator_video' && (doc.creatorHandle || doc.subscriberCount != null)) {
         parts.push(`Creator: ${doc.creatorHandle || 'N/A'}`);
         parts.push(`Subscribers: ${doc.subscriberCount != null ? doc.subscriberCount : 'N/A'}`);
@@ -254,12 +218,100 @@ export function buildPerformanceSummaryPayload(doc, sourceType) {
     return parts.join(', ');
 }
 
+/**
+ * OpenAI-generated psychological / structural profile for RAG (topic: general).
+ * Emphasizes hook mechanics, pacing, audio, captions, emotion, and performance vs creator size — not topic niche.
+ */
+export async function generateCreatorPsychologicalSummary(doc) {
+    const sceneBrief = Array.isArray(doc.scenes) ? doc.scenes.slice(0, 12).map((s, i) => ({
+        i: i + 1,
+        start: s.startTime,
+        end: s.endTime,
+        visual: s.visualDescription,
+        text: s.onScreenText,
+        audio: s.audioSummary,
+        action: s.primaryAction,
+        tone: s.emotionalTone,
+        purpose: s.purpose,
+    })) : [];
+
+    const analysisBrief = Array.isArray(doc.analysis)
+        ? doc.analysis.map(a => ({ feature: a.feature, score: a.score, rating: a.rating, reasoning: a.reasoning }))
+        : [];
+
+    const userPayload = {
+        platform: doc.platform,
+        viralCategory: doc.viralCategory,
+        creatorSize: doc.creatorSize,
+        subscriberCount: doc.subscriberCount,
+        creatorHandle: doc.creatorHandle,
+        actualViews: doc.actualViews,
+        viralityScore: doc.viralityScore,
+        durationSeconds: doc.durationSeconds,
+        scenes: sceneBrief,
+        featureAnalysis: analysisBrief,
+    };
+
+    const completion = await openai.chat.completions.create({
+        model: CREATOR_PSYCH_MODEL,
+        temperature: 0.3,
+        messages: [
+            {
+                role: 'system',
+                content: `You write dense, retrieval-friendly summaries for a video performance knowledge base.
+Focus on PSYCHOLOGICAL and STRUCTURAL signals, not topic/niche (ignore whether content is cooking, finance, etc.).
+
+Cover when evident from the data:
+- Hook: pattern interrupt, curiosity gap, shock, relatability, controversy, transformation, or other technique
+- Pacing: implied cut rhythm, energy, silence vs density
+- Audio: trending sound vs original, voiceover, music energy
+- Caption/on-screen text: question, bold claim, incomplete sentence, CTA patterns
+- Emotional triggers: fear, desire, humor, inspiration, FOMO, etc.
+- Performance outcome: relate actual views to creator size (e.g. micro account vs viral outcome)
+
+Output 4-8 short paragraphs OR bullet sections as plain text only (no JSON, no markdown code fences). Start with a line: [CREATOR_PERFORMANCE_PROFILE]`,
+            },
+            {
+                role: 'user',
+                content: JSON.stringify(userPayload),
+            },
+        ],
+    });
+
+    const text = completion?.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+        throw new Error('Empty psychological summary from model');
+    }
+    return text;
+}
+
+export async function saveCreatorIngestKnowledge(doc) {
+    const psychSummary = await generateCreatorPsychologicalSummary(doc);
+    const kbDoc = await createKnowledgeBaseEntry(psychSummary, {
+        topic: 'general',
+        platform: doc.platform,
+        viralCategory: doc.viralCategory,
+        creatorSize: doc.creatorSize,
+        actualViews: doc.actualViews,
+        creatorHandle: doc.creatorHandle,
+        sourceType: 'creator_video',
+        source: 'admin_creator_ingest',
+        contentType: 'case_study',
+        ingestedAt: new Date(),
+        layer: 'example',
+        score: 0.9,
+    });
+    return {
+        knowledgeBaseEntryId: kbDoc._id.toString(),
+        psychologicalSignalsSummary: psychSummary,
+    };
+}
+
 export async function savePerformanceKnowledgeBase(doc, sourceType) {
     const content = buildPerformanceSummaryPayload(doc, sourceType);
     const metadata = {
         topic: 'views_predictor',
         platform: doc.platform,
-        niche: doc.niche,
         sourceType,
         source: 'admin_ingest',
         score: 0.9,
@@ -267,6 +319,9 @@ export async function savePerformanceKnowledgeBase(doc, sourceType) {
     if (sourceType === 'creator_video') {
         metadata.creatorHandle = doc.creatorHandle;
         metadata.subscriberCount = doc.subscriberCount;
+        metadata.viralCategory = doc.viralCategory;
+        metadata.creatorSize = doc.creatorSize;
+        metadata.actualViews = doc.actualViews;
     }
     await createKnowledgeBaseEntry(content, metadata);
 
@@ -274,16 +329,14 @@ export async function savePerformanceKnowledgeBase(doc, sourceType) {
     const retentionRate = doc.retentionRate;
     if (durationSeconds != null && retentionRate != null) {
         const platform = doc.platform;
-        const niche = doc.niche;
         const actualViews = doc.actualViews;
         const viralityScore = doc.viralityScore ?? 'N/A';
         const retentionInsight = retentionRate > 100
-            ? `SHORT VIDEO RETENTION INSIGHT: A ${durationSeconds}s video in the ${niche} niche on ${platform} achieved ${retentionRate}% retention (replay rate: ${(retentionRate / 100).toFixed(1)}x) and got ${actualViews} actual views. High retention on short videos indicates strong loop-ability and hook quality. Virality score was ${viralityScore}.`
-            : `VIDEO RETENTION DATA: A ${durationSeconds}s video in the ${niche} niche on ${platform} achieved ${retentionRate}% retention and got ${actualViews} actual views. Virality score was ${viralityScore}.`;
+            ? `SHORT VIDEO RETENTION INSIGHT: A ${durationSeconds}s short-form video on ${platform} achieved ${retentionRate}% retention (replay rate: ${(retentionRate / 100).toFixed(1)}x) and got ${actualViews} actual views. High retention on short videos indicates strong loop-ability and hook quality. Virality score was ${viralityScore}.`
+            : `VIDEO RETENTION DATA: A ${durationSeconds}s short-form video on ${platform} achieved ${retentionRate}% retention and got ${actualViews} actual views. Virality score was ${viralityScore}.`;
         await createKnowledgeBaseEntry(retentionInsight, {
             topic: 'views_predictor',
             platform,
-            niche,
             sourceType: doc.sourceType,
             contentType: 'case_study',
             ingestedAt: new Date(),

@@ -2,6 +2,7 @@ import openai from "../lib/openai.js";
 
 const DEFAULT_SYSTEM_PROMPT =
     "You are a concise video analytics assistant. Respond in plain text, without markdown, asterisk or emojis. Keep answers focused, neutral, and under 160 words unless otherwise specified.";
+const MAX_MESSAGE_CONTENT_CHARS = 12000;
 
 export const requestChatCompletion = async ({
     messages,
@@ -17,10 +18,17 @@ export const requestChatCompletion = async ({
     const finalMessages = systemPrompt
         ? [{ role: "system", content: systemPrompt }, ...messages]
         : messages;
+    const safeMessages = finalMessages.map((message) => ({
+        ...message,
+        content:
+            typeof message.content === "string" && message.content.length > MAX_MESSAGE_CONTENT_CHARS
+                ? message.content.slice(0, MAX_MESSAGE_CONTENT_CHARS)
+                : message.content
+    }));
 
     const response = await openai.chat.completions.create({
         model,
-        messages: finalMessages,
+        messages: safeMessages,
         temperature,
         max_tokens: maxTokens,
     });

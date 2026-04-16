@@ -7,6 +7,9 @@ import { BACKEND_URL } from '../config/index.js';
  * @returns {Promise<string>} Message ID (normalized string for v1 or v2 SDK)
  */
 export const publishVideoAnalysisJob = async (jobData) => {
+    if (!BACKEND_URL || String(BACKEND_URL).trim() === '') {
+        throw new Error('BACKEND_URL is required to publish QStash video analysis jobs');
+    }
     const qstash = getQStashClient();
     const webhookUrl = `${BACKEND_URL}/api/v1/videos/analyze`;
 

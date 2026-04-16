@@ -4,6 +4,8 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import { RedisStore } from 'rate-limit-redis';
+import { Redis } from '@upstash/redis';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 
@@ -13,7 +15,7 @@ import { ApiResponse } from './utils/ApiResponse.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 
-import { FRONTEND_URL, NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
+import { FRONTEND_URL, NODE_ENV, SESSION_SECRET, DB_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } from './config/index.js';
 import { EarlyAccess } from './model/early-access.model.js';
 import mongoose from 'mongoose';
 
@@ -44,9 +46,11 @@ const allowedOrigins = [
     "https://vireact.io",
     'https://vireact-frontend.vercel.app',
     "https://www.vireact.io",
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://192.168.1.112:5173"
+    ...(NODE_ENV === 'production' ? [] : [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://192.168.1.112:5173"
+    ])
 ].filter(Boolean);
 
 app.use(cors({
@@ -71,13 +75,51 @@ app.use(cors({
     maxAge: 86400 // 24 hours - cache preflight requests
 }));
 
-// Rate limiting (optional in dev)
-const limiter = rateLimit({
+// Rate limiting: auth + video uploads only (never global — QStash/Stripe webhooks must not be limited)
+let sharedRateLimitStore;
+try {
+    if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+        throw new Error('Upstash credentials are missing');
+    }
+    const upstashRedisClient = new Redis({
+        url: UPSTASH_REDIS_REST_URL,
+        token: UPSTASH_REDIS_REST_TOKEN
+    });
+    const redisClient = {
+        async sendCommand(args) {
+            const [command, ...rest] = args;
+            const method = String(command || '').toLowerCase();
+            if (typeof upstashRedisClient[method] !== 'function') {
+                throw new Error(`Unsupported Redis command for rate limiter: ${command}`);
+            }
+            return upstashRedisClient[method](...rest);
+        }
+    };
+    sharedRateLimitStore = new RedisStore({
+        sendCommand: (...args) => redisClient.sendCommand(args),
+    });
+    console.log('[RateLimit] Using Upstash Redis store');
+} catch (error) {
+    console.warn(`[RateLimit] Falling back to in-memory store: ${error.message}`);
+    sharedRateLimitStore = undefined;
+}
+
+const authRateLimit = rateLimit({
+    ...(sharedRateLimitStore ? { store: sharedRateLimitStore } : {}),
     windowMs: 15 * 60 * 1000,
     max: 100,
-    message: 'Too many requests, please try again later.'
+    message: 'Too many requests, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false
 });
-// app.use(limiter);
+const videoUploadRateLimit = rateLimit({
+    ...(sharedRateLimitStore ? { store: sharedRateLimitStore } : {}),
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    message: 'Too many upload requests, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 // Logging
 app.use(morgan('dev'));
@@ -137,6 +179,18 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Scoped rate limits: /api/v1/auth/* and /api/v1/videos/upload* only
+app.use((req, res, next) => {
+    const p = req.path || '';
+    if (p.startsWith('/api/v1/auth')) {
+        return authRateLimit(req, res, next);
+    }
+    if (p.startsWith('/api/v1/videos/upload')) {
+        return videoUploadRateLimit(req, res, next);
+    }
+    next();
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.status(200).json({
@@ -173,7 +227,7 @@ app.get('/api/health', async (req, res) => {
         }
         
         // Check external service configurations
-        const { TWELVE_LABS_API_KEY, TWELVE_LABS_INDEX_ID, OPENAI_API_KEY, JWT_SECRET } = await import('./config/index.js');
+        const { TWELVE_LABS_API_KEY, OPENAI_API_KEY, JWT_SECRET } = await import('./config/index.js');
         
         res.status(200).json({
             status: 'ok',
@@ -184,21 +238,17 @@ app.get('/api/health', async (req, res) => {
                 redis: redisStatus,
                 server: true,
                 twelveLabs: !!TWELVE_LABS_API_KEY,
-                twelveLabsIndexId: !!TWELVE_LABS_INDEX_ID,
+                twelveLabsUserIndex: !!process.env.TWELVELABS_USER_INDEX,
+                twelveLabsDatasetIndex: !!process.env.TWELVELABS_DATASET_INDEX,
                 openai: !!OPENAI_API_KEY,
                 jwt: !!JWT_SECRET
-            },
-            mongodb: {
-                connected: isConnected(),
-                host: mongoose.connection.host || 'unknown',
-                database: mongoose.connection.db?.databaseName || 'unknown'
             }
         });
     } catch (error) {
         res.status(500).json({
             status: 'error',
             timestamp: Date.now(),
-            error: error.message
+            error: 'health_check_failed'
         });
     }
 });
@@ -211,13 +261,11 @@ app.get('/api/db-status', async (req, res) => {
         
         res.status(200).json({
             connected: isConnected(),
-            readyState: mongoose.connection.readyState,
-            dbName: mongoose.connection.db?.databaseName || 'unknown',
-            host: mongoose.connection.host || 'unknown'
+            readyState: mongoose.connection.readyState
         });
     } catch (error) {
         res.status(500).json({
-            error: error.message
+            error: 'db_status_check_failed'
         });
     }
 });

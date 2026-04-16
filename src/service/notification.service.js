@@ -1,6 +1,6 @@
 import resend from "../lib/resend.js";
 import { User } from "../model/user.model.js";
-import { FRONTEND_URL } from "../config/index.js";
+import { FRONTEND_URL, RESEND_FROM_EMAIL } from "../config/index.js";
 
 /**
  * Send shorts ready notification email
@@ -44,7 +44,7 @@ export const notifyUserShortsReady = async (userEmail, videoTitle) => {
         `;
 
         const { data, error } = await resend.emails.send({
-            from: "support@vireact.io",
+            from: RESEND_FROM_EMAIL,
             to: userEmail,
             subject: "Your Short is Ready! 🎬",
             html
@@ -102,7 +102,7 @@ export const notifyUserExportReady = async (userEmail, exportType) => {
         `;
 
         const { data, error } = await resend.emails.send({
-            from: "support@vireact.io",
+            from: RESEND_FROM_EMAIL,
             to: userEmail,
             subject: "Your Export is Ready! 📦",
             html
@@ -160,7 +160,7 @@ export const notifyProductUpdate = async (featureName, featureDescription) => {
         const results = await Promise.allSettled(
             users.map((u) =>
                 resend.emails.send({
-                    from: "support@vireact.io",
+                    from: RESEND_FROM_EMAIL,
                     to: u.email,
                     subject: "New Feature Released! 🚀",
                     html

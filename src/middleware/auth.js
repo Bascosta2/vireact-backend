@@ -11,7 +11,9 @@ import { ACCESS_TOKEN_SECRET } from '../config/index.js';
 export const authenticateToken = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-        const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+        const bearerToken = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+        const cookieToken = req.cookies?.accessToken;
+        const token = bearerToken || cookieToken;
 
         if (!token) {
             throw new ApiError(401, 'Access token is required');
@@ -51,7 +53,9 @@ export const authenticateToken = async (req, res, next) => {
 export const optionalAuth = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-        const token = authHeader && authHeader.split(' ')[1];
+        const bearerToken = authHeader && authHeader.split(' ')[1];
+        const cookieToken = req.cookies?.accessToken;
+        const token = bearerToken || cookieToken;
 
         if (!token) {
             req.user = null;

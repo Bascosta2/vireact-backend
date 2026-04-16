@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-    // getPresignedUploadUrl,
+    getPresignedUploadUrl,
     confirmVideoUpload,
     getUserVideos,
     deleteVideo,
@@ -23,7 +23,7 @@ const videoRoutes = Router();
 videoRoutes.use(authenticateToken);
 
 // Get presigned URL for upload
-// videoRoutes.post('/presigned-url', getPresignedUploadUrl);
+videoRoutes.post('/presigned-url', getPresignedUploadUrl);
 
 // Re-queue analysis for an existing indexed video (authenticated)
 videoRoutes.post('/:videoId/reanalyze', reanalyzeVideo);

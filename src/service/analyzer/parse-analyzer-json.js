@@ -38,6 +38,46 @@ export function ratingToScore(rating) {
  * @param {string} response
  * @returns {{ tier: string, conservativeLow: number, conservativeHigh: number, expectedLow: number, expectedHigh: number, optimisticLow: number, optimisticHigh: number, confidence: number, reasoning?: string, suggestions?: string[] } | null}
  */
+/**
+ * Parse advanced analytics JSON: score/rating/reasoning/suggestions plus enrichment fields.
+ * @param {string} response
+ * @returns {{ score: number, rating: string, reasoning: string, suggestions: string[], emotionalTriggers: string[], retentionDrivers: string[], psychologicalProfile: string | null, weakestMoment: string | null } | null}
+ */
+export function parseAdvancedAnalyticsJson(response) {
+    if (response == null) return null;
+    const text = typeof response === 'string' ? response.trim() : '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+        const obj = JSON.parse(match[0]);
+        const score = Math.min(100, Math.max(0, Number(obj.score) ?? 0));
+        const asStringList = (v) =>
+            Array.isArray(v)
+                ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
+                : [];
+        const psych =
+            typeof obj.psychologicalProfile === 'string' && obj.psychologicalProfile.trim()
+                ? obj.psychologicalProfile.trim()
+                : null;
+        const weak =
+            typeof obj.weakestMoment === 'string' && obj.weakestMoment.trim()
+                ? obj.weakestMoment.trim()
+                : null;
+        return {
+            score,
+            rating: obj.rating || 'Unknown',
+            reasoning: obj.reasoning || obj.feedback || '',
+            suggestions: Array.isArray(obj.suggestions) ? obj.suggestions : [],
+            emotionalTriggers: asStringList(obj.emotionalTriggers),
+            retentionDrivers: asStringList(obj.retentionDrivers),
+            psychologicalProfile: psych,
+            weakestMoment: weak,
+        };
+    } catch {
+        return null;
+    }
+}
+
 export function parseViewsPredictorJson(response) {
     if (response == null) return null;
     const text = typeof response === 'string' ? response.trim() : '';

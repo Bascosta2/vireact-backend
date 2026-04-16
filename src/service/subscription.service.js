@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import { Subscription } from '../model/subscription.model.js';
+import { StripeWebhookEvent } from '../model/stripe-webhook-event.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS } from '../constants.js';
 import stripe from '../lib/stripe.js';
@@ -99,9 +101,11 @@ export const checkChatLimit = async (userId) => {
 export const incrementVideoUsage = async (userId) => {
     const subscription = await getOrCreateSubscription(userId);
     await checkAndResetPeriod(subscription);
-
+    await Subscription.updateOne(
+        { _id: subscription._id },
+        { $inc: { 'usage.videosUsed': 1 } }
+    );
     subscription.usage.videosUsed += 1;
-    await subscription.save();
 
     console.log(`[Subscription] Incremented video usage for user ${userId}: ${subscription.usage.videosUsed}/${PLAN_LIMITS[subscription.plan].videosPerMonth}`);
 
@@ -112,9 +116,11 @@ export const incrementVideoUsage = async (userId) => {
 export const incrementChatUsage = async (userId) => {
     const subscription = await getOrCreateSubscription(userId);
     await checkAndResetPeriod(subscription);
-
+    await Subscription.updateOne(
+        { _id: subscription._id },
+        { $inc: { 'usage.chatMessagesUsed': 1 } }
+    );
     subscription.usage.chatMessagesUsed += 1;
-    await subscription.save();
 
     console.log(`[Subscription] Incremented chat usage for user ${userId}: ${subscription.usage.chatMessagesUsed}/${PLAN_LIMITS[subscription.plan].chatMessagesPerMonth}`);
 
@@ -179,6 +185,18 @@ export const createCheckoutSession = async (userId, userEmail, plan) => {
 // Handle Stripe webhook events
 export const handleStripeWebhook = async (event) => {
     console.log(`[Stripe Webhook] Received event: ${event.type}`);
+    try {
+        await StripeWebhookEvent.create({
+            eventId: event.id,
+            type: event.type
+        });
+    } catch (error) {
+        if (error?.code === 11000) {
+            console.log(`[Stripe Webhook] Duplicate event ignored: ${event.id}`);
+            return;
+        }
+        throw error;
+    }
 
     switch (event.type) {
         case 'checkout.session.completed':
@@ -186,6 +204,10 @@ export const handleStripeWebhook = async (event) => {
             break;
 
         case 'customer.subscription.updated':
+            await handleSubscriptionUpdated(event.data.object);
+            break;
+
+        case 'customer.subscription.created':
             await handleSubscriptionUpdated(event.data.object);
             break;
 
@@ -208,8 +230,8 @@ export const handleStripeWebhook = async (event) => {
 
 // Handle checkout session completed
 async function handleCheckoutCompleted(session) {
-    const userId = session.metadata.userId;
-    const plan = session.metadata.plan;
+    const userId = session.metadata?.userId;
+    const plan = session.metadata?.plan;
     const stripeSubscriptionId = session.subscription;
 
     if (!userId || !plan) {
@@ -217,28 +239,64 @@ async function handleCheckoutCompleted(session) {
         return;
     }
 
-    const subscription = await Subscription.findOne({ userId });
-    if (!subscription) {
-        console.error(`[Stripe Webhook] Subscription not found for user ${userId}`);
+    if (!mongoose.isValidObjectId(userId)) {
+        console.error(`[Stripe Webhook] Invalid userId in session metadata: ${userId}`);
         return;
     }
 
-    // Get Stripe subscription details
-    const stripeSubscription = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    if (plan !== SUBSCRIPTION_PLANS.STARTER && plan !== SUBSCRIPTION_PLANS.PRO) {
+        console.error(`[Stripe Webhook] Invalid plan in session metadata: ${plan}`);
+        return;
+    }
 
-    // Update subscription
+    if (!stripeSubscriptionId || !stripe) {
+        console.error('[Stripe Webhook] Missing subscription id or Stripe client');
+        return;
+    }
+
+    let subscription = await Subscription.findOne({ userId });
+    const stripeSubscription = await stripe.subscriptions.retrieve(stripeSubscriptionId);
     const now = new Date();
     const periodEnd = new Date(stripeSubscription.current_period_end * 1000);
+    const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
+
+    if (!subscription) {
+        subscription = new Subscription({
+            userId,
+            plan,
+            status: SUBSCRIPTION_STATUS.ACTIVE,
+            currentPeriodStart: now,
+            currentPeriodEnd: periodEnd,
+            usage: {
+                videosUsed: 0,
+                chatMessagesUsed: 0,
+                lastResetAt: now
+            },
+            stripeSubscriptionId,
+            stripeCustomerId: customerId || undefined,
+            stripePriceId: stripeSubscription.items.data[0]?.price?.id,
+            paymentFailed: false,
+            paymentFailedAt: null
+        });
+        await subscription.save();
+        console.log(`[Stripe Webhook] Created subscription for user ${userId}, plan ${plan}`);
+        return;
+    }
 
     subscription.plan = plan;
     subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     subscription.stripeSubscriptionId = stripeSubscriptionId;
     subscription.stripePriceId = stripeSubscription.items.data[0].price.id;
+    if (customerId) {
+        subscription.stripeCustomerId = customerId;
+    }
     subscription.currentPeriodStart = now;
     subscription.currentPeriodEnd = periodEnd;
     subscription.usage.videosUsed = 0;
     subscription.usage.chatMessagesUsed = 0;
     subscription.usage.lastResetAt = now;
+    subscription.paymentFailed = false;
+    subscription.paymentFailedAt = null;
 
     await subscription.save();
 
@@ -297,6 +355,8 @@ async function handleSubscriptionDeleted(stripeSubscription) {
     subscription.usage.videosUsed = 0;
     subscription.usage.chatMessagesUsed = 0;
     subscription.usage.lastResetAt = now;
+    subscription.paymentFailed = false;
+    subscription.paymentFailedAt = null;
 
     await subscription.save();
 
@@ -321,6 +381,8 @@ async function handlePaymentSucceeded(invoice) {
     subscription.usage.videosUsed = 0;
     subscription.usage.chatMessagesUsed = 0;
     subscription.usage.lastResetAt = now;
+    subscription.paymentFailed = false;
+    subscription.paymentFailedAt = null;
 
     await subscription.save();
 
@@ -340,8 +402,11 @@ async function handlePaymentFailed(invoice) {
         return;
     }
 
-    console.log(`[Stripe Webhook] Payment failed for user ${subscription.userId}`);
-    // Stripe will handle retries automatically
+    subscription.paymentFailed = true;
+    subscription.paymentFailedAt = new Date();
+    await subscription.save();
+
+    console.log(`[Stripe Webhook] Payment failed recorded for user ${subscription.userId} (access unchanged; Stripe dunning)`);
 }
 
 // Cancel subscription (immediate downgrade to FREE)
@@ -377,6 +442,8 @@ export const cancelSubscription = async (userId) => {
     subscription.usage.videosUsed = 0;
     subscription.usage.chatMessagesUsed = 0;
     subscription.usage.lastResetAt = now;
+    subscription.paymentFailed = false;
+    subscription.paymentFailedAt = null;
 
     await subscription.save();
 

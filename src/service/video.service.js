@@ -5,8 +5,14 @@ import { ApiError } from '../utils/ApiError.js';
 import { UPLOAD_STATUS, ANALYSIS_STATUS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
 import mongoose from 'mongoose';
-import { AWS_S3_BUCKET_NAME, TWELVE_LABS_INDEX_ID } from '../config/index.js';
+import { AWS_S3_BUCKET_NAME, TWELVELABS_USER_INDEX } from '../config/index.js';
 import TwelveLabsClient from '../lib/twelve-labs.js';
+import {
+    twelveLabsCreateDirectAsset,
+    twelveLabsCreateUrlAsset,
+} from '../lib/twelve-labs-ingest.helper.js';
+import { isAllowedSocialVideoUrl } from '../lib/social-video-url.js';
+import { downloadSocialVideoForIngest } from './social-video-fetch.service.js';
 import { Readable } from 'stream';
 
 export const waitForAssetReady = async (assetId, initialStatus) => {
@@ -31,15 +37,15 @@ export const waitForAssetReady = async (assetId, initialStatus) => {
     }
 };
 
-export const indexAssetWithRetry = async (assetId) => {
-    if (!TWELVE_LABS_INDEX_ID) {
-        throw new Error('TWELVE_LABS_INDEX_ID is not configured. Please set it in your environment variables.');
+export const indexAssetWithRetry = async (assetId, indexId) => {
+    if (!indexId || String(indexId).trim() === '') {
+        throw new Error('Twelve Labs index id is required for indexing.');
     }
 
-    console.log(`📚 Indexing asset ${assetId} into index ${TWELVE_LABS_INDEX_ID}...`);
+    console.log(`📚 Indexing asset ${assetId} into index ${indexId}...`);
 
     const indexResponse = await TwelveLabsClient.indexes.indexedAssets.create(
-        TWELVE_LABS_INDEX_ID,
+        indexId,
         {
             assetId,
             enableVideoStream: true
@@ -61,7 +67,7 @@ export const indexAssetWithRetry = async (assetId) => {
         await new Promise(resolve => setTimeout(resolve, 5000));
         try {
             const indexedAsset = await TwelveLabsClient.indexes.indexedAssets.retrieve(
-                TWELVE_LABS_INDEX_ID,
+                indexId,
                 indexedAssetId
             );
             indexedStatus = indexedAsset?.status;
@@ -209,11 +215,11 @@ export const deleteVideoService = async (videoId, userId) => {
         }
 
         // Delete from TwelveLabs indexed video (from index) first
-        if (video.twelveLabsVideoId && TWELVE_LABS_INDEX_ID) {
+        if (video.twelveLabsVideoId && TWELVELABS_USER_INDEX) {
             try {
-                console.log(`[Delete] Deleting TwelveLabs indexed video: ${video.twelveLabsVideoId} from index: ${TWELVE_LABS_INDEX_ID}`);
+                console.log(`[Delete] Deleting TwelveLabs indexed video: ${video.twelveLabsVideoId} from index: ${TWELVELABS_USER_INDEX}`);
                 await TwelveLabsClient.indexes.indexedAssets.delete(
-                    TWELVE_LABS_INDEX_ID,
+                    TWELVELABS_USER_INDEX,
                     video.twelveLabsVideoId
                 );
                 console.log(`[Delete] Successfully deleted TwelveLabs indexed video: ${video.twelveLabsVideoId}`);
@@ -318,6 +324,10 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
         await video.save();
 
         try {
+            if (!TWELVELABS_USER_INDEX) {
+                throw new ApiError(500, 'TWELVELABS_USER_INDEX is not configured. Please set it in your environment variables.');
+            }
+
             // Upload to TwelveLabs using direct method
             // Convert buffer to Stream as TwelveLabs SDK expects a Stream
             let fileToUpload;
@@ -337,27 +347,12 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             }
             
             console.log(`📤 Uploading file to TwelveLabs: ${filename}, size: ${file.size || file.buffer?.length || 'unknown'}`);
-            
-            const assetResponse = await TwelveLabsClient.assets.create({
-                method: 'direct',
-                file: fileToUpload
-            });
-            
-            // Log full response to understand structure
+
+            const assetResponse = await twelveLabsCreateDirectAsset(fileToUpload);
+
             console.log(`📦 TwelveLabs response:`, JSON.stringify(assetResponse, null, 2));
 
-            // Check if upload failed based on status
-            if (assetResponse?.status === 'failed') {
-                throw new Error(`TwelveLabs upload failed: ${assetResponse.error || 'Unknown error'}`);
-            }
-
-            // Extract asset ID from response (response uses 'id' not '_id')
             const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
-
-            if (!twelveLabsAssetId) {
-                console.error('❌ Could not find asset ID in response. Response structure:', assetResponse);
-                throw new Error('Failed to get asset ID from TwelveLabs response');
-            }
 
             console.log(`✅ TwelveLabs upload successful, asset ID: ${twelveLabsAssetId}, status: ${assetResponse?.status || 'unknown'}`);
 
@@ -367,7 +362,7 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
 
             // Index the asset into an index to get a video ID (required for analysis)
-            const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId);
+            const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_USER_INDEX);
             const twelveLabsVideoId = indexedAssetId;
 
             console.log(`✅ Asset indexed successfully, video ID: ${twelveLabsVideoId}`);
@@ -389,11 +384,13 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
                 });
                 console.log(`[Service] Analysis job published to QStash for video ${video._id}, TwelveLabs video ID: ${twelveLabsVideoId}, messageId: ${messageId}`);
             } catch (queueError) {
-                // Log error but don't fail the upload
+                const errMsg = 'Failed to queue analysis job. Please use Re-analyze.';
                 console.error(`[Service] Failed to publish analysis job to QStash for video ${video._id}:`, queueError.message);
-                // Set status back to pending if queue fails
-                video.analysisStatus = ANALYSIS_STATUS.PENDING;
+                video.analysisStatus = ANALYSIS_STATUS.FAILED;
+                video.lastError = errMsg;
+                video.lastErrorAt = new Date();
                 await video.save();
+                throw new ApiError(502, errMsg);
             }
 
             return video;
@@ -450,28 +447,28 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
         await video.save();
 
         try {
-            // Upload to TwelveLabs using URL method
-            const assetResponse = await TwelveLabsClient.assets.create({
-                method: 'url',
-                url: url
-            });
-
-            console.log(`📦 TwelveLabs URL upload response:`, JSON.stringify(assetResponse, null, 2));
-
-            // Check if upload failed based on status
-            if (assetResponse?.status === 'failed') {
-                throw new Error(`TwelveLabs URL upload failed: ${assetResponse.error || 'Unknown error'}`);
+            if (!TWELVELABS_USER_INDEX) {
+                throw new ApiError(500, 'TWELVELABS_USER_INDEX is not configured. Please set it in your environment variables.');
             }
 
-            // Extract asset ID from response (response uses 'id' not '_id')
+            let assetResponse;
+            if (isAllowedSocialVideoUrl(url)) {
+                const { buffer, metadata, byteLength } = await downloadSocialVideoForIngest(url);
+                video.fileSize = byteLength;
+                video.sourceUrl = url;
+                if (metadata.title) video.sourceTitle = metadata.title;
+                if (metadata.description) video.sourceDescription = metadata.description;
+                await video.save();
+                assetResponse = await twelveLabsCreateDirectAsset(Readable.from(buffer));
+                console.log(`📦 TwelveLabs direct upload (social URL fetch), asset status: ${assetResponse?.status || 'unknown'}`);
+            } else {
+                assetResponse = await twelveLabsCreateUrlAsset(url);
+                console.log(`📦 TwelveLabs URL upload response:`, JSON.stringify(assetResponse, null, 2));
+            }
+
             const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
 
-            if (!twelveLabsAssetId) {
-                console.error('❌ Could not find asset ID in response. Response structure:', assetResponse);
-                throw new Error('Failed to get asset ID from TwelveLabs response');
-            }
-
-            console.log(`✅ TwelveLabs URL upload successful, asset ID: ${twelveLabsAssetId}, status: ${assetResponse?.status || 'unknown'}`);
+            console.log(`✅ TwelveLabs upload successful, asset ID: ${twelveLabsAssetId}, status: ${assetResponse?.status || 'unknown'}`);
 
             // Store asset ID
             video.twelveLabsAssetId = twelveLabsAssetId;
@@ -479,7 +476,7 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
             await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
 
             // Index the asset into an index to get a video ID (required for analysis)
-            const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId);
+            const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_USER_INDEX);
             const twelveLabsVideoId = indexedAssetId;
 
             console.log(`✅ Asset indexed successfully, video ID: ${twelveLabsVideoId}`);
@@ -501,19 +498,23 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
                 });
                 console.log(`[Service] Analysis job published to QStash for video ${video._id}, TwelveLabs video ID: ${twelveLabsVideoId}, messageId: ${messageId}`);
             } catch (queueError) {
-                // Log error but don't fail the upload
+                const errMsg = 'Failed to queue analysis job. Please use Re-analyze.';
                 console.error(`[Service] Failed to publish analysis job to QStash for video ${video._id}:`, queueError.message);
-                // Set status back to pending if queue fails
-                video.analysisStatus = ANALYSIS_STATUS.PENDING;
+                video.analysisStatus = ANALYSIS_STATUS.FAILED;
+                video.lastError = errMsg;
+                video.lastErrorAt = new Date();
                 await video.save();
+                throw new ApiError(502, errMsg);
             }
 
             return video;
-        } catch (twelveLabsError) {
-            // If TwelveLabs upload fails, mark video as failed
+        } catch (ingestErr) {
             video.uploadStatus = UPLOAD_STATUS.FAILED;
             await video.save();
-            throw new ApiError(500, `Failed to upload URL to TwelveLabs: ${twelveLabsError.message}`);
+            if (ingestErr instanceof ApiError) {
+                throw ingestErr;
+            }
+            throw new ApiError(500, `Failed to upload URL to TwelveLabs: ${ingestErr.message}`);
         }
     } catch (error) {
         if (error instanceof ApiError) {

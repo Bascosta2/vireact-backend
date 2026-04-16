@@ -28,6 +28,11 @@ function getFeatureEntry(analysisArray, featureName) {
         rating: entry.rating ?? null,
         feedback: entry.feedback ?? null,
         suggestions: Array.isArray(entry.suggestions) ? entry.suggestions : [],
+        emotionalTriggers: Array.isArray(entry.emotionalTriggers) ? entry.emotionalTriggers : [],
+        retentionDrivers: Array.isArray(entry.retentionDrivers) ? entry.retentionDrivers : [],
+        psychologicalProfile: entry.psychologicalProfile ?? null,
+        weakestMoment: entry.weakestMoment ?? null,
+        analyzedAt: entry.analyzedAt ?? null,
     };
 }
 
@@ -86,6 +91,7 @@ export function buildVideoAnalysisDTO(video) {
             audio: getFeatureScore(analysis, 'audio'),
             caption: getFeatureScore(analysis, 'caption'),
             viewsPredictor: getFeatureScore(analysis, 'views_predictor'),
+            advanced: getFeatureScore(analysis, 'advanced_analytics'),
         },
         predictedViews: {
             low: video.predictedViewsLow ?? null,
@@ -111,8 +117,9 @@ export function buildVideoAnalysisDTO(video) {
 export function buildVideoWithAnalysisResponse(video) {
     if (!video) return null;
     const doc = video.toObject ? video.toObject() : video;
+    const { lastError, lastErrorAt, ...safeDoc } = doc;
     return {
-        ...doc,
+        ...safeDoc,
         id: doc._id?.toString(),
         analysis: buildVideoAnalysisDTO(doc)
     };

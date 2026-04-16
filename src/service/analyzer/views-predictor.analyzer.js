@@ -69,7 +69,7 @@ export const analyzeViewsPredictor = async (scenes) => {
                 index: KNOWLEDGE_BASE_VECTOR_INDEX,
                 queryVector: predictorEmbedding,
                 path: "embedding",
-                filter: { "metadata.topic": "views_predictor" },
+                filter: { "metadata.topic": { $in: ["views_predictor", "general"] } },
                 limit: 10,
                 numCandidates: 100
             }

@@ -2,9 +2,10 @@ import { requestChatCompletion } from "../openai-response.service.js";
 import openai from "../../lib/openai.js";
 import { KnowledgeBase } from "../../model/knowledge-base.model.js";
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
-import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+import { parseAdvancedAnalyticsJson, ratingToScore } from "./parse-analyzer-json.js";
 
-const JSON_SYSTEM = "You are a concise video analytics expert. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
+const JSON_SYSTEM =
+    "You are a video psychology expert analyzing short-form content. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (string[]), emotionalTriggers (string[]), retentionDrivers (string[]), psychologicalProfile (string), weakestMoment (string or null). No markdown, no code fence.";
 
 export const analyzeAdvancedAnalytics = async (scenes) => {
     if (!scenes || scenes.length === 0) {
@@ -64,7 +65,7 @@ export const analyzeAdvancedAnalytics = async (scenes) => {
                 index: KNOWLEDGE_BASE_VECTOR_INDEX,
                 queryVector: analyticsEmbedding,
                 path: "embedding",
-                filter: { "metadata.topic": "advanced_analytics" },
+                filter: { "metadata.topic": { $in: ["advanced_analytics", "general"] } },
                 limit: 10,
                 numCandidates: 100
             }
@@ -81,7 +82,7 @@ export const analyzeAdvancedAnalytics = async (scenes) => {
     const prompt = `
 You are an expert psychological content reviewer trained on Bas's mindset and advanced analytics principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
 
-BAS'S ADVANCED ANALYTICS INSIGHTS AND EXAMPLES:
+BAS'S INSIGHTS (RETRIEVED RAG CHUNKS):
 ${ragContext}
 
 Analyze this short-form social media video using advanced analytics metrics.
@@ -131,19 +132,36 @@ TASK:
 
 3. List up to two actionable improvements for better video performance.
 
+4. emotionalTriggers: short labels (e.g. "curiosity gap", "social proof", "urgency") grounded in psychological principles that appear or are implied in BAS'S INSIGHTS (RETRIEVED RAG CHUNKS). Cite the principle(s) from those chunks when possible.
+
+5. retentionDrivers: concrete drivers (e.g. "pattern interrupt at 0:08", "strong hook payoff") grounded in the same retrieved insights and the scene data below. Cite the principle(s) from BAS'S INSIGHTS when possible.
+
+6. psychologicalProfile: 1-2 sentences summarizing the video's overall psychological strategy.
+
+7. weakestMoment: a single string with timestamp + reason (e.g. "0:14 — pacing drops, viewer likely swipes"), or null if none stands out.
+
 Return ONLY a valid JSON object with this exact shape, no other text:
-{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
+{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"], "emotionalTriggers": ["<trigger 1>", "..."], "retentionDrivers": ["<driver 1>", "..."], "psychologicalProfile": "<1-2 sentences>", "weakestMoment": "<timestamp — reason>" | null}
 `;
 
     const response = await requestChatCompletion({
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
-        maxTokens: 320,
+        maxTokens: 560,
         systemPrompt: JSON_SYSTEM,
     });
 
-    const parsed = parseAnalyzerJson(response);
+    const parsed = parseAdvancedAnalyticsJson(response);
     if (parsed) return parsed;
     const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
-    return { score: fallbackScore, rating: "Unknown", reasoning: response || "", suggestions: [] };
+    return {
+        score: fallbackScore,
+        rating: "Unknown",
+        reasoning: response || "",
+        suggestions: [],
+        emotionalTriggers: [],
+        retentionDrivers: [],
+        psychologicalProfile: null,
+        weakestMoment: null,
+    };
 }

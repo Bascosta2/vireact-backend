@@ -28,36 +28,14 @@ import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
 import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from '../service/scene-parser.service.js';
 
-// export const getPresignedUploadUrl = async (req, res, next) => {
-//     try {
-//         const { filename, contentType, selectedFeatures } = req.body;
-//         const userId = req.user._id;
-
-//         if (!filename || !contentType) {
-//             throw new ApiError(400, 'Filename and content type are required');
-//         }
-
-//         const result = await generatePresignedUploadUrlService(
-//             userId,
-//             filename,
-//             contentType,
-//             selectedFeatures
-//         );
-
-//         console.log("Pre Signed URL Generation Response", result)
-
-//         res.status(200).json(
-//             ApiResponse.success(
-//                 200,
-//                 'Presigned URL generated successfully',
-//                 result
-//             )
-//         );
-//     } catch (error) {
-//         // console.log("Pre Signed URL Generation Error", error)
-//         next(error);
-//     }
-// };
+export const getPresignedUploadUrl = async (req, res) => {
+    return res.status(410).json(
+        ApiResponse.error(
+            410,
+            'Presigned URL upload flow is no longer supported. Use /videos/upload-file or /videos/upload-url.'
+        )
+    );
+};
 
 export const confirmVideoUpload = async (req, res, next) => {
     try {
@@ -147,6 +125,40 @@ export const markAnalysisViewed = async (req, res, next) => {
     }
 };
 
+/** Safe copy for clients when analysis failed — never expose raw provider strings. */
+function getVideoStatusErrorSummary(analysisStatus, lastError) {
+    if (analysisStatus !== ANALYSIS_STATUS.FAILED) {
+        return undefined;
+    }
+    const q = typeof lastError === 'string' && lastError.includes('queue analysis job');
+    if (q) {
+        return 'Failed to queue analysis job. Please use Re-analyze.';
+    }
+    return 'Analysis could not be completed. Try Re-analyze, or contact support if this persists.';
+}
+
+const extractScore = (raw) => {
+    if (typeof raw === 'number' && !isNaN(raw)) {
+        return Math.round(Math.min(100, Math.max(0, raw)));
+    }
+    if (typeof raw === 'string') {
+        const parsed = parseFloat(raw);
+        if (!isNaN(parsed)) return Math.round(Math.min(100, Math.max(0, parsed)));
+    }
+    return null;
+};
+
+const ratingFallback = (rating) => {
+    if (!rating) return null;
+    const r = String(rating).toLowerCase().trim();
+    if (['strong', 'excellent', 'high'].includes(r)) return 80;
+    if (['good', 'above average'].includes(r)) return 68;
+    if (['medium', 'average', 'moderate'].includes(r)) return 52;
+    if (['weak', 'poor', 'low'].includes(r)) return 28;
+    if (['very weak', 'very poor'].includes(r)) return 15;
+    return null;
+};
+
 export const getVideoStatus = async (req, res, next) => {
     try {
         const { videoId } = req.params;
@@ -156,10 +168,14 @@ export const getVideoStatus = async (req, res, next) => {
             throw new ApiError(400, 'Video ID is required');
         }
 
-        const video = await Video.findOne({ _id: videoId, uploader_id: userId }).select('uploadStatus analysisStatus isAnalysisReady').lean();
+        const video = await Video.findOne({ _id: videoId, uploader_id: userId })
+            .select('uploadStatus analysisStatus isAnalysisReady lastError lastErrorAt')
+            .lean();
         if (!video) {
             throw new ApiError(404, 'Video not found');
         }
+
+        const errorSummary = getVideoStatusErrorSummary(video.analysisStatus, video.lastError);
 
         res.status(200).json(
             ApiResponse.success(
@@ -169,6 +185,7 @@ export const getVideoStatus = async (req, res, next) => {
                     uploadStatus: video.uploadStatus,
                     analysisStatus: video.analysisStatus,
                     isAnalysisReady: video.isAnalysisReady,
+                    ...(errorSummary ? { errorSummary } : {}),
                 }
             )
         );
@@ -277,28 +294,8 @@ export const processVideoAnalysis = async (req, res) => {
     const { videoId, twelveLabsVideoId, userId } = req.body || {};
 
     if (!videoId) {
-        return res.status(400).json(
-            ApiResponse.error(400, 'Video ID is required')
-        );
-    }
-
-    let video;
-    try {
-        video = await Video.findById(videoId);
-    } catch (dbErr) {
-        console.error('[QStash] DB lookup failed:', dbErr.message);
-        return res.status(500).json(ApiResponse.error(500, 'DB error'));
-    }
-
-    if (!video) {
-        return res.status(404).json(ApiResponse.error(404, `Video ${videoId} not found`));
-    }
-
-    console.log('[QStash] Video loaded from DB, id:', videoId, 'analysisStatus:', video.analysisStatus);
-
-    if (video.analysisStatus === ANALYSIS_STATUS.COMPLETED) {
-        console.log('[QStash] Video already completed, skipping:', videoId);
-        return res.status(200).json({ received: true, skipped: true, videoId });
+        console.error('[QStash] Missing videoId in request body; acking without retry');
+        return res.status(200).json({ received: true });
     }
 
     res.status(200).json({ received: true, videoId });
@@ -308,16 +305,33 @@ export const processVideoAnalysis = async (req, res) => {
         let video;
         try {
             console.log('[QStash] Background analysis started for:', videoId);
-
-            video = await Video.findById(videoId);
-            if (!video) {
-                console.error('[QStash] Background: video not found:', videoId);
+            try {
+                video = await Video.findOneAndUpdate(
+                    {
+                        _id: videoId,
+                        analysisStatus: {
+                            $nin: [ANALYSIS_STATUS.COMPLETED, ANALYSIS_STATUS.PROCESSING]
+                        }
+                    },
+                    { $set: { analysisStatus: ANALYSIS_STATUS.PROCESSING } },
+                    { new: true }
+                );
+            } catch (dbErr) {
+                console.error('[QStash] DB claim failed:', dbErr.message);
                 return;
             }
 
-            video.analysisStatus = ANALYSIS_STATUS.PROCESSING;
-            await video.save();
-            console.log('[QStash] Status set to processing for:', videoId);
+            if (!video) {
+                const existing = await Video.findById(videoId).select('analysisStatus').lean();
+                if (!existing) {
+                    console.error('[QStash] Background: video not found:', videoId);
+                } else {
+                    console.log('[QStash] Video already claimed or completed, skipping:', videoId, existing.analysisStatus);
+                }
+                return;
+            }
+
+            console.log('[QStash] Video claimed for processing, id:', videoId, 'analysisStatus:', video.analysisStatus);
 
             const indexedVideoId = video.twelveLabsVideoId || twelveLabsVideoId;
 
@@ -384,12 +398,18 @@ export const processVideoAnalysis = async (req, res) => {
             const extractAnalysisData = (result, featureName) => {
                 const analysisData = {
                     feature: featureName,
-                    score: undefined,
+                    score: null,
                     rating: null,
                     feedback: null,
                     suggestions: [],
                     analyzedAt: new Date()
                 };
+                if (featureName === 'advanced_analytics') {
+                    analysisData.emotionalTriggers = [];
+                    analysisData.retentionDrivers = [];
+                    analysisData.psychologicalProfile = null;
+                    analysisData.weakestMoment = null;
+                }
 
                 if (typeof result === 'string') {
                     const ratingMatch = result.match(/rating[:\-\s]*([^\n]+)/i);
@@ -397,6 +417,7 @@ export const processVideoAnalysis = async (req, res) => {
                     const suggestionsMatch = result.match(/suggestions?:[\s\S]*?(-[^\n]+(?:[\s\S]*?-.*?)?)/i);
                     if (ratingMatch) analysisData.rating = ratingMatch[1].trim();
                     if (reasoningMatch) analysisData.feedback = reasoningMatch[1].trim();
+                    analysisData.score = ratingFallback(analysisData.rating);
                     if (suggestionsMatch) {
                         const suggestionLines = (suggestionsMatch[1] || '').match(/-[^\n]+/g) || [];
                         analysisData.suggestions = suggestionLines.map(s => s.replace(/^-\s*/, '').trim()).filter(Boolean);
@@ -407,7 +428,13 @@ export const processVideoAnalysis = async (req, res) => {
                     analysisData.rating = result.rating ?? null;
                     analysisData.feedback = result.reasoning ?? result.feedback ?? null;
                     analysisData.suggestions = Array.isArray(result.suggestions) ? result.suggestions : [];
-                    if (typeof result.score === 'number') analysisData.score = Math.min(100, Math.max(0, result.score));
+                    analysisData.score = extractScore(result.score) ?? ratingFallback(result.rating);
+                    if (featureName === 'advanced_analytics') {
+                        analysisData.emotionalTriggers = Array.isArray(result.emotionalTriggers) ? result.emotionalTriggers : [];
+                        analysisData.retentionDrivers = Array.isArray(result.retentionDrivers) ? result.retentionDrivers : [];
+                        analysisData.psychologicalProfile = result.psychologicalProfile ?? null;
+                        analysisData.weakestMoment = result.weakestMoment ?? null;
+                    }
                 }
 
                 return analysisData;
@@ -462,7 +489,7 @@ export const processVideoAnalysis = async (req, res) => {
                             video.predictedViewsExpected = Math.round((analysisResult.expectedLow + analysisResult.expectedHigh) / 2);
                             video.analysis.push({
                                 feature: 'views_predictor',
-                                score: tierToScore(analysisResult.tier),
+                                score: extractScore(tierToScore(analysisResult.tier)) ?? ratingFallback(analysisResult.tier),
                                 rating: analysisResult.tier || 'medium',
                                 feedback: analysisResult.reasoning || null,
                                 suggestions: Array.isArray(analysisResult.suggestions) ? analysisResult.suggestions : [],
@@ -480,9 +507,9 @@ export const processVideoAnalysis = async (req, res) => {
                     };
                     video.analysis.push({
                         feature,
-                        score: undefined,
+                        score: null,
                         rating: null,
-                        feedback: `Analysis failed: ${featureError.message}`,
+                        feedback: 'Analysis could not be completed for this feature.',
                         suggestions: [],
                         analyzedAt: new Date()
                     });
@@ -506,6 +533,11 @@ export const processVideoAnalysis = async (req, res) => {
             }
 
             video.retentionCurve = computeRetentionCurve(video);
+
+            const nullScoreFeatures = video.analysis.filter(a => a.score == null).map(a => a.feature);
+            if (nullScoreFeatures.length > 0) {
+                console.warn('[Analysis] Null score persisted for features:', nullScoreFeatures);
+            }
 
             video.analysisStatus = ANALYSIS_STATUS.COMPLETED;
             video.isAnalysisReady = true;

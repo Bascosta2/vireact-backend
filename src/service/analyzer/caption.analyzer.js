@@ -38,7 +38,7 @@ export const analyzeCaption = async (scenes) => {
                 index: KNOWLEDGE_BASE_VECTOR_INDEX,
                 queryVector: captionEmbedding,
                 path: "embedding",
-                filter: { "metadata.topic": "caption" },
+                filter: { "metadata.topic": { $in: ["caption", "general"] } },
                 limit: 10,
                 numCandidates: 100
             }

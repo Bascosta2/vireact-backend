@@ -19,8 +19,9 @@ export function verifyQStashAndParseBody(req, res, next) {
             const currentSigningKey = process.env.QSTASH_CURRENT_SIGNING_KEY || '';
             const nextSigningKey = process.env.QSTASH_NEXT_SIGNING_KEY || '';
 
-            if (!currentSigningKey && !nextSigningKey) {
-                console.warn('[QStash Verify] No signing keys; skipping signature verification');
+            if (!currentSigningKey || !nextSigningKey) {
+                console.error('[QStash Verify] Missing signing keys; refusing webhook verification');
+                return res.status(401).json({ error: 'Signing keys are not configured' });
             } else {
                 const receiver = new Receiver({
                     currentSigningKey,

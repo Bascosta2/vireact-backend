@@ -65,7 +65,7 @@ export const analyzeAudio = async (scenes) => {
                 index: KNOWLEDGE_BASE_VECTOR_INDEX,
                 queryVector: audioEmbedding,
                 path: "embedding",
-                filter: { "metadata.topic": "audio" },
+                filter: { "metadata.topic": { $in: ["audio", "general"] } },
                 limit: 10,
                 numCandidates: 100
             }

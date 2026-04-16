@@ -4,8 +4,9 @@ import { ApiResponse } from '../utils/ApiResponse.js';
 import { VideoPerformanceDataset } from '../model/VideoPerformanceDataset.model.js';
 import {
     ingestPairedVideo,
-    ingestCreatorVideo,
+    ingestCreatorVideoFromFile,
     savePerformanceKnowledgeBase,
+    saveCreatorIngestKnowledge,
 } from '../service/admin-ingest.service.js';
 import { chunkContentForKnowledge, ingestKnowledgeChunks } from '../service/admin-knowledge.service.js';
 
@@ -17,6 +18,9 @@ const ALLOWED_VIDEO_MIMES = [
     'video/webm',
     'video/x-matroska',
 ];
+
+/** Creator file ingest: MP4, MOV/MPEG-4, WEBM only */
+const ALLOWED_CREATOR_VIDEO_MIMES = ['video/mp4', 'video/quicktime', 'video/webm'];
 
 function parseNumber(val) {
     if (val === undefined || val === null || val === '') return undefined;
@@ -32,6 +36,9 @@ function parseOptionalDate(val) {
 
 /** Map ingest pipeline failures to HTTP status + client-safe message. */
 function adminIngestPipelineApiError(pipelineError) {
+    if (pipelineError instanceof ApiError) {
+        return pipelineError;
+    }
     if (pipelineError instanceof TwelvelabsApiError) {
         const body = pipelineError.body;
         const apiCode = body && typeof body === 'object' && !Array.isArray(body) ? body.code : undefined;
@@ -57,7 +64,6 @@ export async function postPairedVideo(req, res, next) {
         const body = req.body || {};
         const actualViews = parseNumber(body.actualViews);
         const platform = (body.platform || '').trim().toLowerCase();
-        const niche = (body.niche || '').trim();
         const creatorSize = (body.creatorSize || '').trim().toLowerCase();
 
         if (!file) {
@@ -68,9 +74,6 @@ export async function postPairedVideo(req, res, next) {
         }
         if (!['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform)) {
             throw new ApiError(400, 'platform is required and must be one of: tiktok, instagram, youtube, facebook');
-        }
-        if (!niche) {
-            throw new ApiError(400, 'niche is required');
         }
         if (!['micro', 'small', 'medium', 'large', 'mega'].includes(creatorSize)) {
             throw new ApiError(400, 'creatorSize is required and must be one of: micro, small, medium, large, mega');
@@ -84,7 +87,6 @@ export async function postPairedVideo(req, res, next) {
             sourceType: 'own_video',
             filename,
             platform,
-            niche,
             creatorSize,
             actualViews,
             status: 'processing',
@@ -133,34 +135,28 @@ export async function postPairedVideo(req, res, next) {
     }
 }
 
-export async function postCreatorVideo(req, res, next) {
+export async function postCreatorVideoUpload(req, res, next) {
     try {
+        const file = req.file;
         const body = req.body || {};
-        const videoUrl = (body.videoUrl || '').trim();
         const actualViews = parseNumber(body.actualViews);
         const platform = (body.platform || '').trim().toLowerCase();
-        const niche = (body.niche || '').trim();
         const creatorHandle = (body.creatorHandle || '').trim();
         const subscriberCount = parseNumber(body.subscriberCount);
         const creatorSize = (body.creatorSize || '').trim().toLowerCase();
         const viralCategory = (body.viralCategory || '').trim();
 
-        if (!videoUrl) {
-            throw new ApiError(400, 'videoUrl is required');
+        if (!file) {
+            throw new ApiError(400, 'videoFile is required');
         }
-        try {
-            new URL(videoUrl);
-        } catch {
-            throw new ApiError(400, 'videoUrl must be a valid URL');
+        if (!ALLOWED_CREATOR_VIDEO_MIMES.includes(file.mimetype)) {
+            throw new ApiError(400, 'Invalid file type. Use MP4, MOV, or WEBM.');
         }
         if (actualViews == null || actualViews < 0) {
             throw new ApiError(400, 'actualViews is required and must be a non-negative number');
         }
         if (!['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform)) {
             throw new ApiError(400, 'platform is required and must be one of: tiktok, instagram, youtube, facebook');
-        }
-        if (!niche) {
-            throw new ApiError(400, 'niche is required');
         }
         if (!creatorHandle) {
             throw new ApiError(400, 'creatorHandle is required');
@@ -176,11 +172,11 @@ export async function postCreatorVideo(req, res, next) {
             throw new ApiError(400, `viralCategory is required and must be one of: ${allowedCategories.join(', ')}`);
         }
 
+        const filename = file.originalname || file.name || 'video';
         const doc = new VideoPerformanceDataset({
             sourceType: 'creator_video',
-            videoUrl,
+            filename,
             platform,
-            niche,
             creatorHandle,
             subscriberCount,
             creatorSize,
@@ -199,7 +195,7 @@ export async function postCreatorVideo(req, res, next) {
         const datasetId = doc._id.toString();
 
         try {
-            const result = await ingestCreatorVideo(videoUrl, datasetId);
+            const result = await ingestCreatorVideoFromFile(file, datasetId);
 
             doc.twelveLabsAssetId = result.twelveLabsAssetId;
             doc.twelveLabsVideoId = result.twelveLabsVideoId;
@@ -214,12 +210,24 @@ export async function postCreatorVideo(req, res, next) {
             doc.viewsPredictorScore = result.scores.views_predictor ?? undefined;
             doc.status = 'complete';
             doc.analyzedAt = new Date();
+            doc.uploadedAt = new Date();
             doc.errorMessage = undefined;
             await doc.save();
 
-            await savePerformanceKnowledgeBase(doc, 'creator_video');
+            const kb = await saveCreatorIngestKnowledge(doc);
 
-            return res.status(201).json(doc);
+            return res.status(201).json({
+                twelveLabsAssetId: doc.twelveLabsAssetId,
+                mongoDocumentId: doc._id.toString(),
+                knowledgeBaseEntryId: kb.knowledgeBaseEntryId,
+                psychologicalSignalsSummary: kb.psychologicalSignalsSummary,
+                viralityScore: doc.viralityScore,
+                hookScore: doc.hookScore,
+                pacingScore: doc.pacingScore,
+                audioScore: doc.audioScore,
+                captionScore: doc.captionScore,
+                actualViews: doc.actualViews,
+            });
         } catch (pipelineError) {
             doc.status = 'failed';
             doc.errorMessage = pipelineError?.message || String(pipelineError);

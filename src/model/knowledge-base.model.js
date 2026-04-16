@@ -43,7 +43,12 @@ const KnowledgeBaseSchema = new mongoose.Schema({
       max: 1,
     },
     platform: { type: String },
+    /** Optional; not used for retrieval filtering — RAG uses vector similarity only */
     niche: { type: String },
+    viralCategory: { type: String },
+    creatorSize: { type: String },
+    actualViews: { type: Number },
+    creatorHandle: { type: String },
     sourceType: { type: String },
     contentType: { type: String },
     chunkIndex: { type: Number },

@@ -381,14 +381,8 @@ export const googleCallback = async (req, res, next) => {
             const redirectUrl = req.session.redirectUrl || `${FRONTEND_URL}/auth/google/callback`;
             delete req.session.redirectUrl; // Clean up session
 
-            // Redirect with user data as query params (for frontend to handle)
-            const userData = encodeURIComponent(JSON.stringify({
-                user: loggedInUser,
-                accessToken,
-                refreshToken
-            }));
-
-            res.redirect(`${redirectUrl}?auth=success&data=${userData}`);
+            // Redirect without token/user payload in query string.
+            res.redirect(`${redirectUrl}?auth=success`);
         })(req, res, next);
     } catch (error) {
         next(error);

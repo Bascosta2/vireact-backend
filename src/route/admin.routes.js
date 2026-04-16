@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { adminAuth } from '../middleware/adminAuth.js';
-import { uploadAdminVideo, uploadAdminKnowledge } from '../middleware/adminUpload.js';
-import { postPairedVideo, postCreatorVideo, postKnowledge } from '../controller/admin.controller.js';
+import { uploadAdminVideo, uploadAdminCreatorVideo, uploadAdminKnowledge } from '../middleware/adminUpload.js';
+import { postPairedVideo, postCreatorVideoUpload, postKnowledge } from '../controller/admin.controller.js';
 
 const adminRoutes = Router();
 
@@ -22,7 +22,16 @@ adminRoutes.post(
     postPairedVideo
 );
 
-adminRoutes.post('/ingest/creator-video', postCreatorVideo);
+adminRoutes.post(
+    '/creator-videos/upload',
+    (req, res, next) => {
+        uploadAdminCreatorVideo(req, res, (err) => {
+            if (err) return next(err);
+            next();
+        });
+    },
+    postCreatorVideoUpload
+);
 
 adminRoutes.post(
     '/ingest/knowledge',

@@ -35,14 +35,24 @@ export const QSTASH_NEXT_SIGNING_KEY = process.env.QSTASH_NEXT_SIGNING_KEY;
 
 // Twelve Labs API Key
 export const TWELVE_LABS_API_KEY = process.env.TWELVE_LABS_API_KEY;
-export const TWELVE_LABS_INDEX_ID = process.env.TWELVE_LABS_INDEX_ID;
+/** Twelve Labs index for end-user uploaded videos (analysis pipeline). */
+export const TWELVELABS_USER_INDEX = process.env.TWELVELABS_USER_INDEX;
+/** Twelve Labs index for admin/dataset ingest (training knowledge). */
+export const TWELVELABS_DATASET_INDEX = process.env.TWELVELABS_DATASET_INDEX;
+
+/** yt-dlp binary for server-side TikTok / YouTube / Instagram URL fetch (default: on PATH). */
+export const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
+/** Max time for a single yt-dlp invocation (metadata + download). */
+export const YT_DLP_TIMEOUT_MS = Number(process.env.YT_DLP_TIMEOUT_MS) || 600000;
+/** Max downloaded file size for social URL ingest (default 200MB, aligned with upload cap). */
+export const SOCIAL_VIDEO_MAX_BYTES = Number(process.env.SOCIAL_VIDEO_MAX_BYTES) || 209715200;
 
 // MongoDB Vector Index for KnowledgeBase
 export const KNOWLEDGE_BASE_VECTOR_INDEX = process.env.KNOWLEDGE_BASE_VECTOR_INDEX
 
 // JWT Secret Key
 export const JWT_SECRET = process.env.JWT_SECRET;
-export const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || JWT_SECRET;
+export const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET;
 
 // Google OAuth Configuration
 export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -50,7 +60,7 @@ export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 export const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL;
 
 // Session Secret
-export const SESSION_SECRET = process.env.SESSION_SECRET || JWT_SECRET;
+export const SESSION_SECRET = process.env.SESSION_SECRET;
 
 // Lambda check
 export const IS_LAMBDA = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -61,3 +71,4 @@ export const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 export const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 export const STRIPE_PRICE_ID_STARTER = process.env.STRIPE_PRICE_ID_STARTER;
 export const STRIPE_PRICE_ID_PRO = process.env.STRIPE_PRICE_ID_PRO;
+export const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'support@vireact.io';

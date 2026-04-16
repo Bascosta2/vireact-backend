@@ -18,6 +18,20 @@ const videoFilter = (req, file, cb) => {
     }
 };
 
+/** Creator admin ingest: MP4, MOV, WEBM only per product spec (no AVI/MKV). */
+const creatorVideoFilter = (req, file, cb) => {
+    const allowed = [
+        'video/mp4',
+        'video/quicktime',
+        'video/webm',
+    ];
+    if (allowed.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Invalid file type. Use MP4, MOV, or WEBM.'), false);
+    }
+};
+
 const pdfFilter = (req, file, cb) => {
     const isPdf = file.mimetype === 'application/pdf' ||
         (file.mimetype === 'application/octet-stream' && file.originalname && /\.pdf$/i.test(file.originalname));
@@ -33,6 +47,13 @@ export const uploadAdminVideo = multer({
     fileFilter: videoFilter,
     limits: { fileSize: 200 * 1024 * 1024 },
 }).single('file');
+
+/** Admin creator video file ingest — max 500MB, field name `videoFile`. */
+export const uploadAdminCreatorVideo = multer({
+    storage,
+    fileFilter: creatorVideoFilter,
+    limits: { fileSize: 500 * 1024 * 1024 },
+}).single('videoFile');
 
 export const uploadAdminKnowledge = multer({
     storage,

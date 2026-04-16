@@ -26,7 +26,7 @@ export const analyzeHook = async (hook, scenes) => {
                 index: KNOWLEDGE_BASE_VECTOR_INDEX,
                 queryVector: hookEmbedding,
                 path: "embedding",
-                filter: { "metadata.topic": "hook" },
+                filter: { "metadata.topic": { $in: ["hook", "general"] } },
                 limit: 10,
                 numCandidates: 100
             }

@@ -59,6 +59,15 @@ const subscriptionSchema = new mongoose.Schema({
     stripePriceId: {
         type: String,
         sparse: true
+    },
+    /** Set by Stripe invoice.payment_failed webhook; cleared on successful payment. */
+    paymentFailed: {
+        type: Boolean,
+        default: false
+    },
+    paymentFailedAt: {
+        type: Date,
+        default: null
     }
 }, { timestamps: true });
 
