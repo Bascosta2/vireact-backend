@@ -263,7 +263,7 @@ export const reanalyzeVideo = async (req, res, next) => {
             );
         }
 
-        video.analysisStatus = ANALYSIS_STATUS.PROCESSING;
+        video.analysisStatus = ANALYSIS_STATUS.QUEUED;
         await video.save();
 
         await publishVideoAnalysisJob({
@@ -309,9 +309,7 @@ export const processVideoAnalysis = async (req, res) => {
                 video = await Video.findOneAndUpdate(
                     {
                         _id: videoId,
-                        analysisStatus: {
-                            $nin: [ANALYSIS_STATUS.COMPLETED, ANALYSIS_STATUS.PROCESSING]
-                        }
+                        analysisStatus: ANALYSIS_STATUS.QUEUED
                     },
                     { $set: { analysisStatus: ANALYSIS_STATUS.PROCESSING } },
                     { new: true }

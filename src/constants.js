@@ -36,6 +36,7 @@ export const UPLOAD_STATUS = {
 // VIDEO ANALYSIS STATUS
 export const ANALYSIS_STATUS = {
   PENDING: 'pending',
+  QUEUED: 'queued',
   PROCESSING: 'processing',
   COMPLETED: 'completed',
   FAILED: 'failed'

@@ -154,8 +154,8 @@ export const confirmVideoUploadService = async (videoId, userId, fileSize) => {
         // For now, we'll use the s3Key to generate URL when needed
         video.s3_url = `s3://${AWS_S3_BUCKET_NAME}/${video.s3Key}`;
 
-        // Set analysis status to processing before enqueueing
-        video.analysisStatus = ANALYSIS_STATUS.PROCESSING;
+        // Set analysis status to queued before enqueueing (webhook claims queued → processing)
+        video.analysisStatus = ANALYSIS_STATUS.QUEUED;
 
         await video.save();
 
@@ -371,8 +371,8 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             video.twelveLabsVideoId = twelveLabsVideoId;
             video.uploadStatus = UPLOAD_STATUS.COMPLETED;
             
-            // Set analysis status to processing before enqueueing
-            video.analysisStatus = ANALYSIS_STATUS.PROCESSING;
+            // Set analysis status to queued before enqueueing (webhook claims queued → processing)
+            video.analysisStatus = ANALYSIS_STATUS.QUEUED;
             await video.save();
 
             // Publish video analysis job to QStash
@@ -485,8 +485,8 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
             video.twelveLabsVideoId = twelveLabsVideoId;
             video.uploadStatus = UPLOAD_STATUS.COMPLETED;
             
-            // Set analysis status to processing before enqueueing
-            video.analysisStatus = ANALYSIS_STATUS.PROCESSING;
+            // Set analysis status to queued before enqueueing (webhook claims queued → processing)
+            video.analysisStatus = ANALYSIS_STATUS.QUEUED;
             await video.save();
 
             // Publish video analysis job to QStash
