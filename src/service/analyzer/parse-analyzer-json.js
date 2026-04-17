@@ -51,10 +51,20 @@ export function parseAdvancedAnalyticsJson(response) {
     try {
         const obj = JSON.parse(match[0]);
         const score = Math.min(100, Math.max(0, Number(obj.score) ?? 0));
-        const asStringList = (v) =>
-            Array.isArray(v)
-                ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
-                : [];
+        const asStringList = (v) => {
+            if (Array.isArray(v)) {
+                return v
+                    .filter((x) => typeof x === 'string' && x.trim())
+                    .map((x) => x.trim());
+            }
+            if (typeof v === 'string' && v.trim()) {
+                return v
+                    .split(/[,;\n]+/)
+                    .map((s) => s.trim())
+                    .filter((s) => s.length > 0);
+            }
+            return [];
+        };
         const psych =
             typeof obj.psychologicalProfile === 'string' && obj.psychologicalProfile.trim()
                 ? obj.psychologicalProfile.trim()

@@ -520,14 +520,17 @@ export const processVideoAnalysis = async (req, res) => {
             let weightedSum = 0;
             for (const a of video.analysis) {
                 const w = weights[a.feature];
-                if (w != null && (a.score != null || a.rating != null)) {
-                    const s = a.score != null ? a.score : (a.rating && /strong|high/i.test(a.rating) ? 85 : /medium/i.test(a.rating) ? 55 : 25);
-                    weightedSum += w * s;
-                    totalWeight += w;
-                }
+                if (w == null) continue;
+                let s = extractScore(a.score);
+                if (s == null) s = ratingFallback(a.rating);
+                if (s == null) continue;
+                weightedSum += w * s;
+                totalWeight += w;
             }
             if (totalWeight > 0) {
                 video.viralityScore = Math.round(Math.min(100, Math.max(0, weightedSum / totalWeight)));
+            } else {
+                video.viralityScore = null;
             }
 
             video.retentionCurve = computeRetentionCurve(video);

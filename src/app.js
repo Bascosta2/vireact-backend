@@ -13,7 +13,7 @@ import { ApiResponse } from './utils/ApiResponse.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 
-import { FRONTEND_URL, NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
+import { NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
 import { EarlyAccess } from './model/early-access.model.js';
 import mongoose from 'mongoose';
 
@@ -39,32 +39,27 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
-// CORS configuration - allow both ports 5173 and 5174
-const allowedOrigins = [
-    "https://vireact.io",
-    'https://vireact-frontend.vercel.app',
-    "https://www.vireact.io",
-    ...(NODE_ENV === 'production' ? [] : [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://192.168.1.112:5173"
-    ])
-].filter(Boolean);
+// CORS allowed origins — production is locked to the live apex and www host only.
+// Vercel preview domains are intentionally excluded; previews should use a preview backend.
+const allowedOrigins = NODE_ENV === 'production'
+    ? [
+        'https://vireact.io',
+        'https://www.vireact.io',
+    ]
+    : [
+        'http://localhost:3000',
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://192.168.1.112:5173',
+    ];
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. curl, Postman)
-        if (!origin) return callback(null, true);
-        // In non-production, allow null origin (file:// / local HTML opened from filesystem)
-        if (NODE_ENV !== 'production' && (origin === null || origin === 'null')) {
+        if (!origin || allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
-        if (allowedOrigins.includes(origin) || FRONTEND_URL === origin) {
-            callback(null, true);
-        } else {
-            console.warn(`⚠️ CORS: Blocked origin ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
+        console.warn(`⚠️ CORS: Blocked origin ${origin}`);
+        return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
