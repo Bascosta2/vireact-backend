@@ -1,7 +1,7 @@
 import bcrypt, { compare } from "bcryptjs";
 import mongoose from "mongoose"
 import jwt from "jsonwebtoken";
-import { ACCESS_TOKEN_SECRET } from "../config/index.js";
+import { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } from "../config/index.js";
 import { OAUTH_PROVIDERS, ROLES } from "../constants.js";
 
 const userSchema = new mongoose.Schema({
@@ -92,7 +92,7 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 
 userSchema.methods.generateAccessToken = function () {
     const signOptions = {
-        expiresIn: "7d"
+        expiresIn: "30m"
     };
 
     return jwt.sign(
@@ -109,7 +109,7 @@ userSchema.methods.generateRefreshToken = function () {
 
     return jwt.sign(
         { _id: this._id, email: this.email },
-        ACCESS_TOKEN_SECRET,
+        REFRESH_TOKEN_SECRET,
         signOptions
     );
 };
@@ -136,9 +136,16 @@ userSchema.statics.findByGoogleId = function (googleId) {
 userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) {
     const { id: googleId, emails, displayName, photos } = googleProfile;
     const email = emails && emails[0] ? emails[0].value : null;
+    const emailVerified =
+        googleProfile._json?.email_verified === true ||
+        emails?.[0]?.verified === true;
 
     if (!email) {
         throw new Error('Email is required for ' + OAUTH_PROVIDERS.GOOGLE + ' OAuth');
+    }
+
+    if (!emailVerified) {
+        throw new Error('GOOGLE_EMAIL_NOT_VERIFIED');
     }
 
     // Try to find existing user by Google ID first

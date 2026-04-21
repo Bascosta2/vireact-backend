@@ -4,6 +4,7 @@ import {
     sendChatMessage
 } from '../controller/chat.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { chatPostRateLimit } from '../middleware/chatRateLimit.js';
 
 const chatRoutes = Router();
 
@@ -13,8 +14,8 @@ chatRoutes.use(authenticateToken);
 // Get chat messages for a video
 chatRoutes.get('/:videoId', getChatMessages);
 
-// Send a chat message
-chatRoutes.post('/:videoId', sendChatMessage);
+// Send a chat message (rate-limited: OpenAI cost protection)
+chatRoutes.post('/:videoId', chatPostRateLimit, sendChatMessage);
 
 export default chatRoutes;
 

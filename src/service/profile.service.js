@@ -94,14 +94,14 @@ export const updateUserProfileService = async (userId, name, email) => {
  * Update user password service
  * Updates password for local users only
  */
-export const updateUserPasswordService = async (userId, newPassword, confirmPassword) => {
+export const updateUserPasswordService = async (userId, currentPassword, newPassword, confirmPassword) => {
     try {
         if (!userId) {
             throw new ApiError(400, "User ID is required.");
         }
 
-        if (!newPassword || !confirmPassword) {
-            throw new ApiError(400, "New password and confirm password are required.");
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            throw new ApiError(400, "Current password, new password, and confirm password are required.");
         }
 
         if (newPassword !== confirmPassword) {
@@ -127,6 +127,11 @@ export const updateUserPasswordService = async (userId, newPassword, confirmPass
         // Check if user has a password (should always be true for local users, but double-check)
         if (!user.password) {
             throw new ApiError(400, "User account does not have a password set.");
+        }
+
+        const currentOk = await user.comparePassword(currentPassword);
+        if (!currentOk) {
+            throw new ApiError(401, "Current password is incorrect.");
         }
 
         // Update password (will be hashed by pre-save hook)

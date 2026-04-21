@@ -76,14 +76,15 @@ export const updatePassword = async (req, res, next) => {
             throw new ApiError(401, "Authentication required.");
         }
 
-        const { newPassword, confirmPassword } = req.body;
+        const { currentPassword, newPassword, confirmPassword } = req.body;
 
-        if (!newPassword || !confirmPassword) {
-            throw new ApiError(400, "New password and confirm password are required.");
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            throw new ApiError(400, "Current password, new password, and confirm password are required.");
         }
 
         await updateUserPasswordService(
             req.user._id,
+            currentPassword,
             newPassword,
             confirmPassword
         );
@@ -131,7 +132,12 @@ export const updateNotificationPreferences = async (req, res, next) => {
     try {
         if (!req.user || !req.user._id) {
             throw new ApiError(401, "Authentication required.");
-        }        const updates = req.body;        const preferences = await updateNotificationPreferencesService(req.user._id, updates);        res.status(200).json(
+        }
+
+        const updates = req.body;
+        const preferences = await updateNotificationPreferencesService(req.user._id, updates);
+
+        res.status(200).json(
             ApiResponse.success(
                 200,
                 "Notification preferences updated successfully",

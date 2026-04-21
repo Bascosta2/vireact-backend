@@ -23,7 +23,6 @@ import { analyzePacing } from '../service/analyzer/pacing.analyzer.js';
 import { analyzeAudio } from '../service/analyzer/audio.analyzer.js';
 import { analyzeAdvancedAnalytics } from '../service/analyzer/advanced-analytics.analyzer.js';
 import { analyzeViewsPredictor } from '../service/analyzer/views-predictor.analyzer.js';
-import { checkVideoLimit, incrementVideoUsage } from '../service/subscription.service.js';
 import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
 import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from '../service/scene-parser.service.js';
@@ -545,12 +544,6 @@ export const processVideoAnalysis = async (req, res) => {
             await video.save();
 
             try {
-                await incrementVideoUsage(userId);
-            } catch (usageError) {
-                console.error(`[QStash] Failed to increment video usage for user ${userId}:`, usageError.message);
-            }
-
-            try {
                 const uploaderId = video.uploader_id || userId;
                 const uploader = await User.findById(uploaderId).select('email').lean();
                 if (uploader?.email) {
@@ -620,9 +613,6 @@ export const uploadVideoToTwelveLabs = async (req, res, next) => {
             throw new ApiError(400, 'Video file is required');
         }
 
-        // Check video upload limit before processing
-        await checkVideoLimit(userId);
-
         // Use original filename from multer if available, otherwise from body
         const filename = file.originalname || req.body.filename;
         const { selectedFeatures } = req.body;
@@ -666,9 +656,6 @@ export const uploadVideoUrlToTwelveLabs = async (req, res, next) => {
         if (!url || !filename) {
             throw new ApiError(400, 'URL and filename are required');
         }
-
-        // Check video upload limit before processing
-        await checkVideoLimit(userId);
 
         const selectedFeaturesArray = Array.isArray(selectedFeatures)
             ? selectedFeatures

@@ -4,7 +4,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { ANALYSIS_STATUS } from '../constants.js';
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../config/index.js';
 import { requestChatCompletion } from './openai-response.service.js';
-import { checkChatLimit, incrementChatUsage } from './subscription.service.js';
+import { claimChatMessageSlot, releaseChatMessageSlot } from './subscription.service.js';
 import { generateVideoFeedbackService } from './video-feedback.service.js';
 
 export const getChatMessagesService = async (videoId, userId) => {
@@ -116,78 +116,72 @@ export const sendChatMessageService = async (videoId, userId, messageText) => {
         throw new ApiError(400, 'Video ID, User ID, and message text are required');
     }
 
-    // Check chat message limit before processing
-    await checkChatLimit(userId);
-
     // Verify video belongs to user
     const video = await Video.findOne({ _id: videoId, uploader_id: userId });
     if (!video) {
         throw new ApiError(404, 'Video not found');
     }
 
-    // Generate timestamp feedback if analysis is complete but feedback doesn't exist
-    if (video.analysisStatus === ANALYSIS_STATUS.COMPLETED && 
-        (!video.timestampFeedback || video.timestampFeedback.length === 0)) {
-        try {
-            await generateVideoFeedbackService(videoId, userId);
-            // Reload video to get updated feedback
-            const updatedVideo = await Video.findById(videoId);
-            if (updatedVideo) {
-                Object.assign(video, updatedVideo.toObject());
-            }
-        } catch (feedbackError) {
-            console.error('[Chat] Error generating feedback:', feedbackError.message);
-            // Continue without feedback if generation fails
-        }
-    }
+    await claimChatMessageSlot(userId);
 
-    // Find or create chat
-    let chat = await Chat.findOne({ videoId, userId });
-    
-    if (!chat) {
-        chat = new Chat({
-            videoId,
-            userId,
-            messages: []
-        });
-    }
-
-    // Add user message
-    const userMessage = {
-        text: messageText,
-        isUser: true
-    };
-    
-    chat.messages.push(userMessage);
-
-    // Classify user intent
-    const intent = await classifyUserIntent(messageText);
-
-    // Generate AI response using OpenAI based on intent (pass prior messages for context)
-    const priorMessages = (chat.messages || []).slice(0, -1);
-    const aiResponse = await generateAIResponse(messageText, video, intent, priorMessages);
-
-    // Add AI message
-    const aiMessage = {
-        text: aiResponse,
-        isUser: false
-    };
-    
-    chat.messages.push(aiMessage);
-
-    await chat.save();
-
-    // Increment chat usage after AI response is generated
     try {
-        await incrementChatUsage(userId);
-    } catch (usageError) {
-        console.error(`[Chat] Failed to increment chat usage for user ${userId}:`, usageError.message);
-    }
+        // Generate timestamp feedback if analysis is complete but feedback doesn't exist
+        if (video.analysisStatus === ANALYSIS_STATUS.COMPLETED &&
+            (!video.timestampFeedback || video.timestampFeedback.length === 0)) {
+            try {
+                await generateVideoFeedbackService(videoId, userId);
+                const updatedVideo = await Video.findById(videoId);
+                if (updatedVideo) {
+                    Object.assign(video, updatedVideo.toObject());
+                }
+            } catch (feedbackError) {
+                console.error('[Chat] Error generating feedback:', feedbackError.message);
+            }
+        }
 
-    return {
-        userMessage,
-        aiMessage
-    };
+        let chat = await Chat.findOne({ videoId, userId });
+
+        if (!chat) {
+            chat = new Chat({
+                videoId,
+                userId,
+                messages: []
+            });
+        }
+
+        const userMessage = {
+            text: messageText,
+            isUser: true
+        };
+
+        chat.messages.push(userMessage);
+
+        const intent = await classifyUserIntent(messageText);
+
+        const priorMessages = (chat.messages || []).slice(0, -1);
+        const aiResponse = await generateAIResponse(messageText, video, intent, priorMessages);
+
+        const aiMessage = {
+            text: aiResponse,
+            isUser: false
+        };
+
+        chat.messages.push(aiMessage);
+
+        await chat.save();
+
+        return {
+            userMessage,
+            aiMessage
+        };
+    } catch (err) {
+        try {
+            await releaseChatMessageSlot(userId);
+        } catch {
+            /* ignore */
+        }
+        throw err;
+    }
 };
 
 // Helper function to classify user intent

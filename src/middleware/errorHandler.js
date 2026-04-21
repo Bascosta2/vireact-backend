@@ -1,19 +1,13 @@
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import { NODE_ENV } from "../config/index.js";
+import { getAllowedCorsOrigins } from "../config/cors-allowed-origins.js";
 
 export const errorHandler = (err, req, res, next) => {
     // Ensure CORS headers are set even for error responses
     // This is critical for file upload errors and other failures
     const origin = req.headers.origin;
-    const allowedOrigins = [
-        "https://vireact.io",
-        "https://vireact-frontend.vercel.app",
-        "vireact-frontend.vercel.app",
-        "https://www.vireact.io",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://192.168.1.112:5173"
-    ];
+    const allowedOrigins = getAllowedCorsOrigins();
 
     if (origin && allowedOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
@@ -42,5 +36,7 @@ export const errorHandler = (err, req, res, next) => {
             );
         }
     }
-    console.log(err);
+    if (NODE_ENV !== 'production') {
+        console.error(err);
+    }
 };

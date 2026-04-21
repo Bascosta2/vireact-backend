@@ -14,7 +14,8 @@ import { COOKIE_OPTIONS, OAUTH_PROVIDERS, ROLES } from "../constants.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import passport from "../lib/passport.js";
-import { FRONTEND_URL } from "../config/index.js";
+import { FRONTEND_URL, NODE_ENV } from "../config/index.js";
+import { getSafeOAuthRedirectUrl } from "../utils/oauth-redirect.js";
 
 // Helper function to get user-friendly provider names
 const getProviderDisplayName = (provider) => {
@@ -71,38 +72,22 @@ export const loginUser = async (req, res, next) => {
     const startTime = Date.now();
     const { email, password } = req.body;
     
-    console.log('\n🔐 [LOGIN] Login attempt started');
-    console.log(`   Email: ${email ? email : 'NOT PROVIDED'}`);
-    console.log(`   Password: ${password ? '***' : 'NOT PROVIDED'}`);
-    console.log(`   IP: ${req.ip || req.socket.remoteAddress}`);
-    console.log(`   User-Agent: ${req.get('user-agent') || 'unknown'}`);
+    if (NODE_ENV !== 'production') {
+        console.log('\n🔐 [LOGIN] Login attempt started');
+        console.log(`   Email: ${email ? '[redacted]' : 'NOT PROVIDED'}`);
+        console.log(`   Password: ${password ? '***' : 'NOT PROVIDED'}`);
+    }
     
     try {
-        // Step 1: Validate input
-        console.log('   [STEP 1] Validating input...');
         if (!email || !password) {
-            console.log('   ❌ [STEP 1] Validation failed: Email or password missing');
             throw new ApiError(400, "Email and Password are required fields.")
         }
-        console.log('   ✅ [STEP 1] Input validation passed');
 
-        // Step 2: Authenticate user
-        console.log('   [STEP 2] Authenticating user...');
         const user = await loginUserService(email, password);
-        console.log(`   ✅ [STEP 2] User authenticated: ${user._id}`);
 
-        // Step 3: Generate tokens
-        console.log('   [STEP 3] Generating access tokens...');
         const { accessToken, refreshToken } = await generateAccessToken(user._id, User, "User");
-        console.log('   ✅ [STEP 3] Tokens generated successfully');
 
-        // Step 4: Fetch user data
-        console.log('   [STEP 4] Fetching user data...');
         const loggedInUser = await User.findById(user._id).select("-password").lean();
-        console.log('   ✅ [STEP 4] User data fetched');
-
-        // Step 5: Set cookies and send response
-        console.log('   [STEP 5] Setting cookies and preparing response...');
         res.clearCookie("accessToken", COOKIE_OPTIONS)
         res.clearCookie("refreshToken", COOKIE_OPTIONS)
 
@@ -121,20 +106,19 @@ export const loginUser = async (req, res, next) => {
                 )
             )
         
-        const duration = Date.now() - startTime;
-        console.log(`   ✅ [LOGIN] Login successful in ${duration}ms`);
-        console.log(`   User ID: ${user._id}\n`);
+        if (NODE_ENV !== 'production') {
+            const duration = Date.now() - startTime;
+            console.log(`   ✅ [LOGIN] Login successful in ${duration}ms`);
+        }
 
     }
     catch (error) {
-        const duration = Date.now() - startTime;
-        console.error(`   ❌ [LOGIN] Login failed after ${duration}ms`);
-        console.error(`   Error: ${error.message}`);
-        console.error(`   Status Code: ${error.statusCode || 500}`);
-        if (error.stack) {
-            console.error(`   Stack: ${error.stack}`);
+        if (NODE_ENV !== 'production') {
+            const duration = Date.now() - startTime;
+            console.error(`   ❌ [LOGIN] Login failed after ${duration}ms`);
+            console.error(`   Error: ${error.message}`);
+            console.error(`   Status Code: ${error.statusCode || 500}`);
         }
-        console.log('');
         next(error)
     }
 };
@@ -196,33 +180,19 @@ export const loginAdmin = async (req, res, next) => {
 
 // single function to handle login by invoking current controllers as functions
 export const login = async (req, res, next) => {
-    console.log('\n📥 [AUTH ROUTE] Login request received');
-    console.log(`   Route: POST /api/v1/auth/login`);
-    console.log(`   Body:`, { ...req.body, password: req.body.password ? '***' : undefined });
-    console.log(`   Headers:`, {
-        'content-type': req.get('content-type'),
-        'origin': req.get('origin'),
-        'user-agent': req.get('user-agent')?.substring(0, 50) + '...'
-    });
-    
     try {
         const { role } = req.body;
-        console.log(`   Role requested: ${role || 'not specified'}`);
 
         if (role === ROLES.ADMIN) {
-            console.log('   → Routing to admin login');
             await loginAdmin(req, res, next);
         }
         else if (role === ROLES.USER) {
-            console.log('   → Routing to user login');
             await loginUser(req, res, next);
         }
         else {
-            console.log(`   ❌ Invalid role: ${role}`);
             throw new ApiError(400, "Invalid User Type.");
         }
     } catch (error) {
-        console.error(`   ❌ [AUTH ROUTE] Error in login handler: ${error.message}`);
         next(error)
     }
 }
@@ -335,14 +305,17 @@ export const logout = async (req, res, next) => {
 // Google OAuth Controllers
 export const googleAuth = (req, res, next) => {
     try {
-        // Store the intended redirect URL in session
+        // Store only same-origin redirect targets (prevents open redirect after OAuth)
         if (req.query.redirect) {
-            req.session.redirectUrl = req.query.redirect;
+            const safe = getSafeOAuthRedirectUrl(req.query.redirect);
+            if (safe) {
+                req.session.redirectUrl = safe;
+            }
         }
 
-        // Authenticate with Google
         passport.authenticate('google', {
-            scope: ['profile', 'email']
+            scope: ['profile', 'email'],
+            state: true,
         })(req, res, next);
     } catch (error) {
         next(error);
@@ -351,7 +324,9 @@ export const googleAuth = (req, res, next) => {
 
 export const googleCallback = async (req, res, next) => {
     try {
-        passport.authenticate('google', async (err, user, info) => {
+        passport.authenticate('google', {
+            state: true,
+        }, async (err, user, info) => {
             if (err) {
                 // Handle provider conflict error
                 if (err.message && err.message.startsWith('ACCOUNT_EXISTS_WITH_DIFFERENT_PROVIDER:')) {
@@ -359,6 +334,11 @@ export const googleCallback = async (req, res, next) => {
                     const providerName = getProviderDisplayName(provider);
                     const errorMessage = `This email is already registered via ${providerName}. Please log in with ${providerName} instead.`;
                     return res.redirect(`${FRONTEND_URL}/login?error=${encodeURIComponent(errorMessage)}`);
+                }
+                if (err.message === 'GOOGLE_EMAIL_NOT_VERIFIED') {
+                    return res.redirect(
+                        `${FRONTEND_URL}/auth/error?message=${encodeURIComponent('Google account email must be verified before sign-in.')}`
+                    );
                 }
                 return res.redirect(`${FRONTEND_URL}/auth/error?message=${encodeURIComponent(err.message)}`);
             }
@@ -377,11 +357,11 @@ export const googleCallback = async (req, res, next) => {
             res.cookie("accessToken", accessToken, COOKIE_OPTIONS);
             res.cookie("refreshToken", refreshToken, { ...COOKIE_OPTIONS, maxAge: 30 * 24 * 60 * 60 * 1000 }); // 30 days
 
-            // Redirect to frontend with success
-            const redirectUrl = req.session.redirectUrl || `${FRONTEND_URL}/auth/google/callback`;
-            delete req.session.redirectUrl; // Clean up session
+            const defaultRedirect = `${FRONTEND_URL}/auth/google/callback`;
+            const fromSession = req.session.redirectUrl;
+            delete req.session.redirectUrl;
+            const redirectUrl = getSafeOAuthRedirectUrl(fromSession) || defaultRedirect;
 
-            // Redirect without token/user payload in query string.
             res.redirect(`${redirectUrl}?auth=success`);
         })(req, res, next);
     } catch (error) {

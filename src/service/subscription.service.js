@@ -63,69 +63,87 @@ export const checkAndResetPeriod = async (subscription) => {
     return subscription;
 };
 
-// Check video limit before upload
-export const checkVideoLimit = async (userId) => {
-    const subscription = await getOrCreateSubscription(userId);
+/**
+ * Atomically reserve one video slot for the billing period (prevents parallel-upload TOCTOU).
+ * Call at start of upload; call releaseVideoMonthlySlot on ingest failure before analysis is queued.
+ */
+export const claimVideoMonthlySlot = async (userId) => {
+    let subscription = await getOrCreateSubscription(userId);
     await checkAndResetPeriod(subscription);
-
+    subscription = await Subscription.findById(subscription._id);
+    if (!subscription) {
+        throw new ApiError(500, 'Subscription not found');
+    }
     const limits = PLAN_LIMITS[subscription.plan];
-    
-    if (subscription.usage.videosUsed >= limits.videosPerMonth) {
+    const updated = await Subscription.findOneAndUpdate(
+        {
+            _id: subscription._id,
+            'usage.videosUsed': { $lt: limits.videosPerMonth }
+        },
+        { $inc: { 'usage.videosUsed': 1 } },
+        { new: true }
+    );
+    if (!updated) {
         throw new ApiError(
             403,
             `Video limit reached. You've used ${subscription.usage.videosUsed}/${limits.videosPerMonth} videos this month. Upgrade your plan for more videos.`
         );
     }
-
-    return true;
+    console.log(`[Subscription] Claimed video slot for user ${userId}: ${updated.usage.videosUsed}/${limits.videosPerMonth}`);
+    return updated;
 };
 
-// Check chat limit before message
-export const checkChatLimit = async (userId) => {
-    const subscription = await getOrCreateSubscription(userId);
-    await checkAndResetPeriod(subscription);
+/** Undo claimVideoMonthlySlot when upload/ingest fails before analysis is queued. */
+export const releaseVideoMonthlySlot = async (userId) => {
+    const subscription = await Subscription.findOne({ userId });
+    if (!subscription) return;
+    await Subscription.updateOne(
+        { _id: subscription._id, 'usage.videosUsed': { $gt: 0 } },
+        { $inc: { 'usage.videosUsed': -1 } }
+    );
+    console.log(`[Subscription] Released video slot for user ${userId}`);
+};
 
+/**
+ * Atomically reserve one chat message for the billing period (prevents parallel-request TOCTOU).
+ * Call before OpenAI; call releaseChatMessageSlot on infrastructure failure before success response.
+ */
+export const claimChatMessageSlot = async (userId) => {
+    let subscription = await getOrCreateSubscription(userId);
+    await checkAndResetPeriod(subscription);
+    subscription = await Subscription.findById(subscription._id);
+    if (!subscription) {
+        throw new ApiError(500, 'Subscription not found');
+    }
     const limits = PLAN_LIMITS[subscription.plan];
-    
-    if (subscription.usage.chatMessagesUsed >= limits.chatMessagesPerMonth) {
+    const updated = await Subscription.findOneAndUpdate(
+        {
+            _id: subscription._id,
+            'usage.chatMessagesUsed': { $lt: limits.chatMessagesPerMonth }
+        },
+        { $inc: { 'usage.chatMessagesUsed': 1 } },
+        { new: true }
+    );
+    if (!updated) {
         throw new ApiError(
             403,
             `Chat message limit reached. You've used ${subscription.usage.chatMessagesUsed}/${limits.chatMessagesPerMonth} messages this month. Upgrade your plan for more messages.`
         );
     }
-
-    return true;
+    console.log(`[Subscription] Claimed chat slot for user ${userId}: ${updated.usage.chatMessagesUsed}/${limits.chatMessagesPerMonth}`);
+    return updated;
 };
 
-// Increment video usage after successful analysis
-export const incrementVideoUsage = async (userId) => {
-    const subscription = await getOrCreateSubscription(userId);
-    await checkAndResetPeriod(subscription);
+export const releaseChatMessageSlot = async (userId) => {
+    const subscription = await Subscription.findOne({ userId });
+    if (!subscription) return;
     await Subscription.updateOne(
-        { _id: subscription._id },
-        { $inc: { 'usage.videosUsed': 1 } }
+        { _id: subscription._id, 'usage.chatMessagesUsed': { $gt: 0 } },
+        { $inc: { 'usage.chatMessagesUsed': -1 } }
     );
-    subscription.usage.videosUsed += 1;
-
-    console.log(`[Subscription] Incremented video usage for user ${userId}: ${subscription.usage.videosUsed}/${PLAN_LIMITS[subscription.plan].videosPerMonth}`);
-
-    return subscription;
+    console.log(`[Subscription] Released chat slot for user ${userId}`);
 };
 
-// Increment chat usage after AI response
-export const incrementChatUsage = async (userId) => {
-    const subscription = await getOrCreateSubscription(userId);
-    await checkAndResetPeriod(subscription);
-    await Subscription.updateOne(
-        { _id: subscription._id },
-        { $inc: { 'usage.chatMessagesUsed': 1 } }
-    );
-    subscription.usage.chatMessagesUsed += 1;
-
-    console.log(`[Subscription] Incremented chat usage for user ${userId}: ${subscription.usage.chatMessagesUsed}/${PLAN_LIMITS[subscription.plan].chatMessagesPerMonth}`);
-
-    return subscription;
-};
 
 // Create Stripe checkout session
 export const createCheckoutSession = async (userId, userEmail, plan) => {

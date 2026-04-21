@@ -34,6 +34,7 @@ const startServer = async () => {
     if (NODE_ENV === 'production') {
       const requiredProdEnvs = [
         ['ACCESS_TOKEN_SECRET', ACCESS_TOKEN_SECRET],
+        ['REFRESH_TOKEN_SECRET', process.env.REFRESH_TOKEN_SECRET],
         ['SESSION_SECRET', SESSION_SECRET],
         ['STRIPE_WEBHOOK_SECRET', process.env.STRIPE_WEBHOOK_SECRET],
         ['QSTASH_CURRENT_SIGNING_KEY', QSTASH_CURRENT_SIGNING_KEY],
@@ -91,7 +92,6 @@ const startServer = async () => {
       console.log(`  GET  http://localhost:${PORT}/api/health`);
       console.log(`  GET  http://localhost:${PORT}/api/db-status`);
       console.log(`  POST http://localhost:${PORT}/api/v1/auth/login`);
-      console.log(`  POST http://localhost:${PORT}/api/v1/auth/test`);
       console.log('═══════════════════════════════════════════════════════════\n');
 
       const webhookUrl = `${BACKEND_URL || ''}/api/v1/videos/analyze`;

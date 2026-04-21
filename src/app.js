@@ -14,7 +14,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 
 import { NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
-import { EarlyAccess } from './model/early-access.model.js';
+import { getAllowedCorsOrigins } from './config/cors-allowed-origins.js';
 import mongoose from 'mongoose';
 
 // route imports
@@ -39,19 +39,8 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
-// CORS allowed origins — production is locked to the live apex and www host only.
-// Vercel preview domains are intentionally excluded; previews should use a preview backend.
-const allowedOrigins = NODE_ENV === 'production'
-    ? [
-        'https://vireact.io',
-        'https://www.vireact.io',
-    ]
-    : [
-        'http://localhost:3000',
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://192.168.1.112:5173',
-    ];
+// CORS allowed origins — single source of truth in cors-allowed-origins.js (must match errorHandler).
+const allowedOrigins = getAllowedCorsOrigins();
 
 app.use(cors({
     origin: (origin, callback) => {
@@ -228,25 +217,6 @@ app.get('/api/db-status', async (req, res) => {
             error: 'db_status_check_failed'
         });
     }
-});
-
-// Auth test endpoint
-app.post('/api/v1/auth/test', (req, res) => {
-    console.log('✅ [AUTH TEST] Endpoint reached successfully');
-    res.status(200).json({
-        message: 'Auth routes working',
-        timestamp: Date.now(),
-        body: req.body
-    });
-});
-
-app.get('/early-access-list', async (req, res) => {
-    const earlyAccessList = await EarlyAccess.find()
-    res.
-        status(200)
-        .json(
-            ApiResponse.success(200, 'Early access list', earlyAccessList)
-        );
 });
 
 // Routes

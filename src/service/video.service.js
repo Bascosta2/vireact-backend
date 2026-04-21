@@ -4,6 +4,7 @@ import { Chat } from '../model/chat.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { UPLOAD_STATUS, ANALYSIS_STATUS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
+import { claimVideoMonthlySlot, releaseVideoMonthlySlot } from './subscription.service.js';
 import mongoose from 'mongoose';
 import { AWS_S3_BUCKET_NAME, TWELVELABS_USER_INDEX } from '../config/index.js';
 import TwelveLabsClient from '../lib/twelve-labs.js';
@@ -300,10 +301,15 @@ export const markAnalysisViewedService = async (videoId, userId) => {
 };
 
 export const uploadVideoToTwelveLabsService = async (userId, file, filename, selectedFeatures = []) => {
+    let quotaClaimed = false;
+    let keepVideoQuota = false;
     try {
         if (!userId || !file || !filename) {
             throw new ApiError(400, 'User ID, file, and filename are required');
         }
+
+        await claimVideoMonthlySlot(userId);
+        quotaClaimed = true;
 
         // Get file size from multer file object or buffer
         const fileSize = file.size || file.buffer?.length || 0;
@@ -390,15 +396,20 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
                 video.lastError = errMsg;
                 video.lastErrorAt = new Date();
                 await video.save();
+                keepVideoQuota = true;
                 throw new ApiError(502, errMsg);
             }
 
+            keepVideoQuota = true;
             return video;
         } catch (twelveLabsError) {
+            if (twelveLabsError instanceof ApiError && twelveLabsError.statusCode === 502) {
+                throw twelveLabsError;
+            }
             // If TwelveLabs upload fails, mark video as failed
             video.uploadStatus = UPLOAD_STATUS.FAILED;
             await video.save();
-            
+
             console.error("❌ TwelveLabs upload error:", {
                 message: twelveLabsError.message,
                 statusCode: twelveLabsError.statusCode,
@@ -406,11 +417,18 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
                 rawResponse: twelveLabsError.rawResponse,
                 stack: twelveLabsError.stack
             });
-            
+
             const errorMessage = twelveLabsError.message || 'Failed to upload to TwelveLabs';
             throw new ApiError(500, `Failed to upload to TwelveLabs: ${errorMessage}`);
         }
     } catch (error) {
+        try {
+            if (quotaClaimed && !keepVideoQuota) {
+                await releaseVideoMonthlySlot(userId);
+            }
+        } catch {
+            /* ignore release errors */
+        }
         if (error instanceof ApiError) {
             throw error;
         }
@@ -419,6 +437,8 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
 };
 
 export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, selectedFeatures = []) => {
+    let quotaClaimed = false;
+    let keepVideoQuota = false;
     try {
         if (!userId || !url || !filename) {
             throw new ApiError(400, 'User ID, URL, and filename are required');
@@ -430,6 +450,9 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
         } catch (urlError) {
             throw new ApiError(400, 'Invalid URL format');
         }
+
+        await claimVideoMonthlySlot(userId);
+        quotaClaimed = true;
 
         // Generate unique video ID
         const videoId = new mongoose.Types.ObjectId();
@@ -504,11 +527,16 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
                 video.lastError = errMsg;
                 video.lastErrorAt = new Date();
                 await video.save();
+                keepVideoQuota = true;
                 throw new ApiError(502, errMsg);
             }
 
+            keepVideoQuota = true;
             return video;
         } catch (ingestErr) {
+            if (ingestErr instanceof ApiError && ingestErr.statusCode === 502) {
+                throw ingestErr;
+            }
             video.uploadStatus = UPLOAD_STATUS.FAILED;
             await video.save();
             if (ingestErr instanceof ApiError) {
@@ -517,6 +545,13 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
             throw new ApiError(500, `Failed to upload URL to TwelveLabs: ${ingestErr.message}`);
         }
     } catch (error) {
+        try {
+            if (quotaClaimed && !keepVideoQuota) {
+                await releaseVideoMonthlySlot(userId);
+            }
+        } catch {
+            /* ignore */
+        }
         if (error instanceof ApiError) {
             throw error;
         }

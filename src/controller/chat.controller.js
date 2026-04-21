@@ -35,8 +35,11 @@ export const sendChatMessage = async (req, res, next) => {
             throw new ApiError(400, 'Video ID is required');
         }
 
-        if (!text || !text.trim()) {
+        if (typeof text !== 'string' || !text.trim()) {
             throw new ApiError(400, 'Message text is required');
+        }
+        if (text.length > 2000) {
+            throw new ApiError(400, 'Message too long (max 2000 characters)');
         }
 
         const { userMessage, aiMessage } = await sendChatMessageService(videoId, userId, text.trim());

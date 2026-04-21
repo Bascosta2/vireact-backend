@@ -53,6 +53,9 @@ export const KNOWLEDGE_BASE_VECTOR_INDEX = process.env.KNOWLEDGE_BASE_VECTOR_IND
 // JWT Secret Key
 export const JWT_SECRET = process.env.JWT_SECRET;
 export const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET;
+/** Prefer a distinct secret in production; falls back to ACCESS_TOKEN_SECRET for local dev only. */
+export const REFRESH_TOKEN_SECRET =
+    process.env.REFRESH_TOKEN_SECRET || process.env.ACCESS_TOKEN_SECRET;
 
 // Google OAuth Configuration
 export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
