@@ -374,15 +374,18 @@ export const googleAuthFailure = (req, res) => {
 };
 
 // Refresh Token Controller
+// Source order: body first (form users), cookie second (OAuth users on HttpOnly-only path).
 export const refreshToken = async (req, res, next) => {
     try {
-        const { refreshToken } = req.body;
+        const bodyToken = req.body?.refreshToken;
+        const cookieToken = req.cookies?.refreshToken;
+        const tokenIn = bodyToken || cookieToken;
 
-        if (!refreshToken) {
+        if (!tokenIn) {
             throw new ApiError(400, "Refresh token is required");
         }
 
-        const { accessToken, refreshToken: newRefreshToken } = await refreshTokenService(refreshToken);
+        const { accessToken, refreshToken: newRefreshToken } = await refreshTokenService(tokenIn);
 
         res.status(200)
             .cookie("accessToken", accessToken, COOKIE_OPTIONS)
@@ -397,6 +400,22 @@ export const refreshToken = async (req, res, next) => {
                     }
                 )
             );
+    } catch (error) {
+        next(error);
+    }
+};
+
+// Session identity echo. Lives behind authenticateToken; req.user is already hydrated.
+// Used by the frontend after a cross-site Google OAuth redirect to populate Redux
+// without embedding tokens in the URL.
+export const getMe = async (req, res, next) => {
+    try {
+        if (!req.user || !req.user._id) {
+            throw new ApiError(401, "Authentication required");
+        }
+        res.status(200).json(
+            ApiResponse.success(200, "Authenticated", { user: req.user })
+        );
     } catch (error) {
         next(error);
     }
