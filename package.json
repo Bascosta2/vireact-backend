@@ -21,7 +21,6 @@
   "homepage": "https://github.com/hafizasad419/affiniti-solutions-backend#readme",
   "description": "",
   "devDependencies": {
-    "morgan": "^1.10.1",
     "nodemon": "^3.1.10"
   },
   "dependencies": {
@@ -44,6 +43,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.18.0",
+    "morgan": "^1.10.1",
     "multer": "^2.0.2",
     "openai": "^5.15.0",
     "passport": "^0.7.0",
