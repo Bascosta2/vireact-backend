@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { Subscription } from '../model/subscription.model.js';
 import { StripeWebhookEvent } from '../model/stripe-webhook-event.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS } from '../constants.js';
+import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS, STRIPE_CHECKOUT_PLANS, STRIPE_PRICE_ID_TO_PLAN } from '../constants.js';
 import stripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
 
@@ -151,8 +151,8 @@ export const createCheckoutSession = async (userId, userEmail, plan) => {
         throw new ApiError(500, 'Stripe is not configured');
     }
 
-    if (!plan || (plan !== 'starter' && plan !== 'pro')) {
-        throw new ApiError(400, 'Invalid plan. Must be "starter" or "pro"');
+    if (!plan || !STRIPE_CHECKOUT_PLANS.includes(plan)) {
+        throw new ApiError(400, `Invalid plan. Must be one of: ${STRIPE_CHECKOUT_PLANS.join(', ')}`);
     }
 
     const priceId = STRIPE_PRICE_IDS[plan];
@@ -203,17 +203,28 @@ export const createCheckoutSession = async (userId, userEmail, plan) => {
 // Handle Stripe webhook events
 export const handleStripeWebhook = async (event) => {
     console.log(`[Stripe Webhook] Received event: ${event.type}`);
-    try {
-        await StripeWebhookEvent.create({
-            eventId: event.id,
-            type: event.type
-        });
-    } catch (error) {
-        if (error?.code === 11000) {
-            console.log(`[Stripe Webhook] Duplicate event ignored: ${event.id}`);
-            return;
+
+    // Check if we've already processed this event successfully
+    const existingEvent = await StripeWebhookEvent.findOne({ eventId: event.id });
+    if (existingEvent && existingEvent.processed) {
+        console.log(`Webhook event ${event.id} already processed, skipping`);
+        return;
+    }
+
+    if (!existingEvent) {
+        try {
+            await StripeWebhookEvent.create({
+                eventId: event.id,
+                type: event.type,
+                processed: false,
+            });
+        } catch (error) {
+            if (error?.code === 11000) {
+                console.log(`Webhook event ${event.id} concurrent insert, skipping`);
+                return;
+            }
+            throw error;
         }
-        throw error;
     }
 
     switch (event.type) {
@@ -244,6 +255,11 @@ export const handleStripeWebhook = async (event) => {
         default:
             console.log(`[Stripe Webhook] Unhandled event type: ${event.type}`);
     }
+
+    await StripeWebhookEvent.updateOne(
+        { eventId: event.id },
+        { $set: { processed: true } }
+    );
 };
 
 // Handle checkout session completed
@@ -262,7 +278,7 @@ async function handleCheckoutCompleted(session) {
         return;
     }
 
-    if (plan !== SUBSCRIPTION_PLANS.STARTER && plan !== SUBSCRIPTION_PLANS.PRO) {
+    if (!STRIPE_CHECKOUT_PLANS.includes(plan)) {
         console.error(`[Stripe Webhook] Invalid plan in session metadata: ${plan}`);
         return;
     }
@@ -321,7 +337,10 @@ async function handleCheckoutCompleted(session) {
     console.log(`[Stripe Webhook] Upgraded user ${userId} to ${plan} plan`);
 }
 
-// Handle subscription updated
+// Handle subscription updated.
+// Also handles Stripe Customer Portal tier changes: if the line item's price id
+// maps to a different local plan, update the plan and reset usage counters so
+// a downgrade does not leave the user over-quota against the new lower limit.
 async function handleSubscriptionUpdated(stripeSubscription) {
     const subscription = await Subscription.findOne({
         stripeSubscriptionId: stripeSubscription.id
@@ -336,11 +355,36 @@ async function handleSubscriptionUpdated(stripeSubscription) {
     subscription.currentPeriodStart = new Date(stripeSubscription.current_period_start * 1000);
     subscription.currentPeriodEnd = new Date(stripeSubscription.current_period_end * 1000);
 
-    // Update status
+    // Update status (two-branch mapping preserved from previous behavior —
+    // unrecognized Stripe statuses leave the local status unchanged).
     if (stripeSubscription.status === 'active') {
         subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     } else if (stripeSubscription.status === 'canceled') {
         subscription.status = SUBSCRIPTION_STATUS.CANCELLED;
+    }
+
+    // Detect Portal-driven plan changes via the current line-item price id.
+    const newPriceId = stripeSubscription.items?.data?.[0]?.price?.id;
+    const mappedPlan = newPriceId ? STRIPE_PRICE_ID_TO_PLAN[newPriceId] : null;
+    const previousPlan = subscription.plan;
+
+    if (newPriceId && !mappedPlan) {
+        console.warn(
+            `[Stripe Webhook] Unknown priceId ${newPriceId} on subscription.updated — plan left unchanged for user ${subscription.userId}`
+        );
+    } else if (mappedPlan && mappedPlan !== previousPlan) {
+        subscription.plan = mappedPlan;
+        subscription.stripePriceId = newPriceId;
+        subscription.usage.videosUsed = 0;
+        subscription.usage.chatMessagesUsed = 0;
+        subscription.usage.lastResetAt = new Date();
+        console.log(
+            `[Stripe Webhook] Plan changed via Portal for user ${subscription.userId}: ${previousPlan} -> ${mappedPlan}`
+        );
+    } else if (newPriceId && mappedPlan === previousPlan && subscription.stripePriceId !== newPriceId) {
+        // Same plan bucket but different price id (e.g. monthly<->yearly on the
+        // same tier). Keep plan but record the current price id.
+        subscription.stripePriceId = newPriceId;
     }
 
     await subscription.save();

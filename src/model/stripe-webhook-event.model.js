@@ -11,6 +11,11 @@ const stripeWebhookEventSchema = new mongoose.Schema(
         type: {
             type: String,
             required: true
+        },
+        processed: {
+            type: Boolean,
+            default: false,
+            index: true
         }
     },
     { timestamps: true }

@@ -67,6 +67,14 @@ const userSchema = new mongoose.Schema({
     notifyProductUpdates: {
         type: Boolean,
         default: true
+    },
+    // Monotonic per-account counter for the lifetime free-trial allowance.
+    // Never reset by subscription lifecycle events. Enforcement is added in
+    // Phase 2B; this field exists so new users default to 0 starting now.
+    lifetimeFreeVideosUsed: {
+        type: Number,
+        default: 0,
+        min: 0
     }
 }, { timestamps: true });
 
