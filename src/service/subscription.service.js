@@ -6,6 +6,21 @@ import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS,
 import stripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
 
+/**
+ * Stripe deprecated subscription-level current_period_start/end in API 2025-03-31.
+ * The canonical location is now on each subscription item.
+ * This helper reads item-level first, falls back to top-level for older payloads.
+ * Returns a tuple [startDate, endDate] as JS Date objects, or [null, null] if unresolvable.
+ */
+function extractSubscriptionPeriod(subscription) {
+    const item = subscription?.items?.data?.[0];
+    const startUnix = item?.current_period_start ?? subscription?.current_period_start;
+    const endUnix = item?.current_period_end ?? subscription?.current_period_end;
+    const start = startUnix ? new Date(startUnix * 1000) : null;
+    const end = endUnix ? new Date(endUnix * 1000) : null;
+    return [start, end];
+}
+
 // Get or create subscription for a user (auto-creates FREE plan)
 export const getOrCreateSubscription = async (userId) => {
     if (!userId) {
@@ -291,7 +306,7 @@ async function handleCheckoutCompleted(session) {
     let subscription = await Subscription.findOne({ userId });
     const stripeSubscription = await stripe.subscriptions.retrieve(stripeSubscriptionId);
     const now = new Date();
-    const periodEnd = new Date(stripeSubscription.current_period_end * 1000);
+    const [, periodEnd] = extractSubscriptionPeriod(stripeSubscription);
     const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
 
     if (!subscription) {
@@ -351,9 +366,12 @@ async function handleSubscriptionUpdated(stripeSubscription) {
         return;
     }
 
-    // Update period dates
-    subscription.currentPeriodStart = new Date(stripeSubscription.current_period_start * 1000);
-    subscription.currentPeriodEnd = new Date(stripeSubscription.current_period_end * 1000);
+    // Update period dates. Stripe API 2025-03-31+ moved current_period_* onto items[].
+    // Helper reads item-level first, falls back to top-level; null guards prevent
+    // overwriting valid existing dates if Stripe sends a payload with neither populated.
+    const [periodStart, periodEnd] = extractSubscriptionPeriod(stripeSubscription);
+    if (periodStart) subscription.currentPeriodStart = periodStart;
+    if (periodEnd) subscription.currentPeriodEnd = periodEnd;
 
     // Update status (two-branch mapping preserved from previous behavior —
     // unrecognized Stripe statuses leave the local status unchanged).
