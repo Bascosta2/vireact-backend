@@ -1,6 +1,7 @@
 import {
     getOrCreateSubscription,
     createCheckoutSession as createCheckoutSessionService,
+    createPortalSession as createPortalSessionService,
     cancelSubscription as cancelSubscriptionService,
     handleStripeWebhook
 } from '../service/subscription.service.js';
@@ -51,6 +52,25 @@ export const createCheckoutSession = async (req, res, next) => {
                 200,
                 'Checkout session created successfully',
                 { url, sessionId }
+            )
+        );
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /subscription/portal - Create Stripe Customer Portal session
+export const createPortal = async (req, res, next) => {
+    try {
+        const userId = req.user._id;
+
+        const { url } = await createPortalSessionService(userId);
+
+        res.status(200).json(
+            ApiResponse.success(
+                200,
+                'Portal session created successfully',
+                { url }
             )
         );
     } catch (error) {

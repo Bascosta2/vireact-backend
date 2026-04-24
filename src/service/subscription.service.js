@@ -215,6 +215,29 @@ export const createCheckoutSession = async (userId, userEmail, plan) => {
     return { url: session.url, sessionId: session.id };
 };
 
+// Create Stripe Customer Portal session for billing management
+export const createPortalSession = async (userId) => {
+    if (!stripe) {
+        throw new ApiError(500, 'Stripe is not configured');
+    }
+
+    const subscription = await getOrCreateSubscription(userId);
+
+    if (!subscription.stripeCustomerId) {
+        throw new ApiError(
+            400,
+            'No active subscription found. Please complete a purchase before accessing billing management.'
+        );
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+        customer: subscription.stripeCustomerId,
+        return_url: `${FRONTEND_URL}/profile`
+    });
+
+    return { url: session.url };
+};
+
 // Handle Stripe webhook events
 export const handleStripeWebhook = async (event) => {
     console.log(`[Stripe Webhook] Received event: ${event.type}`);
