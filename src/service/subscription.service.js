@@ -238,6 +238,135 @@ export const createPortalSession = async (userId) => {
     return { url: session.url };
 };
 
+// Shared prelude for on-site plan changes: validates the target plan, loads the
+// user's Subscription, enforces preconditions (must have an active paid Stripe
+// subscription, target must differ from current, Stripe configured, target
+// priceId configured), and resolves the current Stripe subscription + item id.
+async function resolvePlanChangeContext(userId, targetPlan) {
+    if (!targetPlan || !STRIPE_CHECKOUT_PLANS.includes(targetPlan)) {
+        throw new ApiError(400, `Invalid plan. Must be one of: ${STRIPE_CHECKOUT_PLANS.join(', ')}`);
+    }
+
+    if (!stripe) {
+        throw new ApiError(500, 'Stripe is not configured');
+    }
+
+    const subscription = await getOrCreateSubscription(userId);
+
+    if (!subscription.stripeSubscriptionId) {
+        throw new ApiError(
+            400,
+            'No active subscription found. Please complete a purchase before changing plans.'
+        );
+    }
+
+    if (subscription.plan === targetPlan) {
+        throw new ApiError(400, 'You are already on this plan.');
+    }
+
+    const targetPriceId = STRIPE_PRICE_IDS[targetPlan];
+    if (!targetPriceId) {
+        throw new ApiError(500, `Stripe Price ID not configured for ${targetPlan} plan`);
+    }
+
+    const stripeSubscription = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
+    const currentItemId = stripeSubscription.items?.data?.[0]?.id;
+
+    if (!currentItemId) {
+        throw new ApiError(500, 'Could not resolve current Stripe subscription item');
+    }
+
+    return { subscription, stripeSubscription, currentItemId, targetPriceId };
+}
+
+// Preview proration for an on-site plan change without charging the customer.
+// Returns the immediate prorated charge (sum of proration line items), the next
+// full invoice amount, and the next billing date.
+export const previewPlanChange = async (userId, targetPlan) => {
+    const { subscription, currentItemId, targetPriceId } = await resolvePlanChangeContext(userId, targetPlan);
+
+    const previewParams = {
+        customer: subscription.stripeCustomerId,
+        subscription: subscription.stripeSubscriptionId,
+        subscription_details: {
+            items: [{
+                id: currentItemId,
+                price: targetPriceId
+            }],
+            proration_behavior: 'create_prorations'
+        }
+    };
+
+    let upcomingInvoice;
+    if (typeof stripe.invoices.createPreview === 'function') {
+        upcomingInvoice = await stripe.invoices.createPreview(previewParams);
+    } else if (typeof stripe.invoices.retrieveUpcoming === 'function') {
+        // Legacy SDK shape: flat params, subscription_items + subscription_proration_behavior
+        upcomingInvoice = await stripe.invoices.retrieveUpcoming({
+            customer: subscription.stripeCustomerId,
+            subscription: subscription.stripeSubscriptionId,
+            subscription_items: [{
+                id: currentItemId,
+                price: targetPriceId
+            }],
+            subscription_proration_behavior: 'create_prorations'
+        });
+    } else {
+        throw new ApiError(500, 'Stripe SDK does not support invoice preview (neither createPreview nor retrieveUpcoming available)');
+    }
+
+    const prorationLines = (upcomingInvoice.lines?.data ?? []).filter((line) => line.proration === true);
+    const prorationTotal = prorationLines.reduce((sum, line) => sum + (line.amount ?? 0), 0);
+
+    const nextBillingUnix = upcomingInvoice.next_payment_attempt ?? upcomingInvoice.period_end ?? null;
+    const nextBillingDate = nextBillingUnix ? new Date(nextBillingUnix * 1000) : null;
+
+    console.log(
+        `[Subscription] Plan change preview for user ${userId}: ${subscription.plan} -> ${targetPlan}, proration=${prorationTotal} ${upcomingInvoice.currency}`
+    );
+
+    return {
+        currentPlan: subscription.plan,
+        targetPlan,
+        currency: upcomingInvoice.currency,
+        immediateCharge: prorationTotal,
+        nextInvoiceAmount: upcomingInvoice.amount_due,
+        nextBillingDate,
+        prorationDate: new Date()
+    };
+};
+
+// Execute an on-site plan change with immediate proration. The local
+// Subscription doc is intentionally NOT updated here — handleSubscriptionUpdated
+// (webhook) is the single source of truth for plan mutations via the reverse
+// price-id map, which avoids race conditions and duplicated logic.
+export const changePlan = async (userId, targetPlan) => {
+    const { subscription, currentItemId, targetPriceId } = await resolvePlanChangeContext(userId, targetPlan);
+
+    const updatedSubscription = await stripe.subscriptions.update(
+        subscription.stripeSubscriptionId,
+        {
+            items: [{
+                id: currentItemId,
+                price: targetPriceId
+            }],
+            proration_behavior: 'create_prorations',
+            payment_behavior: 'error_if_incomplete'
+        }
+    );
+
+    console.log(
+        `[Subscription] Plan change executed for user ${userId}: ${subscription.plan} -> ${targetPlan}, stripeStatus=${updatedSubscription.status}`
+    );
+
+    return {
+        success: true,
+        message: 'Plan change initiated. You will receive a confirmation shortly.',
+        newPlan: targetPlan,
+        stripeSubscriptionStatus: updatedSubscription.status
+    };
+};
+
 // Handle Stripe webhook events
 export const handleStripeWebhook = async (event) => {
     console.log(`[Stripe Webhook] Received event: ${event.type}`);

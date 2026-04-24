@@ -2,6 +2,8 @@ import {
     getOrCreateSubscription,
     createCheckoutSession as createCheckoutSessionService,
     createPortalSession as createPortalSessionService,
+    previewPlanChange as previewPlanChangeService,
+    changePlan as changePlanService,
     cancelSubscription as cancelSubscriptionService,
     handleStripeWebhook
 } from '../service/subscription.service.js';
@@ -71,6 +73,54 @@ export const createPortal = async (req, res, next) => {
                 200,
                 'Portal session created successfully',
                 { url }
+            )
+        );
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /subscription/preview-change - Preview proration for a plan change (no charge)
+export const previewChange = async (req, res, next) => {
+    try {
+        const userId = req.user._id;
+        const { plan } = req.body;
+
+        if (!plan) {
+            throw new ApiError(400, 'Plan is required');
+        }
+
+        const preview = await previewPlanChangeService(userId, plan);
+
+        res.status(200).json(
+            ApiResponse.success(
+                200,
+                'Plan change preview generated successfully',
+                preview
+            )
+        );
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /subscription/change-plan - Execute plan change with immediate proration
+export const changePlan = async (req, res, next) => {
+    try {
+        const userId = req.user._id;
+        const { plan } = req.body;
+
+        if (!plan) {
+            throw new ApiError(400, 'Plan is required');
+        }
+
+        const result = await changePlanService(userId, plan);
+
+        res.status(200).json(
+            ApiResponse.success(
+                200,
+                result.message,
+                result
             )
         );
     } catch (error) {
