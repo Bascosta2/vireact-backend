@@ -60,12 +60,14 @@ export const SUBSCRIPTION_PLANS = {
   ENTERPRISE: 'enterprise'
 };
 
-// PLAN LIMITS — numeric values intentionally preserved from the previous
-// starter/pro scheme. Phase 2B will change premium to 15/-, pro to 30/-,
-// and enterprise to an "unlimited" sentinel.
+// PLAN LIMITS — real values per Phase 2B tier spec.
+// `null` is the unlimited sentinel for Enterprise; consumers MUST short-circuit
+// any comparison/CAS on a null limit (see claimVideoMonthlySlot /
+// claimChatMessageSlot). Free is 2/month for the monthly counter; the lifetime
+// 2-video trial is enforced separately at the upload guard layer.
 export const PLAN_LIMITS = {
   free: {
-    videosPerMonth: 3,
+    videosPerMonth: 2,
     chatMessagesPerMonth: 20
   },
   premium: {
@@ -73,13 +75,12 @@ export const PLAN_LIMITS = {
     chatMessagesPerMonth: 100
   },
   pro: {
-    videosPerMonth: 40,
-    chatMessagesPerMonth: 400
+    videosPerMonth: 30,
+    chatMessagesPerMonth: 500
   },
   enterprise: {
-    // Placeholder: matches pro until Phase 2B introduces an unlimited sentinel.
-    videosPerMonth: 40,
-    chatMessagesPerMonth: 400
+    videosPerMonth: null,
+    chatMessagesPerMonth: null
   }
 };
 

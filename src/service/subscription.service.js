@@ -90,6 +90,21 @@ export const claimVideoMonthlySlot = async (userId) => {
         throw new ApiError(500, 'Subscription not found');
     }
     const limits = PLAN_LIMITS[subscription.plan];
+
+    // Unlimited tier (Enterprise): bypass the cap CAS and atomically bump
+    // usage so per-period telemetry remains accurate. Cannot fall through to
+    // the capped query below — Mongo's `$lt: null` would match null/missing
+    // values and silently reject increments on legitimate documents.
+    if (limits.videosPerMonth === null) {
+        const updated = await Subscription.findOneAndUpdate(
+            { _id: subscription._id },
+            { $inc: { 'usage.videosUsed': 1 } },
+            { new: true }
+        );
+        console.log(`[Subscription] Claimed video slot for user ${userId} (unlimited): ${updated.usage.videosUsed}`);
+        return updated;
+    }
+
     const updated = await Subscription.findOneAndUpdate(
         {
             _id: subscription._id,
@@ -131,6 +146,18 @@ export const claimChatMessageSlot = async (userId) => {
         throw new ApiError(500, 'Subscription not found');
     }
     const limits = PLAN_LIMITS[subscription.plan];
+
+    // Unlimited tier (Enterprise): see claimVideoMonthlySlot for rationale.
+    if (limits.chatMessagesPerMonth === null) {
+        const updated = await Subscription.findOneAndUpdate(
+            { _id: subscription._id },
+            { $inc: { 'usage.chatMessagesUsed': 1 } },
+            { new: true }
+        );
+        console.log(`[Subscription] Claimed chat slot for user ${userId} (unlimited): ${updated.usage.chatMessagesUsed}`);
+        return updated;
+    }
+
     const updated = await Subscription.findOneAndUpdate(
         {
             _id: subscription._id,
