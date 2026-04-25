@@ -1,8 +1,9 @@
 import mongoose from 'mongoose';
 import { Subscription } from '../model/subscription.model.js';
 import { StripeWebhookEvent } from '../model/stripe-webhook-event.model.js';
+import { User } from '../model/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS, STRIPE_CHECKOUT_PLANS, STRIPE_PRICE_ID_TO_PLAN } from '../constants.js';
+import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS, STRIPE_CHECKOUT_PLANS, STRIPE_PRICE_ID_TO_PLAN, LIFETIME_FREE_VIDEO_LIMIT } from '../constants.js';
 import stripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
 
@@ -132,6 +133,63 @@ export const releaseVideoMonthlySlot = async (userId) => {
         { $inc: { 'usage.videosUsed': -1 } }
     );
     console.log(`[Subscription] Released video slot for user ${userId}`);
+};
+
+/**
+ * Monotonic increment of the lifetime free-trial counter on the User model.
+ * Called at the same code point where keepVideoQuota = true is set in the
+ * upload service — i.e. only when the slot is permanently spent and the
+ * video record will live in the user's library. No release function exists
+ * by design: the schema enforces min: 0, the field is monotonic for the
+ * lifetime of the account, and re-analyze does not re-enter this path.
+ *
+ * Safe to call for any user; only free-tier users have the lifetime cap
+ * checked elsewhere via assertLifetimeFreeTrialAvailable. For paid tiers
+ * this still increments (cheap, useful telemetry, no enforcement impact).
+ */
+export const incrementLifetimeFreeVideoCount = async (userId) => {
+    const updated = await User.findByIdAndUpdate(
+        userId,
+        { $inc: { lifetimeFreeVideosUsed: 1 } },
+        { new: true }
+    );
+    if (!updated) {
+        // Do not throw — this is a telemetry-adjacent call invoked after
+        // the slot is already spent. Log and move on; the upload should
+        // not fail because the lifetime counter couldn't bump.
+        console.warn(`[Subscription] incrementLifetimeFreeVideoCount: user ${userId} not found`);
+        return null;
+    }
+    console.log(`[Subscription] Lifetime free video count for user ${userId}: ${updated.lifetimeFreeVideosUsed}`);
+    return updated;
+};
+
+/**
+ * Pre-claim gate. Throws ApiError(403, ...) if the user is on the free plan
+ * and has already consumed their lifetime free-trial allowance. No-op for
+ * paid tiers. Read-only; does not mutate any counter.
+ *
+ * Call BEFORE claimVideoMonthlySlot at the top of any upload path. The
+ * monthly counter is irrelevant if the lifetime cap is already hit — we
+ * want to fail fast with a tier-specific error message before touching
+ * the monthly slot CAS.
+ */
+export const assertLifetimeFreeTrialAvailable = async (userId) => {
+    const subscription = await getOrCreateSubscription(userId);
+    if (subscription.plan !== SUBSCRIPTION_PLANS.FREE) {
+        return;
+    }
+    const user = await User.findById(userId).select('lifetimeFreeVideosUsed').lean();
+    if (!user) {
+        throw new ApiError(404, 'User not found');
+    }
+    const used = user.lifetimeFreeVideosUsed ?? 0;
+    if (used >= LIFETIME_FREE_VIDEO_LIMIT) {
+        throw new ApiError(
+            403,
+            'Free trial limit reached. Upgrade to continue analyzing videos.'
+        );
+    }
 };
 
 /**

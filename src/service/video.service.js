@@ -4,7 +4,12 @@ import { Chat } from '../model/chat.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { UPLOAD_STATUS, ANALYSIS_STATUS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
-import { claimVideoMonthlySlot, releaseVideoMonthlySlot } from './subscription.service.js';
+import {
+    claimVideoMonthlySlot,
+    releaseVideoMonthlySlot,
+    incrementLifetimeFreeVideoCount,
+    assertLifetimeFreeTrialAvailable,
+} from './subscription.service.js';
 import mongoose from 'mongoose';
 import { AWS_S3_BUCKET_NAME, TWELVELABS_USER_INDEX } from '../config/index.js';
 import TwelveLabsClient from '../lib/twelve-labs.js';
@@ -308,6 +313,7 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             throw new ApiError(400, 'User ID, file, and filename are required');
         }
 
+        await assertLifetimeFreeTrialAvailable(userId);
         await claimVideoMonthlySlot(userId);
         quotaClaimed = true;
 
@@ -397,10 +403,20 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
                 video.lastErrorAt = new Date();
                 await video.save();
                 keepVideoQuota = true;
+                try {
+                    await incrementLifetimeFreeVideoCount(userId);
+                } catch (err) {
+                    console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
+                }
                 throw new ApiError(502, errMsg);
             }
 
             keepVideoQuota = true;
+            try {
+                await incrementLifetimeFreeVideoCount(userId);
+            } catch (err) {
+                console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
+            }
             return video;
         } catch (twelveLabsError) {
             if (twelveLabsError instanceof ApiError && twelveLabsError.statusCode === 502) {
@@ -451,6 +467,7 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
             throw new ApiError(400, 'Invalid URL format');
         }
 
+        await assertLifetimeFreeTrialAvailable(userId);
         await claimVideoMonthlySlot(userId);
         quotaClaimed = true;
 
@@ -528,10 +545,20 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
                 video.lastErrorAt = new Date();
                 await video.save();
                 keepVideoQuota = true;
+                try {
+                    await incrementLifetimeFreeVideoCount(userId);
+                } catch (err) {
+                    console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
+                }
                 throw new ApiError(502, errMsg);
             }
 
             keepVideoQuota = true;
+            try {
+                await incrementLifetimeFreeVideoCount(userId);
+            } catch (err) {
+                console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
+            }
             return video;
         } catch (ingestErr) {
             if (ingestErr instanceof ApiError && ingestErr.statusCode === 502) {

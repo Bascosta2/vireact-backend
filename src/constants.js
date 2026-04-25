@@ -84,6 +84,12 @@ export const PLAN_LIMITS = {
   }
 };
 
+// Lifetime free-trial video allowance per user account. Enforced via
+// assertLifetimeFreeTrialAvailable in subscription.service.js. Independent of
+// PLAN_LIMITS[FREE].videosPerMonth (which is the per-period cap). Counter is
+// monotonic — never decremented; schema enforces min: 0 on the User field.
+export const LIFETIME_FREE_VIDEO_LIMIT = 2;
+
 // PLAN PRICES (in cents). Public display prices live in the frontend pricing
 // page and are rewritten in Phase 2C — these are internal reference values.
 export const PLAN_PRICES = {
