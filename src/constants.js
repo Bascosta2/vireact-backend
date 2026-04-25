@@ -90,6 +90,28 @@ export const PLAN_LIMITS = {
 // monotonic — never decremented; schema enforces min: 0 on the User field.
 export const LIFETIME_FREE_VIDEO_LIMIT = 2;
 
+// Per-tier whitelist of allowed analyzer features. Canonical source of truth
+// for both upload-time filtering (video.service.js) and dispatch-time gating
+// (video.controller.js processVideoAnalysis). Any feature not in a tier's
+// array is silently dropped at both layers — the user is not informed,
+// because the frontend should never have offered the feature.
+//
+// Currently the only gated feature is 'advanced_analytics' (Pro+ only). All
+// other analyzers are universal across tiers including Free.
+export const PLAN_FEATURES = {
+  [SUBSCRIPTION_PLANS.FREE]:       ['hook', 'caption', 'pacing', 'audio', 'views_predictor'],
+  [SUBSCRIPTION_PLANS.PREMIUM]:    ['hook', 'caption', 'pacing', 'audio', 'views_predictor'],
+  [SUBSCRIPTION_PLANS.PRO]:        ['hook', 'caption', 'pacing', 'audio', 'views_predictor', 'advanced_analytics'],
+  [SUBSCRIPTION_PLANS.ENTERPRISE]: ['hook', 'caption', 'pacing', 'audio', 'views_predictor', 'advanced_analytics'],
+};
+
+// Returns the allowed feature set for a given plan, or the FREE set as a
+// safe fallback for unknown/missing plans (treats any anomaly as least-
+// privilege). Used by both the upload filter and the dispatch gate.
+export const allowedFeaturesForPlan = (plan) => {
+  return PLAN_FEATURES[plan] || PLAN_FEATURES[SUBSCRIPTION_PLANS.FREE];
+};
+
 // PLAN PRICES (in cents). Public display prices live in the frontend pricing
 // page and are rewritten in Phase 2C — these are internal reference values.
 export const PLAN_PRICES = {

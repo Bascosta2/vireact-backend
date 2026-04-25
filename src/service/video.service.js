@@ -2,13 +2,14 @@ import { Video } from '../model/video.model.js';
 import { Chat } from '../model/chat.model.js';
 // import { uploadFileUrl, deleteFile } from '../lib/aws_s3.js';
 import { ApiError } from '../utils/ApiError.js';
-import { UPLOAD_STATUS, ANALYSIS_STATUS } from '../constants.js';
+import { UPLOAD_STATUS, ANALYSIS_STATUS, allowedFeaturesForPlan } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
 import {
     claimVideoMonthlySlot,
     releaseVideoMonthlySlot,
     incrementLifetimeFreeVideoCount,
     assertLifetimeFreeTrialAvailable,
+    getOrCreateSubscription,
 } from './subscription.service.js';
 import mongoose from 'mongoose';
 import { AWS_S3_BUCKET_NAME, TWELVELABS_USER_INDEX } from '../config/index.js';
@@ -305,6 +306,26 @@ export const markAnalysisViewedService = async (videoId, userId) => {
     }
 };
 
+/**
+ * Filters a user-supplied selectedFeatures array against the user's plan's
+ * allowed feature set. Silently drops any feature not allowed for the plan —
+ * the user is not informed which features were stripped, because the frontend
+ * should never have offered them in the first place. Returns a new array
+ * (does not mutate input).
+ *
+ * Empty/null/undefined input is preserved as-is; the dispatcher in
+ * processVideoAnalysis defaults to the full allowed list when selectedFeatures
+ * is empty, and that default is itself filtered by the dispatch-time gate.
+ */
+const filterFeaturesForUser = async (userId, selectedFeatures) => {
+    if (!Array.isArray(selectedFeatures) || selectedFeatures.length === 0) {
+        return selectedFeatures;
+    }
+    const subscription = await getOrCreateSubscription(userId);
+    const allowed = allowedFeaturesForPlan(subscription.plan);
+    return selectedFeatures.filter(f => allowed.includes(f));
+};
+
 export const uploadVideoToTwelveLabsService = async (userId, file, filename, selectedFeatures = []) => {
     let quotaClaimed = false;
     let keepVideoQuota = false;
@@ -316,6 +337,11 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
         await assertLifetimeFreeTrialAvailable(userId);
         await claimVideoMonthlySlot(userId);
         quotaClaimed = true;
+
+        // Filter selectedFeatures against the user's plan — silently drops any
+        // feature their tier doesn't allow. The dispatcher re-checks at run time
+        // (security backstop in processVideoAnalysis).
+        const filteredFeatures = await filterFeaturesForUser(userId, selectedFeatures);
 
         // Get file size from multer file object or buffer
         const fileSize = file.size || file.buffer?.length || 0;
@@ -329,7 +355,7 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             filename,
             fileSize: fileSize,
             uploadStatus: UPLOAD_STATUS.UPLOADING,
-            selectedFeatures: Array.isArray(selectedFeatures) ? selectedFeatures : [],
+            selectedFeatures: Array.isArray(filteredFeatures) ? filteredFeatures : [],
             uploader_id: userId
         });
 
@@ -471,6 +497,11 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
         await claimVideoMonthlySlot(userId);
         quotaClaimed = true;
 
+        // Filter selectedFeatures against the user's plan — silently drops any
+        // feature their tier doesn't allow. The dispatcher re-checks at run time
+        // (security backstop in processVideoAnalysis).
+        const filteredFeatures = await filterFeaturesForUser(userId, selectedFeatures);
+
         // Generate unique video ID
         const videoId = new mongoose.Types.ObjectId();
 
@@ -480,7 +511,7 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
             filename,
             fileSize: 0, // URL uploads don't have file size initially
             uploadStatus: UPLOAD_STATUS.UPLOADING,
-            selectedFeatures: Array.isArray(selectedFeatures) ? selectedFeatures : [],
+            selectedFeatures: Array.isArray(filteredFeatures) ? filteredFeatures : [],
             uploader_id: userId
         });
 

@@ -14,8 +14,9 @@ import { ApiError } from '../utils/ApiError.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { Video } from '../model/video.model.js';
 import { Chat } from '../model/chat.model.js';
-import { ANALYSIS_STATUS } from '../constants.js';
+import { ANALYSIS_STATUS, allowedFeaturesForPlan, SUBSCRIPTION_PLANS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
+import { getOrCreateSubscription } from '../service/subscription.service.js';
 import TwelveLabsClient from '../lib/twelve-labs.js';
 import { analyzeHook } from '../service/analyzer/hook.analyzer.js';
 import { analyzeCaption } from '../service/analyzer/caption.analyzer.js';
@@ -386,6 +387,36 @@ export const processVideoAnalysis = async (req, res) => {
                 ? video.selectedFeatures
                 : ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor'];
 
+            // Dispatch-time tier gate (security backstop). Re-validates the
+            // feature set against the live subscription — defends against
+            // downgrade attacks (user uploads as Pro, downgrades before QStash
+            // runs) and any future code path that bypasses the upload-time
+            // filter. Silent: skipped analyzers are treated as if never
+            // selected (no FAILED stub pushed into video.analysis).
+            //
+            // Subscription read is wrapped in try/catch — a transient DB blip
+            // falls back to the FREE allowed set (least-privilege) rather than
+            // accidentally granting Pro features.
+            let allowedFeatures;
+            try {
+                const uploaderId = video.uploader_id || userId;
+                const subscription = await getOrCreateSubscription(uploaderId);
+                allowedFeatures = allowedFeaturesForPlan(subscription.plan);
+            } catch (gateError) {
+                console.error(
+                    `[QStash] Dispatch-time gate failed to load subscription, defaulting to FREE allowed set:`,
+                    gateError.message
+                );
+                allowedFeatures = allowedFeaturesForPlan(SUBSCRIPTION_PLANS.FREE);
+            }
+            const gatedFeatures = selectedFeatures.filter(f => allowedFeatures.includes(f));
+            const droppedFeatures = selectedFeatures.filter(f => !allowedFeatures.includes(f));
+            if (droppedFeatures.length > 0) {
+                console.warn(
+                    `[QStash] Dispatch-time gate dropped features (plan-based filter): ${droppedFeatures.join(', ')}`
+                );
+            }
+
             const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
             const hook = hookScene?.primaryAction || hookScene?.visualDescription || '';
 
@@ -445,7 +476,7 @@ export const processVideoAnalysis = async (req, res) => {
                 return 55;
             };
 
-            for (const feature of selectedFeatures) {
+            for (const feature of gatedFeatures) {
                 try {
                     let analysisResult = null;
                     switch (feature) {
