@@ -78,6 +78,24 @@ const userSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
+// Schema-level serialization guard. Strips fields that must never reach a
+// client over JSON. This is defense-in-depth: callsites should still .select
+// these out where possible, but res.json(user) on a Mongoose doc routes
+// through toJSON so a forgotten .select cannot leak the persisted refresh
+// token, password hash, or email-verification token.
+// NOTE: only fires for Mongoose documents. Queries that end in .lean() bypass
+// this transform — those callsites must strip sensitive fields explicitly via
+// .select(). See loginUser, googleCallback, and profile.service for examples.
+userSchema.set("toJSON", {
+    transform: (_doc, ret) => {
+        delete ret.password;
+        delete ret.refreshToken;
+        delete ret.emailVerificationToken;
+        delete ret.__v;
+        return ret;
+    }
+});
+
 
 userSchema.pre("save", async function (next) {
     // Only hash password if it exists and has been modified

@@ -21,13 +21,16 @@ export const authenticateToken = async (req, res, next) => {
 
         // Verify the token
         const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
-        
-        // Find user by ID from token
-        let user = await User.findById(decoded._id).select('-password');
+
+        // Find user by ID from token. Explicit field exclusion is defense-in-depth
+        // alongside the schema-level toJSON transform — req.user is forwarded to
+        // many handlers and we never want refreshToken/emailVerificationToken
+        // accessible from req.user.
+        let user = await User.findById(decoded._id).select('-password -refreshToken -emailVerificationToken');
         
         if (!user) {
             // Try admin if user not found
-            user = await Admin.findById(decoded._id).select('-password');
+            user = await Admin.findById(decoded._id).select('-password -refreshToken');
             if (!user) {
                 throw new ApiError(401, 'Invalid token - user not found');
             }
@@ -63,11 +66,11 @@ export const optionalAuth = async (req, res, next) => {
         }
 
         const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
-        
-        let user = await User.findById(decoded._id).select('-password');
+
+        let user = await User.findById(decoded._id).select('-password -refreshToken -emailVerificationToken');
         
         if (!user) {
-            user = await Admin.findById(decoded._id).select('-password');
+            user = await Admin.findById(decoded._id).select('-password -refreshToken');
         }
 
         req.user = user || null;

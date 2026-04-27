@@ -12,7 +12,7 @@ export const getUserProfileService = async (userId) => {
             throw new ApiError(400, "User ID is required.");
         }
 
-        const user = await User.findById(userId).select("-password -refreshToken").lean();
+        const user = await User.findById(userId).select("-password -refreshToken -emailVerificationToken").lean();
 
         if (!user) {
             throw new ApiError(404, "User not found.");
@@ -79,7 +79,7 @@ export const updateUserProfileService = async (userId, name, email) => {
         await user.save();
 
         // Return user without sensitive data
-        const updatedUser = await User.findById(userId).select("-password -refreshToken").lean();
+        const updatedUser = await User.findById(userId).select("-password -refreshToken -emailVerificationToken").lean();
 
         return updatedUser;
     } catch (error) {

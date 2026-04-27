@@ -32,10 +32,13 @@ passport.serializeUser((user, done) => {
     done(null, user._id);
 });
 
-// Deserialize user from session
+// Deserialize user from session. Strip sensitive fields defensively even
+// though the session-deserialized user is not currently echoed in any
+// response body — keeps refreshToken and emailVerificationToken from
+// surviving on req.user if a future handler echoes it.
 passport.deserializeUser(async (id, done) => {
     try {
-        const user = await User.findById(id).select('-password');
+        const user = await User.findById(id).select('-password -refreshToken -emailVerificationToken');
         done(null, user);
     } catch (error) {
         done(error, null);

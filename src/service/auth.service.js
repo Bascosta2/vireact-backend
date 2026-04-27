@@ -252,26 +252,43 @@ export const resendEmailVerificationService = async (email) => {
 5. Send cookies
 
 */
+// Generic credential-failure response. The same status, message, and shape are
+// returned for unknown email, bad password, and unverified-but-pending email so
+// that an attacker cannot distinguish them and enumerate accounts. Cross-provider
+// conflict is intentionally NOT collapsed — it is a usability signal ("you have
+// an account, just on a different provider"), not a credential check, and
+// hiding it would frustrate legitimate users without raising the bar for
+// enumeration much (an attacker can already enumerate via OAuth).
+const GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email or password";
+
 export const loginUserService = async (email, password) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-        throw new ApiError(400, "User Not Found");
+        throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
+    // Cross-provider conflict: the email exists but belongs to a different
+    // provider (e.g. Google). Surface the actionable message verbatim — this
+    // is not a credential failure. See note above.
     if (user.provider !== OAUTH_PROVIDERS.LOCAL) {
         const providerName = getProviderDisplayName(user.provider);
         throw new ApiError(409, `This email is already registered via ${providerName}. Please log in with ${providerName} instead.`);
     }
 
+    // Unverified email is collapsed into the generic 401 to close the
+    // "is this address a verified user?" enumeration vector. The legitimate
+    // owner can self-recover by requesting a new verification email at
+    // /resend-verification, which echoes the same generic outcome whether or
+    // not the address exists.
     if (!user.isEmailVerified) {
-        throw new ApiError(401, "Please verify your email first.");
+        throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
     const isPasswordValid = await user.comparePassword(password);
 
     if (!isPasswordValid) {
-        throw new ApiError(401, "Invalid Password");
+        throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
     if (NODE_ENV !== 'production') {

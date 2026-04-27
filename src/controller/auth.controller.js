@@ -87,10 +87,18 @@ export const loginUser = async (req, res, next) => {
 
         const { accessToken, refreshToken } = await generateAccessToken(user._id, User, "User");
 
-        const loggedInUser = await User.findById(user._id).select("-password").lean();
+        // Explicit field exclusion: this query is .lean() so the schema-level
+        // toJSON transform does not run. We must strip sensitive fields here.
+        const loggedInUser = await User.findById(user._id)
+            .select("-password -refreshToken -emailVerificationToken")
+            .lean();
         res.clearCookie("accessToken", COOKIE_OPTIONS)
         res.clearCookie("refreshToken", COOKIE_OPTIONS)
 
+        // The refresh token is set as an HttpOnly cookie above and intentionally
+        // not echoed in the JSON body. Email/password clients still receive the
+        // access token in the body for Bearer-header use; the refresh token must
+        // never leave the server outside of the HttpOnly cookie channel.
         res.status(200)
             .cookie("accessToken", accessToken, COOKIE_OPTIONS)
             .cookie("refreshToken", refreshToken, { ...COOKIE_OPTIONS, maxAge: 30 * 24 * 60 * 60 * 1000 }) // 30 days
@@ -100,8 +108,7 @@ export const loginUser = async (req, res, next) => {
                     "Login Successful",
                     {
                         user: loggedInUser,
-                        accessToken,
-                        refreshToken
+                        accessToken
                     }
                 )
             )
@@ -271,8 +278,19 @@ export const logoutAdmin = async (req, res, next) => {
 
 
 // Logout User
+// Server-side revocation: the persisted refresh token must be cleared so a
+// captured/stolen JWT (e.g. from an XSS leak prior to this hardening) cannot
+// be replayed for up to 30 days. The route is gated by authenticateToken so
+// req.user is hydrated and we know whose token to revoke.
 export const logoutUser = async (req, res, next) => {
     try {
+        if (req.user && req.user._id) {
+            await User.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+        }
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
         res.status(200).json(
@@ -350,8 +368,12 @@ export const googleCallback = async (req, res, next) => {
             // Generate access and refresh tokens for the user
             const { accessToken, refreshToken } = await generateAccessToken(user._id, User, "User");
 
-            // Get user without password
-            const loggedInUser = await User.findById(user._id).select("-password").lean();
+            // Get user without sensitive fields. .lean() bypasses the schema toJSON
+            // transform, so explicit exclusion is required even though this value
+            // is currently unused before the redirect.
+            const loggedInUser = await User.findById(user._id)
+                .select("-password -refreshToken -emailVerificationToken")
+                .lean();
 
             // Set cookies
             res.cookie("accessToken", accessToken, COOKIE_OPTIONS);
