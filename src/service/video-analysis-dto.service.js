@@ -1,7 +1,13 @@
+import { allowedFeaturesForPlan } from '../constants.js';
+
 /**
  * Build VideoAnalysis DTO from Video document (slash-doc shape).
  * Maps analysis[], scenes, timestampFeedback, viralityScore, view bands, retentionCurve
  * and normalizes timestampFeedback to FeedbackItem (timestampStart, timestampEnd, whatIsWrong, suggestionsToImprove).
+ *
+ * For GET /api/v1/videos/:videoId, `userPlan` is the requester’s current plan. When the plan is not allowed to
+ * see Advanced Analytics (Free/Premium), `features.advanced` and `scores.advanced` are set to `null` in the
+ * DTO even if legacy `analysis[]` still contains `advanced_analytics` (data remains in MongoDB; it reappears for Pro+).
  */
 
 const FEATURE_LABELS = {
@@ -60,8 +66,9 @@ function toFeedbackItem(f) {
 
 /**
  * Build VideoAnalysis object from video document
+ * @param {string} [userPlan] - Passed to plan-aware Advanced Analytics stripping; see file header.
  */
-export function buildVideoAnalysisDTO(video) {
+export function buildVideoAnalysisDTO(video, userPlan) {
     if (!video) return null;
 
     const analysis = video.analysis || [];
@@ -108,19 +115,26 @@ export function buildVideoAnalysisDTO(video) {
         },
     };
 
+    const allowed = allowedFeaturesForPlan(userPlan);
+    if (!allowed.includes('advanced_analytics')) {
+        dto.features.advanced = null;
+        dto.scores.advanced = null;
+    }
+
     return dto;
 }
 
 /**
- * Build full video response with analysis DTO for GET /videos/:videoId
+ * Build full video response with analysis DTO for GET /api/v1/videos/:videoId
+ * @param {string} [userPlan] - Requesting user’s plan; forwarded to buildVideoAnalysisDTO
  */
-export function buildVideoWithAnalysisResponse(video) {
+export function buildVideoWithAnalysisResponse(video, userPlan) {
     if (!video) return null;
     const doc = video.toObject ? video.toObject() : video;
     const { lastError, lastErrorAt, ...safeDoc } = doc;
     return {
         ...safeDoc,
         id: doc._id?.toString(),
-        analysis: buildVideoAnalysisDTO(doc)
+        analysis: buildVideoAnalysisDTO(doc, userPlan)
     };
 }

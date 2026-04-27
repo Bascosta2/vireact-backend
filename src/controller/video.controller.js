@@ -231,7 +231,17 @@ export const getVideoById = async (req, res, next) => {
             throw new ApiError(404, 'Video not found');
         }
 
-        const payload = buildVideoWithAnalysisResponse(video);
+        let userPlan = SUBSCRIPTION_PLANS.FREE;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            if (subscription?.plan) {
+                userPlan = subscription.plan;
+            }
+        } catch {
+            // least-privilege: Free allowed set; DTO will strip Pro-only fields
+        }
+
+        const payload = buildVideoWithAnalysisResponse(video, userPlan);
         res.status(200).json(
             ApiResponse.success(200, 'Video retrieved successfully', payload)
         );
