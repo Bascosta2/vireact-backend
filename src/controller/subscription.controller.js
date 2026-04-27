@@ -9,17 +9,28 @@ import {
 } from '../service/subscription.service.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
-import { PLAN_LIMITS } from '../constants.js';
+import { PLAN_LIMITS, LIFETIME_FREE_VIDEO_LIMIT } from '../constants.js';
+import { User } from '../model/user.model.js';
 import stripe from '../lib/stripe.js';
 import { STRIPE_WEBHOOK_SECRET } from '../config/index.js';
 
-// GET /subscription - Get current subscription and usage
+// GET /subscription
+// Returns { subscription, limits }.
+// `limits` includes videosPerMonth, chatMessagesPerMonth (null = unlimited) plus
+// lifetime free-trial fields from the User model (not the Subscription document):
+//   - lifetimeFreeVideosUsed: number (default 0 for legacy users)
+//   - lifetimeFreeVideoLimit: number (LIFETIME_FREE_VIDEO_LIMIT, single source of truth)
 export const getSubscription = async (req, res, next) => {
     try {
         const userId = req.user._id;
 
         const subscription = await getOrCreateSubscription(userId);
-        const limits = PLAN_LIMITS[subscription.plan];
+        const userDoc = await User.findById(userId).select('lifetimeFreeVideosUsed').lean();
+        const limits = {
+            ...PLAN_LIMITS[subscription.plan],
+            lifetimeFreeVideosUsed: userDoc?.lifetimeFreeVideosUsed ?? 0,
+            lifetimeFreeVideoLimit: LIFETIME_FREE_VIDEO_LIMIT
+        };
 
         res.status(200).json(
             ApiResponse.success(
