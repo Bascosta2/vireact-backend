@@ -397,6 +397,11 @@ export const googleAuthFailure = (req, res) => {
 
 // Refresh Token Controller
 // Source order: body first (form users), cookie second (OAuth users on HttpOnly-only path).
+// The new refresh token is set ONLY via HttpOnly cookie — never echoed in the JSON
+// body. Returning it in the body would allow XSS to exfiltrate the long-lived token
+// despite the HttpOnly flag on the cookie (the browser sends the cookie automatically
+// on fetch, and XSS reads the response body). The access token is intentionally still
+// returned in the body for Bearer-header use (short-lived, 30 min).
 export const refreshToken = async (req, res, next) => {
     try {
         const bodyToken = req.body?.refreshToken;
@@ -417,8 +422,7 @@ export const refreshToken = async (req, res, next) => {
                     200,
                     "Token refreshed successfully",
                     {
-                        accessToken,
-                        refreshToken: newRefreshToken
+                        accessToken
                     }
                 )
             );
