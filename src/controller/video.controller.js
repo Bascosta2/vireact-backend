@@ -32,7 +32,7 @@ export const getPresignedUploadUrl = async (req, res) => {
     return res.status(410).json(
         ApiResponse.error(
             410,
-            'Presigned URL upload flow is no longer supported. Use /videos/upload-file or /videos/upload-url.'
+            'Presigned URL upload flow is no longer supported. Use /videos/upload-file.'
         )
     );
 };
@@ -690,35 +690,49 @@ export const uploadVideoToTwelveLabs = async (req, res, next) => {
 };
 
 export const uploadVideoUrlToTwelveLabs = async (req, res, next) => {
-    try {
-        const { url, filename, selectedFeatures } = req.body;
-        const userId = req.user._id;
+    return res.status(410).json(
+        ApiResponse.error(
+            410,
+            'URL-based video upload is no longer supported. Please upload your video file directly.'
+        )
+    );
 
-        if (!url || !filename) {
-            throw new ApiError(400, 'URL and filename are required');
+    // Original handler preserved below for trivial restorability if the URL
+    // ingest flow is ever revived. Unreachable while the early 410 return
+    // above stands; do not rely on this path without re-enabling the route.
+    /* eslint-disable no-unreachable */
+    if (false) {
+        try {
+            const { url, filename, selectedFeatures } = req.body;
+            const userId = req.user._id;
+
+            if (!url || !filename) {
+                throw new ApiError(400, 'URL and filename are required');
+            }
+
+            const selectedFeaturesArray = Array.isArray(selectedFeatures)
+                ? selectedFeatures
+                : [];
+
+            const video = await uploadVideoUrlToTwelveLabsService(
+                userId,
+                url,
+                filename,
+                selectedFeaturesArray
+            );
+
+            res.status(200).json(
+                ApiResponse.success(
+                    200,
+                    'Video URL uploaded to TwelveLabs successfully',
+                    { video }
+                )
+            );
+        } catch (error) {
+            next(error);
         }
-
-        const selectedFeaturesArray = Array.isArray(selectedFeatures)
-            ? selectedFeatures
-            : [];
-
-        const video = await uploadVideoUrlToTwelveLabsService(
-            userId,
-            url,
-            filename,
-            selectedFeaturesArray
-        );
-
-        res.status(200).json(
-            ApiResponse.success(
-                200,
-                'Video URL uploaded to TwelveLabs successfully',
-                { video }
-            )
-        );
-    } catch (error) {
-        next(error);
     }
+    /* eslint-enable no-unreachable */
 };
 
 // Build initial analysis message for chat from video.analysis array

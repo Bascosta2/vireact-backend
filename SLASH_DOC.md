@@ -19,10 +19,8 @@ Vireact must always feel like a polished, modern B2B/B2C SaaS dashboard — not 
 ## 2. Core User Flows (MVP)
 
 ### 2.1 Upload / Import Flow
-- User lands on the **Upload** page and either:
-  - Drags and drops a video file (MP4, MOV, WEBM, AVI, MKV — max 200MB, 5s–60s duration), or
-  - Pastes a URL from YouTube Shorts, TikTok, Instagram Reels, or Facebook.
-- For **allowlisted** Shorts / TikTok / Instagram page URLs, the **backend downloads the video with yt-dlp** (plus ffmpeg for merge) and uploads it to Twelve Labs as a direct file ingest. Other URLs are still passed to Twelve Labs `method: url` when the host is not in that allowlist. Production Railway deploy uses the backend **Dockerfile** so yt-dlp and ffmpeg are present; local dev needs them on PATH or set `YT_DLP_PATH`. Private, geo-blocked, or DRM-heavy links may fail with a clear API error.
+- User lands on the **Upload** page and drags and drops (or selects) a video file (MP4, MOV, WEBM, AVI, MKV — max 200MB, 5s–60s duration). Direct file upload is the only supported entry point.
+- **URL pasting (YouTube Shorts / TikTok / Instagram Reels / Facebook) was removed in May 2026** because it was not reliable enough in production. The authenticated upload page no longer exposes a URL input. The backend route `POST /videos/upload-url` still exists but returns `410 Gone` with a clear message — the controller body is preserved (wrapped in an unreachable block) so the flow is trivially restorable if it is ever revived. Historical `Video` records ingested via the URL flow still render normally; their `sourceUrl` / `sourceTitle` / `sourceDescription` / `platform` fields are preserved on the schema and surfaced unchanged in the dashboard, report view, and chat. The `yt-dlp` binary (and `ffmpeg`, used transitively by yt-dlp) currently remain in the Railway Nixpacks build because they are no-cost dead weight; a future cleanup PR will strip them once we have staging coverage.
 - User continues to the **Features** page (`/features`), selects which analysis features to run (Hook, Pacing, Audio, Captions, Views Predictor, Advanced Analytics), and starts analysis (single upload + job to backend).
 - **Home** (`/dashboard`) is a workflow overview; feature picking is not on Home or on Upload.
 - App triggers backend job and transitions to an "analysis in progress" state.
@@ -239,4 +237,4 @@ interface PredictionBand {
 
 ---
 
-*Last updated: April 2026 — update this date whenever a major section changes.*
+*Last updated: May 2026 — update this date whenever a major section changes.*
