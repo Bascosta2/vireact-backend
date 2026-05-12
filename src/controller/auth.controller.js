@@ -302,18 +302,19 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Determines User vs Admin from the authenticated document (set by
+// authenticateToken), NOT from the client-supplied body, to prevent a
+// malicious or buggy client from sending { role: "admin" } and routing
+// through logoutAdmin — which only clears cookies — thereby bypassing
+// the server-side refresh-token revocation in logoutUser.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const isAdminEntity = req.user?.constructor?.modelName === 'Admin';
 
-        if (role === ROLES.ADMIN) {
+        if (isAdminEntity) {
             await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        } else {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
         }
     } catch (error) {
         next(error)
