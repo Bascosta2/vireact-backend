@@ -304,6 +304,19 @@ export const logoutUser = async (req, res, next) => {
 // Single Logout Handler
 export const logout = async (req, res, next) => {
     try {
+        // Always revoke the refresh token before dispatching to the role-specific
+        // handler. Without this, a caller can send role: "admin" to route through
+        // logoutAdmin (cookie-only cleanup), bypassing the DB token revocation
+        // that logoutUser performs. For actual Admin callers this is a harmless
+        // no-op — their _id lives in the Admin collection, not User.
+        if (req.user && req.user._id) {
+            await User.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+        }
+
         const { role } = req.body;
 
         if (role === ROLES.ADMIN) {
