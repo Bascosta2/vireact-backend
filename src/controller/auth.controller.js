@@ -397,6 +397,9 @@ export const googleAuthFailure = (req, res) => {
 
 // Refresh Token Controller
 // Source order: body first (form users), cookie second (OAuth users on HttpOnly-only path).
+// The new refresh token is delivered exclusively via HttpOnly cookie — never in
+// the JSON body. This is consistent with the login hardening (commit 0837232)
+// and prevents XSS from reading the token out of a fetch() response.
 export const refreshToken = async (req, res, next) => {
     try {
         const bodyToken = req.body?.refreshToken;
@@ -417,8 +420,7 @@ export const refreshToken = async (req, res, next) => {
                     200,
                     "Token refreshed successfully",
                     {
-                        accessToken,
-                        refreshToken: newRefreshToken
+                        accessToken
                     }
                 )
             );
