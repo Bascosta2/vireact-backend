@@ -194,27 +194,32 @@ export const verifyEmailService = async (token) => {
 
 
 export const resendEmailVerificationService = async (email) => {
+    if (!email) {
+        throw new ApiError(400, "Email is required.");
+    }
+
+    // Return the same response for every outcome so this endpoint cannot be
+    // used to enumerate accounts — mirrors the generic-401 hardening applied
+    // to loginUserService. The email is only dispatched when the account
+    // exists, is local-provider, and is still unverified.
+    const GENERIC_OK = {
+        success: true,
+        message: "If an account with that email exists, a verification link has been sent."
+    };
+
+    const user = await User.findOne({ email });
+
+    if (!user || user.isEmailVerified || user.provider !== OAUTH_PROVIDERS.LOCAL) {
+        return GENERIC_OK;
+    }
+
+    const newToken = crypto.randomBytes(32).toString("hex");
+    user.emailVerificationToken = newToken;
+    await user.save({ validateBeforeSave: false });
+
+    const verificationUrl = `${FRONTEND_URL}/verify-email?token=${newToken}`;
+
     try {
-        if (!email) {
-            throw new ApiError(400, "Email is required.");
-        }
-
-        const user = await User.findOne({ email });
-
-        if (!user) {
-            throw new ApiError(400, "User not found.");
-        }
-
-        if (user.isEmailVerified) {
-            throw new ApiError(400, "Email is already verified.");
-        }
-
-        const newToken = crypto.randomBytes(32).toString("hex");
-        user.emailVerificationToken = newToken;
-        await user.save({ validateBeforeSave: false });
-
-        const verificationUrl = `${FRONTEND_URL}/verify-email?token=${newToken}`;
-
         await resend.emails.send({
             from: RESEND_FROM_EMAIL,
             to: user.email,
@@ -225,15 +230,11 @@ export const resendEmailVerificationService = async (email) => {
                 </div>
             `
         });
-
-        return {
-            success: true,
-            message: "Verification email resent successfully."
-        };
-
-    } catch (error) {
-        throw new ApiError(500, error.message || "Failed to resend verification email.");
+    } catch (sendErr) {
+        console.error(`[Auth] Failed to send verification email for ${user._id}:`, sendErr.message);
     }
+
+    return GENERIC_OK;
 };
 
 
