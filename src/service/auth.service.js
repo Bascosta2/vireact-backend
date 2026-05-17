@@ -193,6 +193,15 @@ export const verifyEmailService = async (token) => {
 
 
 
+// Returns a fixed success shape regardless of whether the email exists or is
+// already verified, so an attacker cannot distinguish the three cases and
+// enumerate accounts. The login flow was already hardened; this closes the
+// parallel enumeration vector on /resend-verification.
+const RESEND_VERIFICATION_OK = {
+    success: true,
+    message: "If that email is in our system and unverified, a new verification link has been sent."
+};
+
 export const resendEmailVerificationService = async (email) => {
     try {
         if (!email) {
@@ -201,12 +210,8 @@ export const resendEmailVerificationService = async (email) => {
 
         const user = await User.findOne({ email });
 
-        if (!user) {
-            throw new ApiError(400, "User not found.");
-        }
-
-        if (user.isEmailVerified) {
-            throw new ApiError(400, "Email is already verified.");
+        if (!user || user.isEmailVerified) {
+            return RESEND_VERIFICATION_OK;
         }
 
         const newToken = crypto.randomBytes(32).toString("hex");
@@ -226,10 +231,7 @@ export const resendEmailVerificationService = async (email) => {
             `
         });
 
-        return {
-            success: true,
-            message: "Verification email resent successfully."
-        };
+        return RESEND_VERIFICATION_OK;
 
     } catch (error) {
         throw new ApiError(500, error.message || "Failed to resend verification email.");

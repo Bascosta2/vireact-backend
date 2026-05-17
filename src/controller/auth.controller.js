@@ -302,9 +302,13 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Dispatch on the server-authenticated role (req.user.role), NOT the client-
+// supplied req.body.role. Using req.body.role allowed a client to send
+// { role: "admin" } and route to logoutAdmin, which does not revoke the
+// persisted refresh token — bypassing the token-revocation hardening entirely.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const role = req.user?.role;
 
         if (role === ROLES.ADMIN) {
             await logoutAdmin(req, res, next);
@@ -417,8 +421,7 @@ export const refreshToken = async (req, res, next) => {
                     200,
                     "Token refreshed successfully",
                     {
-                        accessToken,
-                        refreshToken: newRefreshToken
+                        accessToken
                     }
                 )
             );
