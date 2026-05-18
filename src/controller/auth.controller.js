@@ -302,21 +302,30 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Revokes the persisted refresh token based on the authenticated identity
+// (req.user from authenticateToken), NOT from client-supplied role in the body.
+// This prevents a bypass where a user sends role:"admin" to skip DB revocation.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        if (req.user && req.user._id) {
+            await User.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+            await Admin.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
-        next(error)
+        next(error);
     }
 };
 
