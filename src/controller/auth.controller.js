@@ -302,18 +302,21 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Determines user type from the authenticated req.user (set by
+// authenticateToken middleware) rather than trusting req.body.role, which is
+// client-controlled and could be spoofed to bypass DB token revocation.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        if (!req.user || !req.user._id) {
+            throw new ApiError(401, "Authentication required");
+        }
 
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        const isRegularUser = req.user.role === ROLES.USER;
+
+        if (isRegularUser) {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
+        } else {
+            await logoutAdmin(req, res, next);
         }
     } catch (error) {
         next(error)
