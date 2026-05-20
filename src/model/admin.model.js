@@ -23,6 +23,15 @@ const adminSchema = new mongoose.Schema({
     }
 });
 
+adminSchema.set("toJSON", {
+    transform: (_doc, ret) => {
+        delete ret.password;
+        delete ret.refreshToken;
+        delete ret.__v;
+        return ret;
+    }
+});
+
 adminSchema.pre("save", async function (next) {
     if (this.isModified("password")) {
         this.password = await bcrypt.hash(this.password, 10);
