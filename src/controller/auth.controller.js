@@ -163,7 +163,7 @@ export const loginAdmin = async (req, res, next) => {
 
         const loggedInAdmin = await Admin
             .findById(admin._id)
-            .select("-password")
+            .select("-password -refreshToken")
             .lean()
 
         res.clearCookie("accessToken", COOKIE_OPTIONS)
@@ -172,12 +172,16 @@ export const loginAdmin = async (req, res, next) => {
         res.status(200)
             .cookie("accessToken", accessToken, COOKIE_OPTIONS)
             .cookie("refreshToken", refreshToken, { ...COOKIE_OPTIONS, maxAge: 30 * 24 * 60 * 60 * 1000 }) // 30 days
-            .json({
-                message: "Login Successful",
-                admin: loggedInAdmin,
-                accessToken,
-                refreshToken
-            });
+            .json(
+                ApiResponse.success(
+                    200,
+                    "Login Successful",
+                    {
+                        admin: loggedInAdmin,
+                        accessToken
+                    }
+                )
+            );
     }
     catch (error) {
         next(error)
@@ -263,29 +267,16 @@ export const verifyEmail = async (req, res, next) => {
 
 
 
-// Logout Admin
-export const logoutAdmin = async (req, res, next) => {
-    try {
-        res.clearCookie("accessToken", COOKIE_OPTIONS);
-        res.clearCookie("refreshToken", COOKIE_OPTIONS);
-        res.status(200).json(
-            ApiResponse.success(200, "Admin Logout Successful")
-        );
-    } catch (error) {
-        next(error)
-    }
-};
-
-
-// Logout User
-// Server-side revocation: the persisted refresh token must be cleared so a
-// captured/stolen JWT (e.g. from an XSS leak prior to this hardening) cannot
-// be replayed for up to 30 days. The route is gated by authenticateToken so
-// req.user is hydrated and we know whose token to revoke.
-export const logoutUser = async (req, res, next) => {
+// Unified Logout Handler
+// Determines the user type from req.user (hydrated by authenticateToken) —
+// never from the request body, which a client could omit or spoof to skip
+// the DB revocation of the refresh token.
+export const logout = async (req, res, next) => {
     try {
         if (req.user && req.user._id) {
-            await User.findByIdAndUpdate(
+            const isAdmin = req.user.constructor?.modelName === 'Admin';
+            const Model = isAdmin ? Admin : User;
+            await Model.findByIdAndUpdate(
                 req.user._id,
                 { $unset: { refreshToken: 1 } },
                 { new: false }
@@ -294,27 +285,8 @@ export const logoutUser = async (req, res, next) => {
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
         res.status(200).json(
-            ApiResponse.success(200, "User Logout Successful")
+            ApiResponse.success(200, "Logout Successful")
         );
-    } catch (error) {
-        next(error)
-    }
-};
-
-// Single Logout Handler
-export const logout = async (req, res, next) => {
-    try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
     } catch (error) {
         next(error)
     }
