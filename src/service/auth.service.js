@@ -41,6 +41,7 @@ export const generateAccessToken = async (
 
         return { accessToken, refreshToken };
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || `Something went wrong on server, while generating access token for ${userType}.`);
     }
 };
@@ -63,6 +64,7 @@ export const signupAdminService =
 
             return await admin.save();
         } catch (error) {
+            if (error instanceof ApiError) throw error;
             throw new ApiError(500, error?.message || "Failed to create admin.");
         }
     };
@@ -159,6 +161,7 @@ export const customSignupUserService = async (
         return savedUser;
 
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || "Failed to create user.");
     }
 };
@@ -187,6 +190,7 @@ export const verifyEmailService = async (token) => {
             message: "Email verified successfully.",
         };
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || "Failed to verify email.");
     }
 };
@@ -232,6 +236,7 @@ export const resendEmailVerificationService = async (email) => {
         };
 
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         throw new ApiError(500, error.message || "Failed to resend verification email.");
     }
 };
@@ -328,6 +333,7 @@ export const refreshTokenService = async (refreshToken) => {
 
         return { accessToken: newAccessToken, refreshToken: newRefreshToken };
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         if (error.name === 'JsonWebTokenError') {
             throw new ApiError(401, 'Invalid refresh token');
         } else if (error.name === 'TokenExpiredError') {
