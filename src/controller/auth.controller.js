@@ -302,18 +302,19 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Determines user type from the authenticated identity (req.user, set by
+// authenticateToken middleware), NOT from client-supplied req.body.role.
+// User-model documents always carry a `role` field (required in schema);
+// Admin-model documents do not. Trusting the body allowed a caller to send
+// { role: "admin" } and skip the User-model refresh-token DB revocation.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const isUserModel = req.user?.role != null;
 
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        if (isUserModel) {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
+        } else {
+            await logoutAdmin(req, res, next);
         }
     } catch (error) {
         next(error)
