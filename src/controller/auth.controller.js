@@ -266,6 +266,13 @@ export const verifyEmail = async (req, res, next) => {
 // Logout Admin
 export const logoutAdmin = async (req, res, next) => {
     try {
+        if (req.user && req.user._id) {
+            await Admin.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+        }
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
         res.status(200).json(
@@ -301,19 +308,16 @@ export const logoutUser = async (req, res, next) => {
     }
 };
 
-// Single Logout Handler
+// Single Logout Handler — derives entity type from the authenticated req.user
+// (populated by authenticateToken from the DB) rather than from req.body.role,
+// which is attacker-controlled and could bypass refresh-token revocation.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
+        const isAdmin = req.user?.constructor?.modelName === 'Admin';
+        if (isAdmin) {
             await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        } else {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
         }
     } catch (error) {
         next(error)
