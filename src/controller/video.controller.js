@@ -67,11 +67,30 @@ export const getUserVideos = async (req, res, next) => {
 
         const videos = await getUserVideosService(userId);
 
+        let userPlan = SUBSCRIPTION_PLANS.FREE;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            if (subscription?.plan) {
+                userPlan = subscription.plan;
+            }
+        } catch {
+            // least-privilege default; Free allowed set strips Pro-only fields
+        }
+
+        const allowed = allowedFeaturesForPlan(userPlan);
+        const sanitizedVideos = videos.map(v => {
+            const { lastError, lastErrorAt, ...safe } = v;
+            if (!allowed.includes('advanced_analytics') && Array.isArray(safe.analysis)) {
+                safe.analysis = safe.analysis.filter(a => a.feature !== 'advanced_analytics');
+            }
+            return safe;
+        });
+
         res.status(200).json(
             ApiResponse.success(
                 200,
                 'Videos fetched successfully',
-                { videos }
+                { videos: sanitizedVideos }
             )
         );
     } catch (error) {
