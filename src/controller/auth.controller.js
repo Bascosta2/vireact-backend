@@ -266,6 +266,13 @@ export const verifyEmail = async (req, res, next) => {
 // Logout Admin
 export const logoutAdmin = async (req, res, next) => {
     try {
+        if (req.user && req.user._id) {
+            await Admin.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+        }
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
         res.status(200).json(
@@ -302,19 +309,32 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Always revokes the authenticated user's refresh token regardless of the
+// role sent in the body. This prevents a bypass where sending role="admin"
+// (or omitting role) would skip token revocation for a regular user.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        if (req.user && req.user._id) {
+            await User.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+            await Admin.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } },
+                { new: false }
+            );
+        }
 
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+
+        const { role } = req.body;
+        const message = role === ROLES.ADMIN ? "Admin Logout Successful" : "User Logout Successful";
+        res.status(200).json(
+            ApiResponse.success(200, message)
+        );
     } catch (error) {
         next(error)
     }
