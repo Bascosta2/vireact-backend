@@ -194,46 +194,39 @@ export const verifyEmailService = async (token) => {
 
 
 export const resendEmailVerificationService = async (email) => {
-    try {
-        if (!email) {
-            throw new ApiError(400, "Email is required.");
-        }
-
-        const user = await User.findOne({ email });
-
-        if (!user) {
-            throw new ApiError(400, "User not found.");
-        }
-
-        if (user.isEmailVerified) {
-            throw new ApiError(400, "Email is already verified.");
-        }
-
-        const newToken = crypto.randomBytes(32).toString("hex");
-        user.emailVerificationToken = newToken;
-        await user.save({ validateBeforeSave: false });
-
-        const verificationUrl = `${FRONTEND_URL}/verify-email?token=${newToken}`;
-
-        await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: user.email,
-            subject: "Verify your email",
-            html: `
-                <div>
-                    <p>Click <a href="${verificationUrl}">here</a> to verify your email.</p>
-                </div>
-            `
-        });
-
-        return {
-            success: true,
-            message: "Verification email resent successfully."
-        };
-
-    } catch (error) {
-        throw new ApiError(500, error.message || "Failed to resend verification email.");
+    if (!email) {
+        throw new ApiError(400, "Email is required.");
     }
+
+    const GENERIC_RESPONSE = {
+        success: true,
+        message: "If an account with this email exists and is unverified, a verification email has been sent."
+    };
+
+    const user = await User.findOne({ email });
+
+    if (!user || user.isEmailVerified) {
+        return GENERIC_RESPONSE;
+    }
+
+    const newToken = crypto.randomBytes(32).toString("hex");
+    user.emailVerificationToken = newToken;
+    await user.save({ validateBeforeSave: false });
+
+    const verificationUrl = `${FRONTEND_URL}/verify-email?token=${newToken}`;
+
+    await resend.emails.send({
+        from: RESEND_FROM_EMAIL,
+        to: user.email,
+        subject: "Verify your email",
+        html: `
+            <div>
+                <p>Click <a href="${verificationUrl}">here</a> to verify your email.</p>
+            </div>
+        `
+    });
+
+    return GENERIC_RESPONSE;
 };
 
 
