@@ -301,22 +301,27 @@ export const logoutUser = async (req, res, next) => {
     }
 };
 
-// Single Logout Handler
+// Single Logout Handler — uses server-verified identity (req.user) rather
+// than client-supplied role to prevent refresh-token revocation bypass.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        if (req.user && req.user._id) {
+            await User.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } }
+            );
+            await Admin.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } }
+            );
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
-        next(error)
+        next(error);
     }
 };
 
@@ -416,10 +421,7 @@ export const refreshToken = async (req, res, next) => {
                 ApiResponse.success(
                     200,
                     "Token refreshed successfully",
-                    {
-                        accessToken,
-                        refreshToken: newRefreshToken
-                    }
+                    { accessToken }
                 )
             );
     } catch (error) {
