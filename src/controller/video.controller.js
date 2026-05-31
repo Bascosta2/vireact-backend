@@ -67,11 +67,28 @@ export const getUserVideos = async (req, res, next) => {
 
         const videos = await getUserVideosService(userId);
 
+        let allowedFeatures;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            allowedFeatures = allowedFeaturesForPlan(subscription?.plan);
+        } catch {
+            allowedFeatures = allowedFeaturesForPlan(SUBSCRIPTION_PLANS.FREE);
+        }
+
+        const filtered = allowedFeatures.includes('advanced_analytics')
+            ? videos
+            : videos.map(v => ({
+                ...v,
+                analysis: Array.isArray(v.analysis)
+                    ? v.analysis.filter(a => a.feature !== 'advanced_analytics')
+                    : v.analysis
+            }));
+
         res.status(200).json(
             ApiResponse.success(
                 200,
                 'Videos fetched successfully',
-                { videos }
+                { videos: filtered }
             )
         );
     } catch (error) {
