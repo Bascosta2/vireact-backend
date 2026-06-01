@@ -302,18 +302,17 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Derives user type from the authenticated req.user rather than from the
+// client-supplied body. The User schema sets role = "user" by default;
+// the Admin schema has no role field. Using req.body.role would let a
+// client send role:"admin" and bypass the User-side token revocation
+// added in the auth-hardening commit.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        if (req.user?.role === ROLES.USER) {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
+        } else {
+            await logoutAdmin(req, res, next);
         }
     } catch (error) {
         next(error)
