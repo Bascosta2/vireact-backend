@@ -302,18 +302,19 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Derives entity type from the authenticated user (req.user) rather than a
+// client-supplied body field. authenticateToken loads the user from the User
+// model first, falling back to Admin; the Mongoose model name on the loaded
+// document is the authoritative indicator. This prevents a client from
+// bypassing refresh-token revocation by sending role: "admin" in the body.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const modelName = req.user?.constructor?.modelName;
 
-        if (role === ROLES.ADMIN) {
+        if (modelName === 'Admin') {
             await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        } else {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
         }
     } catch (error) {
         next(error)
