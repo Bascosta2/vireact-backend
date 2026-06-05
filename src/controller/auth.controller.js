@@ -301,22 +301,27 @@ export const logoutUser = async (req, res, next) => {
     }
 };
 
-// Single Logout Handler
+// Single Logout Handler — always revoke refresh token for the authenticated
+// entity. The previous role-based dispatch relied on req.body.role which is
+// user-controlled: sending role:"admin" (or omitting it) skipped the User
+// token revocation added by the security-hardening commit. Now we attempt
+// revocation against both collections (one will match, the other is a no-op)
+// so the stored token is always cleared regardless of client payload.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        if (req.user && req.user._id) {
+            await Promise.all([
+                User.findByIdAndUpdate(req.user._id, { $unset: { refreshToken: 1 } }, { new: false }),
+                Admin.findByIdAndUpdate(req.user._id, { $unset: { refreshToken: 1 } }, { new: false }),
+            ]);
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
-        next(error)
+        next(error);
     }
 };
 
