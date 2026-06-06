@@ -301,22 +301,27 @@ export const logoutUser = async (req, res, next) => {
     }
 };
 
-// Single Logout Handler
+// Unified logout handler. Uses the authenticated identity from req.user
+// (set by authenticateToken middleware) to determine the correct model for
+// refresh-token revocation. Never trusts req.body.role — that allowed
+// callers to send role:"admin" and skip the User-model token revocation.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        if (req.user && req.user._id) {
+            const isAdmin = req.user.constructor?.modelName === 'Admin';
+            const Model = isAdmin ? Admin : User;
+            await Model.findByIdAndUpdate(
+                req.user._id,
+                { $unset: { refreshToken: 1 } }
+            );
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
-        next(error)
+        next(error);
     }
 };
 
