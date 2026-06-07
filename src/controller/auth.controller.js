@@ -263,60 +263,26 @@ export const verifyEmail = async (req, res, next) => {
 
 
 
-// Logout Admin
-export const logoutAdmin = async (req, res, next) => {
-    try {
-        res.clearCookie("accessToken", COOKIE_OPTIONS);
-        res.clearCookie("refreshToken", COOKIE_OPTIONS);
-        res.status(200).json(
-            ApiResponse.success(200, "Admin Logout Successful")
-        );
-    } catch (error) {
-        next(error)
-    }
-};
-
-
-// Logout User
-// Server-side revocation: the persisted refresh token must be cleared so a
-// captured/stolen JWT (e.g. from an XSS leak prior to this hardening) cannot
-// be replayed for up to 30 days. The route is gated by authenticateToken so
-// req.user is hydrated and we know whose token to revoke.
-export const logoutUser = async (req, res, next) => {
-    try {
-        if (req.user && req.user._id) {
-            await User.findByIdAndUpdate(
-                req.user._id,
-                { $unset: { refreshToken: 1 } },
-                { new: false }
-            );
-        }
-        res.clearCookie("accessToken", COOKIE_OPTIONS);
-        res.clearCookie("refreshToken", COOKIE_OPTIONS);
-        res.status(200).json(
-            ApiResponse.success(200, "User Logout Successful")
-        );
-    } catch (error) {
-        next(error)
-    }
-};
-
-// Single Logout Handler
+// Logout Handler
+// Entity type is derived from the server-verified req.user identity (set by
+// authenticateToken), never from client-supplied req.body.role. Refresh tokens
+// are revoked in both collections in parallel — only the matching document is
+// affected; the other update is a harmless no-op.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        if (req.user && req.user._id) {
+            await Promise.all([
+                User.findByIdAndUpdate(req.user._id, { $unset: { refreshToken: 1 } }),
+                Admin.findByIdAndUpdate(req.user._id, { $unset: { refreshToken: 1 } }),
+            ]);
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
-        next(error)
+        next(error);
     }
 };
 
