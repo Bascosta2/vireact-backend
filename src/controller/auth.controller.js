@@ -302,18 +302,19 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Dispatch is based on the server-resolved identity (req.user), NOT the
+// client-supplied req.body.role.  User documents always carry a `role` field;
+// Admin documents do not.  Routing on req.body.role allowed a client to send
+// role:"admin" and skip the User-side DB refresh-token revocation entirely,
+// undermining the security hardening in commit 0837232.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const isAdminDoc = !req.user?.role;
 
-        if (role === ROLES.ADMIN) {
+        if (isAdminDoc) {
             await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        } else {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
         }
     } catch (error) {
         next(error)
