@@ -67,6 +67,25 @@ export const getUserVideos = async (req, res, next) => {
 
         const videos = await getUserVideosService(userId);
 
+        let userPlan = SUBSCRIPTION_PLANS.FREE;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            if (subscription?.plan) {
+                userPlan = subscription.plan;
+            }
+        } catch {
+            // least-privilege: default to FREE so Pro-only data is stripped
+        }
+
+        const allowed = allowedFeaturesForPlan(userPlan);
+        if (!allowed.includes('advanced_analytics')) {
+            for (const video of videos) {
+                if (Array.isArray(video.analysis)) {
+                    video.analysis = video.analysis.filter(a => a.feature !== 'advanced_analytics');
+                }
+            }
+        }
+
         res.status(200).json(
             ApiResponse.success(
                 200,
