@@ -67,11 +67,29 @@ export const getUserVideos = async (req, res, next) => {
 
         const videos = await getUserVideosService(userId);
 
+        let userPlan = SUBSCRIPTION_PLANS.FREE;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            if (subscription?.plan) {
+                userPlan = subscription.plan;
+            }
+        } catch {
+            // least-privilege: default to FREE allowed set
+        }
+
+        const allowed = allowedFeaturesForPlan(userPlan);
+        const filteredVideos = videos.map(video => {
+            if (!Array.isArray(video.analysis) || video.analysis.length === 0) return video;
+            const dominated = video.analysis.every(a => allowed.includes(a.feature));
+            if (dominated) return video;
+            return { ...video, analysis: video.analysis.filter(a => allowed.includes(a.feature)) };
+        });
+
         res.status(200).json(
             ApiResponse.success(
                 200,
                 'Videos fetched successfully',
-                { videos }
+                { videos: filteredVideos }
             )
         );
     } catch (error) {
