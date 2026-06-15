@@ -60,6 +60,15 @@ export const SUBSCRIPTION_PLANS = {
   ENTERPRISE: 'enterprise'
 };
 
+// Legacy plan names that were renamed. Any Subscription document still carrying
+// one of these values is auto-migrated at runtime (see migrateLegacyPlan in
+// subscription.service.js). The aliases below in PLAN_LIMITS and PLAN_FEATURES
+// act as a crash-prevention safety net for code paths that read plan limits
+// before migration has run (e.g. concurrent webhook processing).
+export const LEGACY_PLAN_ALIASES = Object.freeze({
+  starter: SUBSCRIPTION_PLANS.PREMIUM,
+});
+
 // PLAN LIMITS — real values per Phase 2B tier spec.
 // `null` is the unlimited sentinel for Enterprise; consumers MUST short-circuit
 // any comparison/CAS on a null limit (see claimVideoMonthlySlot /
@@ -81,7 +90,11 @@ export const PLAN_LIMITS = {
   enterprise: {
     videosPerMonth: null,
     chatMessagesPerMonth: null
-  }
+  },
+  starter: {
+    videosPerMonth: 15,
+    chatMessagesPerMonth: 100
+  },
 };
 
 // Lifetime free-trial video allowance per user account. Enforced via
@@ -103,6 +116,7 @@ export const PLAN_FEATURES = {
   [SUBSCRIPTION_PLANS.PREMIUM]:    ['hook', 'caption', 'pacing', 'audio', 'views_predictor'],
   [SUBSCRIPTION_PLANS.PRO]:        ['hook', 'caption', 'pacing', 'audio', 'views_predictor', 'advanced_analytics'],
   [SUBSCRIPTION_PLANS.ENTERPRISE]: ['hook', 'caption', 'pacing', 'audio', 'views_predictor', 'advanced_analytics'],
+  starter:                         ['hook', 'caption', 'pacing', 'audio', 'views_predictor'],
 };
 
 // Returns the allowed feature set for a given plan, or the FREE set as a

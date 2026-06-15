@@ -3,7 +3,7 @@ import { Subscription } from '../model/subscription.model.js';
 import { StripeWebhookEvent } from '../model/stripe-webhook-event.model.js';
 import { User } from '../model/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS, STRIPE_CHECKOUT_PLANS, STRIPE_PRICE_ID_TO_PLAN, LIFETIME_FREE_VIDEO_LIMIT } from '../constants.js';
+import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS, STRIPE_CHECKOUT_PLANS, STRIPE_PRICE_ID_TO_PLAN, LIFETIME_FREE_VIDEO_LIMIT, LEGACY_PLAN_ALIASES } from '../constants.js';
 import stripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
 
@@ -20,6 +20,25 @@ function extractSubscriptionPeriod(subscription) {
     const start = startUnix ? new Date(startUnix * 1000) : null;
     const end = endUnix ? new Date(endUnix * 1000) : null;
     return [start, end];
+}
+
+/**
+ * Auto-migrate Subscription documents that carry a legacy plan name (e.g.
+ * 'starter' → 'premium'). Uses updateOne to bypass Mongoose enum validation
+ * on the stale value. Mutates `subscription.plan` in-place so callers see the
+ * resolved name without a second query.  No-op if the plan is already current.
+ */
+async function migrateLegacyPlan(subscription) {
+    if (!subscription) return subscription;
+    const resolved = LEGACY_PLAN_ALIASES[subscription.plan];
+    if (!resolved) return subscription;
+    console.log(`[Subscription] Migrating legacy plan '${subscription.plan}' → '${resolved}' for user ${subscription.userId}`);
+    await Subscription.updateOne(
+        { _id: subscription._id, plan: subscription.plan },
+        { $set: { plan: resolved } }
+    );
+    subscription.plan = resolved;
+    return subscription;
 }
 
 // Get or create subscription for a user (auto-creates FREE plan)
@@ -53,6 +72,7 @@ export const getOrCreateSubscription = async (userId) => {
         console.log(`[Subscription] Created FREE subscription for user ${userId}`);
     }
 
+    await migrateLegacyPlan(subscription);
     return subscription;
 };
 
@@ -603,6 +623,8 @@ async function handleSubscriptionUpdated(stripeSubscription) {
         return;
     }
 
+    await migrateLegacyPlan(subscription);
+
     // Update period dates. Stripe API 2025-03-31+ moved current_period_* onto items[].
     // Helper reads item-level first, falls back to top-level; null guards prevent
     // overwriting valid existing dates if Stripe sends a payload with neither populated.
@@ -658,6 +680,8 @@ async function handleSubscriptionDeleted(stripeSubscription) {
         return;
     }
 
+    await migrateLegacyPlan(subscription);
+
     // Downgrade to FREE plan
     const now = new Date();
     const periodEnd = new Date(now);
@@ -693,6 +717,8 @@ async function handlePaymentSucceeded(invoice) {
         return;
     }
 
+    await migrateLegacyPlan(subscription);
+
     // Reset usage for new billing period
     const now = new Date();
     subscription.usage.videosUsed = 0;
@@ -718,6 +744,8 @@ async function handlePaymentFailed(invoice) {
         console.error(`[Stripe Webhook] Subscription not found for invoice ${invoice.id}`);
         return;
     }
+
+    await migrateLegacyPlan(subscription);
 
     subscription.paymentFailed = true;
     subscription.paymentFailedAt = new Date();
