@@ -302,19 +302,33 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Derives the entity type from the server-authenticated req.user (set by
+// authenticateToken) instead of the client-supplied req.body.role. Without
+// this, a User could send role:"admin" to route into logoutAdmin, which
+// skips refresh-token revocation on the User document.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        if (req.user && req.user._id) {
+            const isRegularUser = req.user.role === ROLES.USER;
+            if (isRegularUser) {
+                await User.findByIdAndUpdate(
+                    req.user._id,
+                    { $unset: { refreshToken: 1 } },
+                    { new: false }
+                );
+            } else {
+                await Admin.findByIdAndUpdate(
+                    req.user._id,
+                    { $unset: { refreshToken: 1 } },
+                    { new: false }
+                );
+            }
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
         next(error)
     }
