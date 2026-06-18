@@ -417,8 +417,7 @@ export const refreshToken = async (req, res, next) => {
                     200,
                     "Token refreshed successfully",
                     {
-                        accessToken,
-                        refreshToken: newRefreshToken
+                        accessToken
                     }
                 )
             );
