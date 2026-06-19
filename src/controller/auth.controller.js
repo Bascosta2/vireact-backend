@@ -302,18 +302,16 @@ export const logoutUser = async (req, res, next) => {
 };
 
 // Single Logout Handler
+// Dispatches based on the authenticated entity's DB role, NOT req.body.role,
+// to prevent callers from bypassing refresh-token revocation by sending
+// role:"admin" in the body (which would route to logoutAdmin — cookie-only,
+// no DB token clear).
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
-
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        if (req.user?.role === ROLES.USER) {
             await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
+        } else {
+            await logoutAdmin(req, res, next);
         }
     } catch (error) {
         next(error)
