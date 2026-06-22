@@ -193,22 +193,20 @@ export const verifyEmailService = async (token) => {
 
 
 
+const GENERIC_RESEND_MESSAGE = "If an account exists with this email, a verification link has been sent.";
+
 export const resendEmailVerificationService = async (email) => {
+    if (!email) {
+        throw new ApiError(400, "Email is required.");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user || user.isEmailVerified) {
+        return { success: true, message: GENERIC_RESEND_MESSAGE };
+    }
+
     try {
-        if (!email) {
-            throw new ApiError(400, "Email is required.");
-        }
-
-        const user = await User.findOne({ email });
-
-        if (!user) {
-            throw new ApiError(400, "User not found.");
-        }
-
-        if (user.isEmailVerified) {
-            throw new ApiError(400, "Email is already verified.");
-        }
-
         const newToken = crypto.randomBytes(32).toString("hex");
         user.emailVerificationToken = newToken;
         await user.save({ validateBeforeSave: false });
@@ -225,15 +223,11 @@ export const resendEmailVerificationService = async (email) => {
                 </div>
             `
         });
-
-        return {
-            success: true,
-            message: "Verification email resent successfully."
-        };
-
     } catch (error) {
-        throw new ApiError(500, error.message || "Failed to resend verification email.");
+        console.error(`[Auth] Failed to process resend-verification for ${email}:`, error.message);
     }
+
+    return { success: true, message: GENERIC_RESEND_MESSAGE };
 };
 
 
