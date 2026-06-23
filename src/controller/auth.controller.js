@@ -301,22 +301,20 @@ export const logoutUser = async (req, res, next) => {
     }
 };
 
-// Single Logout Handler
+// Single Logout Handler — dispatches on the *authenticated* user's role, not
+// the client-supplied body, so a malicious client cannot send role:"admin" to
+// skip the refresh-token revocation that logoutUser performs.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const role = req.user?.role;
 
-        if (role === ROLES.ADMIN) {
+        if (role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN) {
             await logoutAdmin(req, res, next);
-        }
-        else if (role === ROLES.USER) {
+        } else {
             await logoutUser(req, res, next);
         }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
     } catch (error) {
-        next(error)
+        next(error);
     }
 };
 
@@ -417,8 +415,7 @@ export const refreshToken = async (req, res, next) => {
                     200,
                     "Token refreshed successfully",
                     {
-                        accessToken,
-                        refreshToken: newRefreshToken
+                        accessToken
                     }
                 )
             );
