@@ -76,3 +76,13 @@ export const STRIPE_PRICE_ID_PREMIUM = process.env.STRIPE_PRICE_ID_PREMIUM;
 export const STRIPE_PRICE_ID_PRO = process.env.STRIPE_PRICE_ID_PRO;
 export const STRIPE_PRICE_ID_ENTERPRISE = process.env.STRIPE_PRICE_ID_ENTERPRISE;
 export const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'support@vireact.io';
+
+// Mailchimp Configuration (for /viral-hooks PDF lead-gen)
+// When MAILCHIMP_ENABLED is "true" the subscribe controller calls the Mailchimp API.
+// Any other value (including unset) makes the controller log-only — emails are
+// logged to the server console and the user is still redirected to /thank-you,
+// so the funnel can be tested end-to-end before creds are wired.
+export const MAILCHIMP_API_KEY = process.env.MAILCHIMP_API_KEY;
+export const MAILCHIMP_AUDIENCE_ID = process.env.MAILCHIMP_AUDIENCE_ID;
+export const MAILCHIMP_SERVER_PREFIX = process.env.MAILCHIMP_SERVER_PREFIX;
+export const MAILCHIMP_ENABLED = String(process.env.MAILCHIMP_ENABLED || '').toLowerCase() === 'true';
