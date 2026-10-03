@@ -1,11 +1,25 @@
 import { Chat } from '../model/chat.model.js';
 import { Video } from '../model/video.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { ANALYSIS_STATUS } from '../constants.js';
-import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../config/index.js';
+import { ANALYSIS_STATUS, SUBSCRIPTION_PLANS, allowedFeaturesForPlan } from '../constants.js';
 import { requestChatCompletion } from './openai-response.service.js';
-import { claimChatMessageSlot, releaseChatMessageSlot } from './subscription.service.js';
-import { generateVideoFeedbackService } from './video-feedback.service.js';
+import {
+    claimChatMessageSlot,
+    releaseChatMessageSlot,
+    getOrCreateSubscription,
+} from './subscription.service.js';
+import { buildTranscriptBlock, transcriptToPlainText } from './transcript.service.js';
+import { retrieveKnowledge, formatKnowledgeContext } from './analyzer/retrieve-knowledge.js';
+import { SPECIFICITY_CONTRACT } from './analyzer/run-feedback-analyzer.js';
+import { runValidatedStructuredCompletion } from './analyzer/validated-completion.js';
+import {
+    chatResponseJsonSchema,
+    normalizeFrameFeedback,
+    normalizeScriptRewrite,
+    buildChatFixId,
+    formatTimecode,
+    severityToLegacy,
+} from './analyzer/feedback-schema.js';
 
 export const getChatMessagesService = async (videoId, userId) => {
     if (!videoId || !userId) {
@@ -21,7 +35,7 @@ export const getChatMessagesService = async (videoId, userId) => {
     // Find or create chat
     let chat = await Chat.findOne({ videoId, userId });
     const isNewChat = !chat;
-    
+
     if (!chat) {
         chat = new Chat({
             videoId,
@@ -56,7 +70,7 @@ function buildInitialAnalysisMessage(video) {
     // Check what features were analyzed
     const analyzedFeatures = analysisArray.map(a => a.feature);
     const hasHook = analyzedFeatures.includes('hook');
-    
+
     parts.push(
         hasHook
             ? "- Hook analysis completed."
@@ -67,6 +81,15 @@ function buildInitialAnalysisMessage(video) {
             ? `- Structure review: ${sceneCount} scene${sceneCount === 1 ? "" : "s"} detected.`
             : "- Structure review: no scenes detected."
     );
+
+    const feedbackCount = (video.timestampFeedback || []).length;
+    const rewriteCount = (video.scriptRewrites || []).length;
+    if (feedbackCount > 0) {
+        parts.push(`- Frame-level fixes: ${feedbackCount} timestamped issue${feedbackCount === 1 ? "" : "s"} with drop-in fixes.`);
+    }
+    if (rewriteCount > 0) {
+        parts.push(`- Script rewrites: ${rewriteCount} line${rewriteCount === 1 ? "" : "s"} rewritten verbatim.`);
+    }
 
     if (sceneCount > 0) {
         parts.push("");
@@ -96,7 +119,7 @@ function buildInitialAnalysisMessage(video) {
             };
             const label = featureLabels[analysis.feature] || analysis.feature;
             const partsSummary = [];
-            
+
             if (analysis.rating) {
                 partsSummary.push(`Rating: ${analysis.rating}`);
             }
@@ -125,19 +148,22 @@ export const sendChatMessageService = async (videoId, userId, messageText) => {
     await claimChatMessageSlot(userId);
 
     try {
-        // Generate timestamp feedback if analysis is complete but feedback doesn't exist
-        if (video.analysisStatus === ANALYSIS_STATUS.COMPLETED &&
-            (!video.timestampFeedback || video.timestampFeedback.length === 0)) {
-            try {
-                await generateVideoFeedbackService(videoId, userId);
-                const updatedVideo = await Video.findById(videoId);
-                if (updatedVideo) {
-                    Object.assign(video, updatedVideo.toObject());
-                }
-            } catch (feedbackError) {
-                console.error('[Chat] Error generating feedback:', feedbackError.message);
-            }
+        // CHANGED: 2026-09 — chat no longer lazily generates feedback. The analyzers
+        // author `timestampFeedback` during the analysis job; generating a second
+        // heuristic set here would compete with them and reintroduce vague prose.
+        // Videos analyzed before that change ground on `timestampFeedbackLegacy`.
+
+        // Plan gating: Advanced Analytics feedback must not reach Free/Premium
+        // through the chatbot, matching the video DTO. A subscription read failure
+        // falls back to the Free allowed set (least privilege).
+        let userPlan = SUBSCRIPTION_PLANS.FREE;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            if (subscription?.plan) userPlan = subscription.plan;
+        } catch {
+            /* least-privilege default */
         }
+        const canSeeAdvanced = allowedFeaturesForPlan(userPlan).includes('advanced_analytics');
 
         let chat = await Chat.findOne({ videoId, userId });
 
@@ -159,12 +185,7 @@ export const sendChatMessageService = async (videoId, userId, messageText) => {
         const intent = await classifyUserIntent(messageText);
 
         const priorMessages = (chat.messages || []).slice(0, -1);
-        const aiResponse = await generateAIResponse(messageText, video, intent, priorMessages);
-
-        const aiMessage = {
-            text: aiResponse,
-            isUser: false
-        };
+        const aiMessage = await generateAIResponse(messageText, video, intent, priorMessages, { canSeeAdvanced });
 
         chat.messages.push(aiMessage);
 
@@ -245,28 +266,110 @@ function buildNumericScoresBlock(video) {
     return parts.length > 0 ? 'VIDEO SCORES AND METRICS:\n' + parts.join('\n') + '\n\n' : '';
 }
 
-// Helper function to generate AI response using OpenAI based on video scenes and prior conversation
-async function generateAIResponse(userMessage, video, intent = 'question', priorMessages = []) {
-    const openai = (await import('../lib/openai.js')).default;
-    const { KnowledgeBase } = await import('../model/knowledge-base.model.js');
+/**
+ * Stored frame feedback, rendered with ids so the model can cite an existing item
+ * instead of re-deriving it. Advanced Analytics items are filtered out for plans
+ * that cannot see them.
+ */
+function buildStoredFeedbackBlock(video, canSeeAdvanced) {
+    const items = (video.timestampFeedback || [])
+        .filter((item) => canSeeAdvanced || item.sourceFeature !== 'advanced_analytics');
 
-    // Handle non-question intents with appropriate responses
+    if (items.length === 0) {
+        const legacy = video.timestampFeedbackLegacy || [];
+        if (legacy.length === 0) {
+            return 'STORED FRAME FEEDBACK: none. Do not claim feedback exists that is not listed here.\n\n';
+        }
+        const legacyLines = legacy.map((item, index) => {
+            const range = item.endTimestamp ? `${item.timestamp}s-${item.endTimestamp}s` : `${item.timestamp}s`;
+            return `- [legacy] ${range} [${item.category}] ${item.issue} Suggested: ${item.suggestion}`;
+        });
+        return [
+            'STORED FRAME FEEDBACK (legacy, generated before frame-level fixes shipped — directional only, not verified against frames):',
+            ...legacyLines,
+            '',
+            '',
+        ].join('\n');
+    }
+
+    const lines = items.map((item) => [
+        `- id=${item.id} | ${formatTimecode(item.tStart)}-${formatTimecode(item.tEnd)} (${item.tStart}s-${item.tEnd}s)`,
+        `  category=${item.category} severity=${item.severity}/5 (${severityToLegacy(item.severity)})`,
+        `  observed: ${item.observed}`,
+        `  issue: ${item.issue}`,
+        `  fix(${item.fix?.type}): before="${item.fix?.before ?? ''}" after="${item.fix?.after ?? ''}"`,
+        item.expectedImpact ? `  expectedImpact: ${item.expectedImpact}` : null,
+    ].filter(Boolean).join('\n'));
+
+    return `STORED FRAME FEEDBACK (cite these ids in citedFeedbackIds when you reference them):\n${lines.join('\n')}\n\n`;
+}
+
+/** Stored script rewrites with their lineIds, for citation. */
+function buildStoredRewritesBlock(video, canSeeAdvanced) {
+    const items = (video.scriptRewrites || [])
+        .filter((item) => canSeeAdvanced || item.sourceFeature !== 'advanced_analytics');
+
+    if (items.length === 0) {
+        return 'STORED SCRIPT REWRITES: none.\n\n';
+    }
+
+    const lines = items.map((item) => [
+        `- lineId=${item.lineId} | ${formatTimecode(item.timestamp)} (${item.timestamp}s)`,
+        `  original: "${item.originalTranscript}"`,
+        `  rewritten: "${item.rewrittenLine}"`,
+        item.deliveryNote ? `  delivery: ${item.deliveryNote}` : null,
+    ].filter(Boolean).join('\n'));
+
+    return `STORED SCRIPT REWRITES (cite these lineIds in citedRewriteIds when you reference them):\n${lines.join('\n')}\n\n`;
+}
+
+const CHAT_SYSTEM_PROMPT = [
+    "You are Vireact's video analyst. You answer only about the specific video whose data is supplied, using its transcript, scores, frame feedback, and script rewrites.",
+    '',
+    'Hard rules:',
+    '- Ground every claim in the supplied data. Never invent timestamps, quotes, scores, or platform algorithm rules.',
+    '- Do not give advice that could apply to any video. If your answer would still be true for a different video, it is not specific enough.',
+    '- When the supplied analysis does not cover what the creator asked, set coverage to "not_covered" and say so plainly in the reply (for example: "The analysis does not cover thumbnail performance — it only measures what happens inside the video."). Never fill the gap with plausible generic advice.',
+    '- Hedge phrasing ("try to", "consider", "you could", "make it more ___") is banned unless the very next words are the literal replacement.',
+    '- Reference stored items by their ids in citedFeedbackIds / citedRewriteIds instead of restating them loosely.',
+    '- Plain text only: no markdown, no bullet characters, no emojis. Keep the reply under 180 words.',
+    '',
+    SPECIFICITY_CONTRACT,
+].join('\n');
+
+/**
+ * Generate the assistant message for a chat turn.
+ *
+ * Returns a persistable message: prose `text` plus structured `fixes`,
+ * `scriptRewrites`, `feedbackRefs`, and `coverage`.
+ */
+async function generateAIResponse(userMessage, video, intent = 'question', priorMessages = [], { canSeeAdvanced = false } = {}) {
+    // Cheap short-circuits: no structured call needed, and these are not advice.
     if (intent === 'greeting') {
-        return "Hello! I'm here to help you understand and improve your video. Ask me anything about your video analysis.";
+        return {
+            text: "Hello. Ask me about any moment in your video and I'll point to the timestamp and give you the exact fix.",
+            isUser: false,
+            coverage: 'grounded',
+        };
     }
 
     if (intent === 'thanks' || intent === 'feedback') {
-        return "You're welcome! Feel free to ask if you need any more insights about your video.";
+        return {
+            text: "Noted. Ask about any timestamp in this video and I'll give you the specific change to make.",
+            isUser: false,
+            coverage: 'grounded',
+        };
     }
 
-    // For 'question' and 'other' intents, provide full analysis
-    // Check if video has scenes
     if (!video.scenes || video.scenes.length === 0) {
-        return "I'm analyzing your video. Once the scene analysis is complete, I'll be able to provide detailed insights and recommendations.";
+        return {
+            text: "This video has no scene analysis stored yet, so I have nothing specific to reference. Once analysis completes I can point to exact timestamps and fixes.",
+            isUser: false,
+            coverage: 'not_covered',
+        };
     }
 
-    // Format scenes for context
-    const scenesContext = video.scenes.map((scene, idx) => 
+    const scenesContext = video.scenes.map((scene, idx) =>
         `Scene ${idx + 1} (${scene.startTime}s - ${scene.endTime}s):
 - Visual: ${scene.visualDescription || 'N/A'}
 - Text/Captions: ${scene.onScreenText || 'None'}
@@ -276,124 +379,34 @@ async function generateAIResponse(userMessage, video, intent = 'question', prior
 - Purpose: ${scene.purpose || 'N/A'}`
     ).join('\n\n');
 
-    // Build numeric VideoAnalysis summary for grounding (scores, view bands, retention)
     const scoresBlock = buildNumericScoresBlock(video);
+    const feedbackBlock = buildStoredFeedbackBlock(video, canSeeAdvanced);
+    const rewritesBlock = buildStoredRewritesBlock(video, canSeeAdvanced);
+    const transcriptBlock = buildTranscriptBlock(video.rawTranscript);
+    const transcriptText = transcriptToPlainText(video.rawTranscript);
 
-    // Format timestamp-specific feedback for context
-    let feedbackContext = '';
-    if (video.timestampFeedback && video.timestampFeedback.length > 0) {
-        const feedbackByCategory = {
-            critical: video.timestampFeedback.filter(f => f.severity === 'critical'),
-            important: video.timestampFeedback.filter(f => f.severity === 'important'),
-            minor: video.timestampFeedback.filter(f => f.severity === 'minor')
-        };
+    const knowledgeDocs = intent === 'question'
+        ? await retrieveKnowledge({ query: userMessage })
+        : [];
+    const knowledgeContext = formatKnowledgeContext(
+        knowledgeDocs,
+        'No knowledge base documents matched. Ground the answer in this video\'s data only.'
+    );
 
-        feedbackContext = `\n\nTIMESTAMP-SPECIFIC FEEDBACK:\n`;
-        
-        if (feedbackByCategory.critical.length > 0) {
-            feedbackContext += `\nCRITICAL ISSUES:\n`;
-            feedbackByCategory.critical.forEach(f => {
-                const timeRange = f.endTimestamp 
-                    ? `${f.timestamp}s - ${f.endTimestamp}s` 
-                    : `${f.timestamp}s`;
-                feedbackContext += `⏱️ ${timeRange} [${f.category.toUpperCase()}]: ${f.issue}\n`;
-                feedbackContext += `💡 Suggestion: ${f.suggestion}\n`;
-                if (f.example) {
-                    feedbackContext += `📝 Example: ${f.example}\n`;
-                }
-                feedbackContext += '\n';
-            });
-        }
+    const prompt = `${scoresBlock}TRANSCRIPT (verbatim, with timestamps — the only source for quoted lines):
+${transcriptBlock}
 
-        if (feedbackByCategory.important.length > 0) {
-            feedbackContext += `\nIMPORTANT ISSUES:\n`;
-            feedbackByCategory.important.forEach(f => {
-                const timeRange = f.endTimestamp 
-                    ? `${f.timestamp}s - ${f.endTimestamp}s` 
-                    : `${f.timestamp}s`;
-                feedbackContext += `⏱️ ${timeRange} [${f.category.toUpperCase()}]: ${f.issue}\n`;
-                feedbackContext += `💡 Suggestion: ${f.suggestion}\n\n`;
-            });
-        }
-    }
+VIDEO SCENES BREAKDOWN:
+${scenesContext}
 
-    // Get relevant knowledge base chunks based on user message (only for questions)
-    let relevantChunks = [];
-    if (intent === 'question') {
-        try {
-            // Generate embedding for the user message
-            const embeddingResponse = await openai.embeddings.create({
-                model: "text-embedding-3-large",
-                input: userMessage
-            });
-
-            const messageEmbedding = embeddingResponse.data[0].embedding;
-
-            // Perform vector search to find relevant knowledge base documents
-            relevantChunks = await KnowledgeBase.aggregate([
-                {
-                    $vectorSearch: {
-                        index: KNOWLEDGE_BASE_VECTOR_INDEX,
-                        queryVector: messageEmbedding,
-                        path: "embedding",
-                        limit: 10,
-                        numCandidates: 100
-                    }
-                }
-            ]);
-        } catch (error) {
-            console.error('[Chat] Error fetching knowledge base chunks:', error.message);
-            // Continue without knowledge base chunks if there's an error
-        }
-    }
-
-    // Format knowledge base context
-    const knowledgeContext = relevantChunks.length > 0
-        ? relevantChunks
-            .map(
-                (c, i) =>
-                    `${i + 1}. [${c.metadata.layer.toUpperCase()}] ${c.content}`
-            )
-            .join("\n")
-        : 'No specific knowledge base documents found, but use general video content creation best practices.';
-
-    // Build the prompt based on intent
-    let prompt = '';
-    let systemPrompt = '';
-
-    if (intent === 'question') {
-        prompt = `
-You are an expert video content advisor helping a creator improve their short-form social media video.
-
-${scoresBlock}VIDEO SCENES BREAKDOWN:
-${scenesContext}${feedbackContext}
-
-RELEVANT EXPERT KNOWLEDGE:
+${feedbackBlock}${rewritesBlock}RELEVANT EXPERT KNOWLEDGE:
 ${knowledgeContext}
 
-USER QUESTION:
+CREATOR'S MESSAGE:
 "${userMessage}"
 
 TASK:
-Provide a concise, actionable response grounded in the VIDEO SCORES and scenes above. Reference specific numbers (e.g. "your hook scored 91 but your captions 65 — here's why that gap matters"). When the user asks about specific timestamps or moments, reference the timestamp-specific feedback. Keep the response structured in short paragraphs. Avoid markdown and emojis. Limit to about 180 words.
-`;
-        systemPrompt = "You are a precise video content advisor. Reference the video's numeric scores and metrics in your response when relevant. Keep responses under 180 words.";
-    } else {
-        // For 'other' intent, provide general helpful response
-        prompt = `
-You are an expert video content advisor helping a creator improve their short-form social media video.
-
-${scoresBlock}VIDEO SCENES BREAKDOWN:
-${scenesContext}${feedbackContext}
-
-USER MESSAGE:
-"${userMessage}"
-
-TASK:
-Provide a helpful, concise response. If the message seems unclear, politely ask how you can help with their video analysis. Keep responses brief and professional. Avoid markdown and emojis. Limit to about 100 words.
-`;
-        systemPrompt = "You are a helpful video content advisor. Provide brief, professional responses in plain text.";
-    }
+Answer using this video's data. Reference specific numbers and timestamps. When you propose a change, put it in fixes or scriptRewrites with the literal replacement content — not in prose. If the answer is already covered by a stored item, cite its id instead of duplicating it. If this video's analysis does not contain what was asked, set coverage to "not_covered" and say so in the reply.`;
 
     const maxHistory = 10;
     const historyMessages = (priorMessages || [])
@@ -401,15 +414,59 @@ Provide a helpful, concise response. If the message seems unclear, politely ask 
         .map((msg) => ({ role: msg.isUser ? 'user' : 'assistant', content: msg.text }));
 
     try {
-        return await requestChatCompletion({
-            messages: [...historyMessages, { role: "user", content: prompt }],
-            temperature: 0.7,
-            maxTokens: intent === 'question' ? 700 : 400,
-            systemPrompt
+        const { payload, frameFeedback, scriptRewrites } = await runValidatedStructuredCompletion({
+            messages: [...historyMessages, { role: 'user', content: prompt }],
+            schemaName: 'chat_response',
+            jsonSchema: chatResponseJsonSchema,
+            systemPrompt: CHAT_SYSTEM_PROMPT,
+            normalize: (candidate) => normalizeChatPayload(candidate, video),
+            scope: 'chat',
+            videoId: video._id,
+            transcriptText,
+            temperature: 0.4,
+            maxTokens: 2500,
         });
+
+        const validIds = new Set((video.timestampFeedback || []).map((item) => item.id));
+        const validLineIds = new Set((video.scriptRewrites || []).map((item) => item.lineId));
+
+        const feedbackRefs = [
+            ...(payload.citedFeedbackIds || []).filter((id) => validIds.has(id)),
+            ...(payload.citedRewriteIds || []).filter((id) => validLineIds.has(id)),
+        ];
+
+        return {
+            text: payload.reply,
+            isUser: false,
+            feedbackRefs,
+            fixes: frameFeedback,
+            scriptRewrites,
+            coverage: payload.coverage || 'grounded',
+        };
     } catch (error) {
         console.error('[Chat] Error generating AI response:', error.message);
-        return "I'm having trouble processing your request right now. Please try again in a moment, or rephrase your question.";
+        return {
+            text: "I couldn't generate a grounded answer just now. Ask again, or name the timestamp you want me to look at.",
+            isUser: false,
+            coverage: 'not_covered',
+        };
     }
 }
 
+/** Normalize chat-authored fixes/rewrites; `cfb_` ids mark them as chat-authored. */
+function normalizeChatPayload(payload, video) {
+    const duration = video.duration || video.scenes?.[video.scenes.length - 1]?.endTime;
+    return {
+        frameFeedback: (payload?.fixes || [])
+            .map((item, index) => normalizeFrameFeedback(item, {
+                index,
+                sourceFeature: 'chat',
+                duration,
+                idBuilder: buildChatFixId,
+            }))
+            .filter(Boolean),
+        scriptRewrites: (payload?.scriptRewrites || [])
+            .map((item, index) => normalizeScriptRewrite(item, { index, sourceFeature: 'chat', duration }))
+            .filter(Boolean),
+    };
+}
