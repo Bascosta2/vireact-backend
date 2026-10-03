@@ -9,6 +9,7 @@ import {
     saveCreatorIngestKnowledge,
 } from '../service/admin-ingest.service.js';
 import { chunkContentForKnowledge, ingestKnowledgeChunks } from '../service/admin-knowledge.service.js';
+import { ingestAnalyzedVideoExemplars } from '../service/feedback-knowledge.service.js';
 
 const ALLOWED_VIDEO_MIMES = [
     'video/mp4',
@@ -215,6 +216,22 @@ export async function postCreatorVideoUpload(req, res, next) {
             await doc.save();
 
             const kb = await saveCreatorIngestKnowledge(doc);
+
+            // Exemplar ingestion: literal before/after rewrites and feedback paired
+            // with this video's real view count, so future suggestions can cite what
+            // actually performed. Best-effort — never fails the ingest.
+            await ingestAnalyzedVideoExemplars(
+                { frameFeedback: result.frameFeedback, scriptRewrites: result.scriptRewrites },
+                {
+                    contentCategory: doc.viralCategory,
+                    platform: doc.platform,
+                    actualViews: doc.actualViews,
+                    source: 'admin_creator_ingest',
+                    measuredImpact: doc.retentionRate != null
+                        ? { metric: 'retention_rate', deltaPercent: doc.retentionRate, basis: `observed on @${doc.creatorHandle}` }
+                        : undefined,
+                }
+            );
 
             return res.status(201).json({
                 twelveLabsAssetId: doc.twelveLabsAssetId,

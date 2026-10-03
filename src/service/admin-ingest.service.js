@@ -12,6 +12,7 @@ import { analyzeAdvancedAnalytics } from './analyzer/advanced-analytics.analyzer
 import { analyzeViewsPredictor } from './analyzer/views-predictor.analyzer.js';
 import { KnowledgeBase } from '../model/knowledge-base.model.js';
 import openai from '../lib/openai.js';
+import { KB_SPECIFICITY, KB_EXEMPLAR_TYPES } from '../constants.js';
 
 const EMBEDDING_MODEL = 'text-embedding-3-large';
 const CREATOR_PSYCH_MODEL = 'gpt-4o-mini';
@@ -40,6 +41,10 @@ function extractScore(result, feature) {
 async function runAnalyzers(scenes, hookText, datasetId) {
     const analysis = [];
     const scores = {};
+    // Frame feedback / rewrites produced by the analyzers. For creator ingest these
+    // become KnowledgeBase exemplars paired with the video's real performance.
+    const frameFeedback = [];
+    const scriptRewrites = [];
     for (const feature of FEATURES) {
         try {
             let result = null;
@@ -66,6 +71,9 @@ async function runAnalyzers(scenes, hookText, datasetId) {
                     break;
             }
             if (result != null) {
+                if (Array.isArray(result.frameFeedback)) frameFeedback.push(...result.frameFeedback);
+                if (Array.isArray(result.scriptRewrites)) scriptRewrites.push(...result.scriptRewrites);
+
                 const score = extractScore(result, feature);
                 if (score != null) scores[feature] = score;
                 analysis.push({
@@ -82,7 +90,7 @@ async function runAnalyzers(scenes, hookText, datasetId) {
             }
         }
     }
-    return { analysis, scores };
+    return { analysis, scores, frameFeedback, scriptRewrites };
 }
 
 function computeViralityScore(scores) {
@@ -168,7 +176,7 @@ async function ingestFileToDatasetIndex(file, datasetId) {
         ? Math.max(...scenes.map(s => s.endTime || 0))
         : null;
 
-    const { analysis, scores } = await runAnalyzers(scenes, hookText, datasetId);
+    const { analysis, scores, frameFeedback, scriptRewrites } = await runAnalyzers(scenes, hookText, datasetId);
     const viralityScore = computeViralityScore(scores);
 
     return {
@@ -179,6 +187,10 @@ async function ingestFileToDatasetIndex(file, datasetId) {
         analysis,
         scores,
         viralityScore,
+        // Not persisted on the dataset document — passed straight to exemplar
+        // ingestion by the creator upload path.
+        frameFeedback,
+        scriptRewrites,
     };
 }
 
@@ -300,6 +312,11 @@ export async function saveCreatorIngestKnowledge(doc) {
         ingestedAt: new Date(),
         layer: 'example',
         score: 0.9,
+        // Structural/psychological profile: a concrete pattern, but not a quotable
+        // before/after line, so it is retrievable but never cited as a literal exemplar.
+        specificity: KB_SPECIFICITY.DIRECTIONAL,
+        exemplarType: KB_EXEMPLAR_TYPES.CREATOR_PROFILE,
+        contentCategory: doc.viralCategory,
     });
     return {
         knowledgeBaseEntryId: kbDoc._id.toString(),
@@ -315,6 +332,7 @@ export async function savePerformanceKnowledgeBase(doc, sourceType) {
         sourceType,
         source: 'admin_ingest',
         score: 0.9,
+        specificity: KB_SPECIFICITY.DIRECTIONAL,
     };
     if (sourceType === 'creator_video') {
         metadata.creatorHandle = doc.creatorHandle;
