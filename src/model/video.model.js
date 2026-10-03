@@ -1,5 +1,10 @@
 import mongoose from 'mongoose';
 import { UPLOAD_STATUS, ANALYSIS_STATUS } from '../constants.js';
+import {
+    frameFeedbackSchema,
+    scriptRewriteSchema,
+    transcriptSegmentSchema
+} from './frame-feedback.schema.js';
 
 const videoSchema = new mongoose.Schema({
     s3Key: {
@@ -133,38 +138,57 @@ const videoSchema = new mongoose.Schema({
         type: [Number],
         default: []
     },
+    // CHANGED: 2026-09 — freeform prose feedback replaced by FrameFeedback.
+    // Every item carries a real time range, a concrete observation, and a literal
+    // drop-in fix. Produced by the analyzers via OpenAI structured outputs and
+    // gated by `analyzer/feedback-validator.js` before persistence.
     timestampFeedback: {
+        type: [frameFeedbackSchema],
+        default: []
+    },
+    /**
+     * Pre-2026-09 prose feedback, preserved read-only by the forward-only
+     * migration (`migrate-frame-feedback.js`) so historical videos keep
+     * rendering without a bulk re-analysis. Never written by new code.
+     */
+    timestampFeedbackLegacy: {
         type: [{
-            timestamp: {
-                type: Number,
-                required: true
-            },
-            endTimestamp: {
-                type: Number
-            },
-            category: {
-                type: String,
-                enum: ['pacing', 'visual', 'audio', 'engagement', 'hook', 'cta'],
-                required: true
-            },
-            severity: {
-                type: String,
-                enum: ['critical', 'important', 'minor'],
-                required: true
-            },
-            issue: {
-                type: String,
-                required: true
-            },
-            suggestion: {
-                type: String,
-                required: true
-            },
-            example: {
-                type: String
-            }
+            timestamp: { type: Number },
+            endTimestamp: { type: Number },
+            category: { type: String },
+            severity: { type: String },
+            issue: { type: String },
+            suggestion: { type: String },
+            example: { type: String }
         }],
         default: []
+    },
+    /**
+     * Literal line rewrites, separate from general frame feedback.
+     * `originalTranscript` is always quoted verbatim from `rawTranscript`.
+     */
+    scriptRewrites: {
+        type: [scriptRewriteSchema],
+        default: []
+    },
+    /**
+     * Timestamped transcript from Twelve Labs. SEGMENT-level granularity
+     * (`{ start, end, value }` is the SDK ceiling — not word-level), and the
+     * single source of truth for every verbatim "before" field downstream.
+     */
+    rawTranscript: {
+        type: [transcriptSegmentSchema],
+        default: []
+    },
+    /** Twelve Labs HLS stream URL (indexing sets enableVideoStream) for click-to-seek playback. */
+    streamUrl: {
+        type: String,
+        default: null
+    },
+    /** Twelve Labs generated thumbnail, when the stream encode provides one. */
+    thumbnailUrl: {
+        type: String,
+        default: null
     },
     twelveLabsAssetId: {
         type: String,
@@ -211,4 +235,3 @@ const videoSchema = new mongoose.Schema({
 videoSchema.index({ uploader_id: 1, createdAt: -1 });
 
 export const Video = mongoose.model('Video', videoSchema);
-

@@ -1,67 +1,67 @@
-import { requestChatCompletion } from "../openai-response.service.js";
-import openai from "../../lib/openai.js";
-import { KnowledgeBase } from "../../model/knowledge-base.model.js";
-import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
-import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+import { runFeedbackAnalyzer, SPECIFICITY_CONTRACT } from "./run-feedback-analyzer.js";
+import { analyzerJsonSchema } from "./feedback-schema.js";
 
-const JSON_SYSTEM = "You are a concise pacing analyst. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
+const JSON_SYSTEM = [
+    "You are a pacing and rhythm analyst for short-form video. You return structured data only.",
+    "Pacing fixes are edit instructions: always state the exact range to cut or trim and the resulting duration.",
+    SPECIFICITY_CONTRACT,
+].join('\n\n');
 
-export const analyzePacing = async (scenes) => {
+/**
+ * Pacing / rhythm analysis.
+ *
+ * @param {object[]} scenes
+ * @param {{ rawTranscript?: object[], duration?: number, videoId?: string }} [context]
+ */
+export const analyzePacing = async (scenes, context = {}) => {
     if (!scenes || scenes.length === 0) {
         throw new Error('Scenes are required for pacing analysis');
     }
 
-    // Calculate pacing metrics
+    const { rawTranscript = [], duration, videoId } = context;
+
     const totalDuration = scenes[scenes.length - 1]?.endTime || 0;
     const sceneDurations = scenes.map(scene => scene.endTime - scene.startTime);
     const avgSceneLength = sceneDurations.reduce((sum, d) => sum + d, 0) / scenes.length;
     const shortestScene = Math.min(...sceneDurations);
     const longestScene = Math.max(...sceneDurations);
-    const cutFrequency = scenes.length / (totalDuration || 1); // cuts per second
+    const cutFrequency = scenes.length / (totalDuration || 1);
 
-    // Analyze scene purpose distribution
     const purposeCounts = {};
     scenes.forEach(scene => {
         const purpose = scene.purpose?.toLowerCase() || 'unknown';
         purposeCounts[purpose] = (purposeCounts[purpose] || 0) + 1;
     });
 
-    // Build scene breakdown with timing
-    const scenesContext = scenes.map((scene, idx) => {
-        const duration = scene.endTime - scene.startTime;
-        return `Scene ${idx + 1}: ${duration.toFixed(1)}s (${scene.startTime}s-${scene.endTime}s) - Purpose: ${scene.purpose || 'N/A'}`;
+    const sceneTimingContext = scenes.map((scene, idx) => {
+        const sceneDuration = scene.endTime - scene.startTime;
+        return `Scene ${idx + 1}: ${sceneDuration.toFixed(1)}s (${scene.startTime}s-${scene.endTime}s) - Purpose: ${scene.purpose || 'N/A'}`;
     }).join('\n');
 
-    // TODO: Uncomment when knowledge base is seeded with pacing data
-    // Generate embedding for pacing analysis
-    const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: scenesContext
-    });
-    const pacingEmbedding = embeddingResponse.data[0].embedding;
+    // Gaps between consecutive scenes, so the model cites measured dead air
+    // instead of estimating it.
+    const gaps = scenes
+        .map((scene, idx) => {
+            const next = scenes[idx + 1];
+            if (!next) return null;
+            const gap = next.startTime - scene.endTime;
+            if (gap <= 0.5) return null;
+            return `- ${gap.toFixed(2)}s gap between scene ${idx + 1} (ends ${scene.endTime}s) and scene ${idx + 2} (starts ${next.startTime}s)`;
+        })
+        .filter(Boolean);
 
-    // Perform vector search to find relevant knowledge base documents
-    const relevantData = await KnowledgeBase.aggregate([
-        {
-            $vectorSearch: {
-                index: KNOWLEDGE_BASE_VECTOR_INDEX,
-                queryVector: pacingEmbedding,
-                path: "embedding",
-                filter: { "metadata.topic": { $in: ["pacing", "general"] } },
-                limit: 10,
-                numCandidates: 100
-            }
-        }
-    ]);
-
-    // Format relevant knowledge base context
-    const ragContext = relevantData.length > 0
-        ? relevantData
-            .map((c, i) => `${i + 1}. [${c.metadata.layer.toUpperCase()}] ${c.content}`)
-            .join("\n")
-        : 'No specific knowledge base documents found';
-
-    const prompt = `
+    return runFeedbackAnalyzer({
+        feature: 'pacing',
+        schemaName: 'pacing_analysis',
+        jsonSchema: analyzerJsonSchema,
+        systemPrompt: JSON_SYSTEM,
+        ragQuery: sceneTimingContext,
+        ragTopics: ['pacing', 'general'],
+        scenes,
+        rawTranscript,
+        duration: duration ?? totalDuration,
+        videoId,
+        buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
 You are an expert psychological content reviewer trained on Bas's mindset and pacing analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
 
 BAS'S PACING INSIGHTS AND EXAMPLES:
@@ -77,36 +77,27 @@ PACING METRICS:
 - Longest scene: ${longestScene.toFixed(1)}s
 - Cut frequency: ${cutFrequency.toFixed(2)} cuts/second
 
-SCENE BREAKDOWN:
-${scenesContext}
+MEASURED GAPS BETWEEN SCENES:
+${gaps.length > 0 ? gaps.join('\n') : '- No gaps over 0.5s between scenes'}
+
+SCENE TIMING:
+${sceneTimingContext}
 
 PURPOSE DISTRIBUTION:
 ${Object.entries(purposeCounts).map(([purpose, count]) => `- ${purpose}: ${count} scene(s)`).join('\n')}
 
+TRANSCRIPT (verbatim, with timestamps — use it to locate filler words and dead air):
+${transcriptBlock}
+
+SCENE DETAIL:
+${scenesBlock}
+
 TASK:
-1. Rate the pacing as Weak, Medium, or Strong based on:
-   - Scene transition speed and rhythm
-   - Variety in scene lengths (too uniform can be boring)
-   - Whether pacing matches the content type (fast for hooks, varied for buildup)
-   - Overall engagement and retention potential
-
-2. Provide concise reasoning (1-2 sentences) explaining the rating.
-
-3. List up to two actionable improvements for better pacing.
-
-Return ONLY a valid JSON object with this exact shape, no other text:
-{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
-`;
-
-    const response = await requestChatCompletion({
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        maxTokens: 320,
-        systemPrompt: JSON_SYSTEM,
+1. Rate pacing as Weak, Medium, or Strong (score 0-100: Weak 1-40, Medium 41-70, Strong 71-100) based on transition speed and rhythm, variety in scene lengths, whether pacing matches content type, and retention potential.
+2. Provide concise reasoning (1-2 sentences).
+3. suggestions: up to two short headlines naming the concrete change.
+4. frameFeedback: one item per pacing problem. Use fix.type "cut" or "trim" and put the explicit instruction in fix.after with real times, for example "cut 00:00:04.200-00:00:06.300 (2.1s) so the value prop lands at 00:00:04.200". Quote the filler speech in fix.before when the problem is spoken filler. Cite measured durations from the metrics above in observed — never estimate.
+5. scriptRewrites: when a line is slow because of how it is worded, quote it verbatim and supply the tighter line. Otherwise return an empty array.
+`,
     });
-
-    const parsed = parseAnalyzerJson(response);
-    if (parsed) return parsed;
-    const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
-    return { score: fallbackScore, rating: "Unknown", reasoning: response || "", suggestions: [] };
 };

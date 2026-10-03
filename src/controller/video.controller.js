@@ -9,7 +9,7 @@ import {
 } from '../service/video.service.js';
 import { notifyUserShortsReady } from '../service/notification.service.js';
 import { User } from '../model/user.model.js';
-import { generateVideoFeedbackService } from '../service/video-feedback.service.js';
+import { getVideoFeedbackService } from '../service/video-feedback.service.js';
 import { ApiError } from '../utils/ApiError.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { Video } from '../model/video.model.js';
@@ -27,6 +27,9 @@ import { analyzeViewsPredictor } from '../service/analyzer/views-predictor.analy
 import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
 import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from '../service/scene-parser.service.js';
+import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
+import { TWELVELABS_USER_INDEX } from '../config/index.js';
+import { buildFeedbackId, buildScriptRewriteId } from '../service/analyzer/feedback-schema.js';
 
 export const getPresignedUploadUrl = async (req, res) => {
     return res.status(410).json(
@@ -203,7 +206,20 @@ export const getVideoFeedback = async (req, res, next) => {
             throw new ApiError(400, 'Video ID is required');
         }
 
-        const feedback = await generateVideoFeedbackService(videoId, userId);
+        // Plan is resolved here (not in the service) so a subscription read failure
+        // degrades to the Free allowed set — Advanced Analytics feedback is then
+        // stripped, matching GET /videos/:videoId.
+        let userPlan = SUBSCRIPTION_PLANS.FREE;
+        try {
+            const subscription = await getOrCreateSubscription(userId);
+            if (subscription?.plan) {
+                userPlan = subscription.plan;
+            }
+        } catch {
+            // least-privilege: Free allowed set
+        }
+
+        const feedback = await getVideoFeedbackService(videoId, userId, userPlan);
 
         res.status(200).json(
             ApiResponse.success(
@@ -387,6 +403,19 @@ export const processVideoAnalysis = async (req, res) => {
             }
 
             video.scenes = scenes;
+
+            // Transcript + HLS stream, fetched once and reused by every analyzer.
+            // Segment-level granularity is the Twelve Labs ceiling; this is the
+            // single source of truth for verbatim quotes downstream.
+            const { rawTranscript, streamUrl, thumbnailUrl } = await fetchIndexedVideoMedia(
+                TWELVELABS_USER_INDEX,
+                indexedVideoId
+            );
+            video.rawTranscript = rawTranscript;
+            if (streamUrl) video.streamUrl = streamUrl;
+            if (thumbnailUrl) video.thumbnailUrl = thumbnailUrl;
+            console.log(`[QStash] Transcript segments: ${rawTranscript.length}, stream URL: ${streamUrl ? 'yes' : 'no'}`);
+
             console.log(`[QStash] Storing ${video.scenes.length} scenes in video document`);
             await video.save();
 
@@ -432,6 +461,16 @@ export const processVideoAnalysis = async (req, res) => {
 
             video.analysis = [];
             const featureOutputs = {};
+
+            // Frame-level feedback and script rewrites are collected across all
+            // analyzers, then re-indexed so ids are unique per video.
+            const collectedFrameFeedback = [];
+            const collectedScriptRewrites = [];
+            const analyzerContext = {
+                rawTranscript: video.rawTranscript,
+                duration: video.duration || scenes[scenes.length - 1]?.endTime,
+                videoId,
+            };
 
             const extractAnalysisData = (result, featureName) => {
                 const analysisData = {
@@ -492,28 +531,28 @@ export const processVideoAnalysis = async (req, res) => {
                     switch (feature) {
                         case 'hook':
                             if (hook) {
-                                analysisResult = await analyzeHook(hook, scenes);
+                                analysisResult = await analyzeHook(hook, scenes, analyzerContext);
                                 featureOutputs.hook = analysisResult;
                             }
                             break;
                         case 'caption':
-                            analysisResult = await analyzeCaption(scenes);
+                            analysisResult = await analyzeCaption(scenes, analyzerContext);
                             featureOutputs.caption = analysisResult;
                             break;
                         case 'pacing':
-                            analysisResult = await analyzePacing(scenes);
+                            analysisResult = await analyzePacing(scenes, analyzerContext);
                             featureOutputs.pacing = analysisResult;
                             break;
                         case 'audio':
-                            analysisResult = await analyzeAudio(scenes);
+                            analysisResult = await analyzeAudio(scenes, analyzerContext);
                             featureOutputs.audio = analysisResult;
                             break;
                         case 'advanced_analytics':
-                            analysisResult = await analyzeAdvancedAnalytics(scenes);
+                            analysisResult = await analyzeAdvancedAnalytics(scenes, analyzerContext);
                             featureOutputs.advanced_analytics = analysisResult;
                             break;
                         case 'views_predictor':
-                            analysisResult = await analyzeViewsPredictor(scenes);
+                            analysisResult = await analyzeViewsPredictor(scenes, analyzerContext);
                             featureOutputs.views_predictor = analysisResult;
                             break;
                         default:
@@ -521,6 +560,16 @@ export const processVideoAnalysis = async (req, res) => {
                     }
 
                     if (analysisResult !== null) {
+                        // Validated frame feedback / rewrites from this analyzer.
+                        // Already tagged with `sourceFeature`, so the DTO can strip
+                        // advanced-analytics items for Free/Premium.
+                        if (Array.isArray(analysisResult.frameFeedback)) {
+                            collectedFrameFeedback.push(...analysisResult.frameFeedback);
+                        }
+                        if (Array.isArray(analysisResult.scriptRewrites)) {
+                            collectedScriptRewrites.push(...analysisResult.scriptRewrites);
+                        }
+
                         if (feature === 'views_predictor' && typeof analysisResult === 'object' && analysisResult.expectedLow != null && analysisResult.expectedHigh != null) {
                             video.predictedViewsLow = analysisResult.expectedLow;
                             video.predictedViewsHigh = analysisResult.expectedHigh;
@@ -554,6 +603,20 @@ export const processVideoAnalysis = async (req, res) => {
                 }
                 console.log('[QStash] Feature analyzer step completed for:', feature);
             }
+
+            // Re-index ids across analyzers (each analyzer numbers from 1) and order
+            // by time so the report reads top-to-bottom through the video.
+            video.timestampFeedback = collectedFrameFeedback
+                .sort((a, b) => a.tStart - b.tStart || b.severity - a.severity)
+                .map((item, index) => ({ ...item, id: buildFeedbackId(index) }));
+
+            video.scriptRewrites = collectedScriptRewrites
+                .sort((a, b) => a.timestamp - b.timestamp)
+                .map((item, index) => ({ ...item, lineId: buildScriptRewriteId(index) }));
+
+            console.log(
+                `[QStash] Stored ${video.timestampFeedback.length} frame feedback items and ${video.scriptRewrites.length} script rewrites for ${videoId}`
+            );
 
             const weights = { hook: 0.35, pacing: 0.25, audio: 0.20, caption: 0.10, views_predictor: 0.10 };
             let totalWeight = 0;

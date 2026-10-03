@@ -1,17 +1,25 @@
-import { requestChatCompletion } from "../openai-response.service.js";
-import openai from "../../lib/openai.js";
-import { KnowledgeBase } from "../../model/knowledge-base.model.js";
-import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
-import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+import { runFeedbackAnalyzer, SPECIFICITY_CONTRACT } from "./run-feedback-analyzer.js";
+import { analyzerJsonSchema } from "./feedback-schema.js";
 
-const JSON_SYSTEM = "You are a concise caption analyst. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
+const JSON_SYSTEM = [
+    "You are a caption and on-screen text analyst for short-form video. You return structured data only.",
+    "When text is missing or weak you supply the exact overlay copy, never a description of what the copy should achieve.",
+    SPECIFICITY_CONTRACT,
+].join('\n\n');
 
-export const analyzeCaption = async (scenes) => {
+/**
+ * Caption / on-screen text analysis.
+ *
+ * @param {object[]} scenes
+ * @param {{ rawTranscript?: object[], duration?: number, videoId?: string }} [context]
+ */
+export const analyzeCaption = async (scenes, context = {}) => {
     if (!scenes || scenes.length === 0) {
         throw new Error('Scenes are required for caption analysis');
     }
 
-    // Extract all on-screen text from scenes
+    const { rawTranscript = [], duration, videoId } = context;
+
     const captions = scenes
         .map((scene, idx) => {
             const text = scene.onScreenText || '';
@@ -20,74 +28,46 @@ export const analyzeCaption = async (scenes) => {
         })
         .filter(Boolean);
 
-    if (captions.length === 0) {
-        return { score: 15, rating: "Weak", reasoning: "No on-screen text or captions detected in the video. Captions improve accessibility, engagement, and retention for short-form content.", suggestions: ["Add on-screen text to highlight key points", "Use captions for spoken dialogue to improve accessibility"] };
-    }
+    const hasCaptions = captions.length > 0;
+    const captionsContext = hasCaptions
+        ? captions.join('\n')
+        : 'No on-screen text detected in any scene.';
 
-    const captionsContext = captions.join('\n');
-
-    const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: captionsContext
-    });
-    const captionEmbedding = embeddingResponse.data[0].embedding;
-
-    const relevantData = await KnowledgeBase.aggregate([
-        {
-            $vectorSearch: {
-                index: KNOWLEDGE_BASE_VECTOR_INDEX,
-                queryVector: captionEmbedding,
-                path: "embedding",
-                filter: { "metadata.topic": { $in: ["caption", "general"] } },
-                limit: 10,
-                numCandidates: 100
-            }
-        }
-    ]);
-
-    const ragContext = relevantData.length > 0
-        ? relevantData
-            .map((c, i) => `${i + 1}. [${c.metadata.layer.toUpperCase()}] ${c.content}`)
-            .join("\n")
-        : 'No specific knowledge base documents found';
-
-    const prompt = `
+    return runFeedbackAnalyzer({
+        feature: 'caption',
+        schemaName: 'caption_analysis',
+        jsonSchema: analyzerJsonSchema,
+        systemPrompt: JSON_SYSTEM,
+        ragQuery: hasCaptions ? captionsContext : 'short-form video with no on-screen text or captions',
+        ragTopics: ['caption', 'general'],
+        scenes,
+        rawTranscript,
+        duration,
+        videoId,
+        buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
 You are an expert psychological content reviewer trained on Bas's mindset and caption analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
 
 BAS'S CAPTION INSIGHTS AND EXAMPLES:
 ${ragContext}
-
 
 Analyze the on-screen text and captions in this short-form social media video.
 
 CAPTIONS DETECTED:
 ${captionsContext}
 
+TRANSCRIPT (verbatim, with timestamps — use this to write overlay copy that matches what is actually said):
+${transcriptBlock}
+
+SCENE BREAKDOWN:
+${scenesBlock}
+
 TASK:
-1. Rate the caption effectiveness as Weak, Medium, or Strong based on:
-   - Visibility and readability
-   - Timing and synchronization with scenes
-   - Engagement value (does text add meaning or just repeat audio?)
-   - Use of text to emphasize key points
-   - Overall contribution to video clarity
-
-2. Provide concise reasoning (1-2 sentences) explaining the rating.
-
-3. List up to two actionable improvements for better caption usage.
-
-Return ONLY a valid JSON object with this exact shape, no other text:
-{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
-`;
-
-    const response = await requestChatCompletion({
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        maxTokens: 320,
-        systemPrompt: JSON_SYSTEM,
+1. Rate caption effectiveness as Weak, Medium, or Strong (score 0-100: Weak 1-40, Medium 41-70, Strong 71-100) based on visibility and readability, timing against the spoken audio, whether text adds meaning or merely repeats audio, emphasis of key points, and contribution to clarity.
+   ${hasCaptions ? '' : 'No on-screen text was detected — score accordingly and treat every missing-text moment as an opportunity.'}
+2. Provide concise reasoning (1-2 sentences).
+3. suggestions: up to two short headlines naming the concrete change.
+4. frameFeedback: one item per caption problem at the exact range where it occurs. Use fix.type "add_text_overlay" with fix.after containing the EXACT overlay copy to put on screen (fix.before may be null). Use "replace_line" with the existing on-screen text quoted in fix.before when text is present but weak. Keep overlay copy short enough to read in the available time.
+5. scriptRewrites: only when a spoken line must change for the captions to work; otherwise return an empty array.
+`,
     });
-
-    const parsed = parseAnalyzerJson(response);
-    if (parsed) return parsed;
-    const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
-    return { score: fallbackScore, rating: "Unknown", reasoning: response || "", suggestions: [] };
 };

@@ -1,320 +1,153 @@
 import { Video } from '../model/video.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { ANALYSIS_STATUS } from '../constants.js';
-import { requestChatCompletion } from './openai-response.service.js';
+import { allowedFeaturesForPlan } from '../constants.js';
+import {
+    severityToLegacy,
+    legacyToSeverity,
+    formatTimecode,
+} from './analyzer/feedback-schema.js';
 
 /**
- * Generate timestamp-specific feedback for a video based on its analysis
+ * Frame-level feedback reader for GET /videos/:videoId/feedback.
+ *
+ * CHANGED: 2026-09 — this service no longer GENERATES feedback. The six analyzers
+ * author `Video.timestampFeedback` under OpenAI structured outputs during the
+ * QStash analysis job, so generating a second, heuristic set here would compete
+ * with them and reintroduce exactly the vague prose the new schema removes.
+ *
+ * Reads in this order:
+ *  1. `timestampFeedback` (FrameFeedback) when present.
+ *  2. `timestampFeedbackLegacy` (pre-2026-09 prose), adapted read-only so
+ *     historical videos keep rendering without a bulk re-analysis.
+ *
+ * Plan gating: items authored by `advanced_analytics` are stripped for plans that
+ * cannot see Advanced Analytics, matching the `features.advanced` / `scores.advanced`
+ * behaviour in `video-analysis-dto.service.js`.
  */
-export const generateVideoFeedbackService = async (videoId, userId) => {
+
+/** Present a stored FrameFeedback item, with legacy aliases for existing consumers. */
+const toFeedbackResponseItem = (item) => ({
+    id: item.id,
+    tStart: item.tStart,
+    tEnd: item.tEnd,
+    tStartLabel: formatTimecode(item.tStart),
+    tEndLabel: formatTimecode(item.tEnd),
+    category: item.category,
+    severity: item.severity,
+    severityLabel: severityToLegacy(item.severity),
+    sourceFeature: item.sourceFeature,
+    observed: item.observed,
+    issue: item.issue,
+    fix: {
+        type: item.fix?.type ?? null,
+        before: item.fix?.before ?? null,
+        after: item.fix?.after ?? '',
+    },
+    expectedImpact: item.expectedImpact ?? null,
+    sourceConfidence: item.sourceConfidence ?? null,
+    isLegacy: false,
+});
+
+/**
+ * Adapt a pre-2026-09 prose entry. `fix.after` carries the old `suggestion` so the
+ * UI has something to render, and `isLegacy` lets it be labelled as not
+ * frame-verified rather than presented as a literal drop-in fix.
+ */
+const toLegacyResponseItem = (item, index) => {
+    const tStart = item.timestamp ?? 0;
+    const tEnd = item.endTimestamp ?? tStart;
+    return {
+        id: `legacy_${String(index + 1).padStart(4, '0')}`,
+        tStart,
+        tEnd,
+        tStartLabel: formatTimecode(tStart),
+        tEndLabel: formatTimecode(tEnd),
+        category: item.category ?? 'visual',
+        severity: legacyToSeverity(item.severity),
+        severityLabel: item.severity ?? 'minor',
+        sourceFeature: null,
+        observed: item.issue ?? '',
+        issue: item.issue ?? '',
+        fix: {
+            type: null,
+            before: null,
+            after: item.suggestion ?? '',
+        },
+        expectedImpact: item.example ?? null,
+        sourceConfidence: null,
+        isLegacy: true,
+    };
+};
+
+/**
+ * @param {string} videoId
+ * @param {string} userId Owner — feedback is scoped exactly like GET /videos/:videoId
+ * @param {string} [userPlan] Requester's plan, for Advanced Analytics stripping
+ */
+export const getVideoFeedbackService = async (videoId, userId, userPlan) => {
     if (!videoId || !userId) {
         throw new ApiError(400, 'Video ID and User ID are required');
     }
 
-    // Verify video belongs to user
-    const video = await Video.findOne({ _id: videoId, uploader_id: userId });
+    const video = await Video.findOne({ _id: videoId, uploader_id: userId })
+        .select('timestampFeedback timestampFeedbackLegacy scriptRewrites analysisStatus')
+        .lean();
+
     if (!video) {
         throw new ApiError(404, 'Video not found');
     }
 
-    // Check if analysis is completed
-    if (video.analysisStatus !== ANALYSIS_STATUS.COMPLETED) {
-        throw new ApiError(400, 'Video analysis is not completed yet');
-    }
+    const allowed = allowedFeaturesForPlan(userPlan);
+    const canSeeAdvanced = allowed.includes('advanced_analytics');
 
-    // If feedback already exists, return it
-    if (video.timestampFeedback && video.timestampFeedback.length > 0) {
-        return formatFeedbackResponse(video);
-    }
+    const stored = video.timestampFeedback || [];
+    const usingLegacy = stored.length === 0 && (video.timestampFeedbackLegacy || []).length > 0;
 
-    // Generate feedback from analysis and scenes
-    const feedback = await analyzeVideoForTimestampFeedback(video);
-    
-    // Save feedback to video
-    video.timestampFeedback = feedback;
-    await video.save();
+    const feedback = usingLegacy
+        ? (video.timestampFeedbackLegacy || []).map(toLegacyResponseItem)
+        : stored
+            .filter((item) => canSeeAdvanced || item.sourceFeature !== 'advanced_analytics')
+            .map(toFeedbackResponseItem);
 
-    return formatFeedbackResponse(video);
-};
+    const scriptRewrites = usingLegacy
+        ? []
+        : (video.scriptRewrites || [])
+            .filter((item) => canSeeAdvanced || item.sourceFeature !== 'advanced_analytics')
+            .map((item) => ({
+                ...item,
+                timestampLabel: formatTimecode(item.timestamp),
+            }));
 
-/**
- * Analyze video and generate timestamp-specific feedback
- */
-async function analyzeVideoForTimestampFeedback(video) {
-    const feedback = [];
-    const duration = video.duration || 60; // Default to 60 seconds if not available
-    
-    // Analyze hook (0-3 seconds)
-    if (video.scenes && video.scenes.length > 0) {
-        const firstScene = video.scenes[0];
-        if (firstScene.startTime < 3) {
-            const hookAnalysis = video.analysis?.find(a => a.feature === 'hook');
-            if (hookAnalysis && hookAnalysis.rating && hookAnalysis.rating.toLowerCase().includes('weak')) {
-                feedback.push({
-                    timestamp: 0,
-                    endTimestamp: 3,
-                    category: 'hook',
-                    severity: 'critical',
-                    issue: 'The opening 3 seconds lack a compelling visual or statement. Viewers typically decide to stay within 3 seconds.',
-                    suggestion: 'Start with your most interesting footage or a provocative question. Example: "What if I told you..."',
-                    example: 'Consider opening with: "What if I told you that in the next 30 seconds, you\'ll learn something that will change how you think about [topic]?"'
-                });
-            }
-        }
-    }
-
-    // Analyze pacing issues from scenes
-    if (video.scenes && video.scenes.length > 1) {
-        for (let i = 0; i < video.scenes.length - 1; i++) {
-            const currentScene = video.scenes[i];
-            const nextScene = video.scenes[i + 1];
-            const gap = nextScene.startTime - currentScene.endTime;
-            
-            // Detect dead air or slow pacing
-            if (gap > 2) {
-                feedback.push({
-                    timestamp: currentScene.endTime,
-                    endTimestamp: nextScene.startTime,
-                    category: 'pacing',
-                    severity: gap > 5 ? 'critical' : 'important',
-                    issue: `${Math.round(gap)}-second pause with minimal visual interest. Engagement typically drops during extended pauses.`,
-                    suggestion: 'Add B-roll, text overlay, or trim this section to 3-4 seconds maximum.',
-                    example: 'Consider adding a text overlay with a key point or quick cut to B-roll footage.'
-                });
-            }
-            
-            // Detect rushed sections
-            const sceneDuration = currentScene.endTime - currentScene.startTime;
-            if (sceneDuration < 1 && currentScene.visualDescription && currentScene.visualDescription.length > 50) {
-                feedback.push({
-                    timestamp: currentScene.startTime,
-                    endTimestamp: currentScene.endTime,
-                    category: 'pacing',
-                    severity: 'important',
-                    issue: 'Scene feels rushed with too much information packed into a short time.',
-                    suggestion: 'Slow down the pacing or split this into multiple scenes to allow viewers to process the information.',
-                    example: 'Consider extending this scene by 2-3 seconds or breaking it into two separate scenes.'
-                });
-            }
-        }
-    }
-
-    // Analyze audio issues
-    const audioAnalysis = video.analysis?.find(a => a.feature === 'audio');
-    if (audioAnalysis && audioAnalysis.feedback) {
-        // Extract timestamp information from audio feedback if available
-        const audioFeedbackLower = audioAnalysis.feedback.toLowerCase();
-        if (audioFeedbackLower.includes('inconsistent') || audioFeedbackLower.includes('volume')) {
-            feedback.push({
-                timestamp: 0,
-                endTimestamp: duration,
-                category: 'audio',
-                severity: 'important',
-                issue: 'Audio levels are inconsistent throughout the video.',
-                suggestion: 'Normalize audio levels in post-production or use a compressor to maintain consistent volume.',
-                example: 'Use tools like Audacity or Adobe Premiere Pro to normalize audio levels.'
-            });
-        }
-        if (audioFeedbackLower.includes('noise') || audioFeedbackLower.includes('background')) {
-            feedback.push({
-                timestamp: 0,
-                endTimestamp: duration,
-                category: 'audio',
-                severity: 'minor',
-                issue: 'Background noise detected that may distract viewers.',
-                suggestion: 'Use noise reduction filters or record in a quieter environment.',
-                example: 'Tools like Audacity\'s Noise Reduction or Adobe\'s DeNoise can help clean up audio.'
-            });
-        }
-    }
-
-    // Analyze visual quality from scenes
-    if (video.scenes && video.scenes.length > 0) {
-        for (const scene of video.scenes) {
-            if (scene.visualDescription) {
-                const descLower = scene.visualDescription.toLowerCase();
-                if (descLower.includes('blur') || descLower.includes('unclear')) {
-                    feedback.push({
-                        timestamp: scene.startTime,
-                        endTimestamp: scene.endTime,
-                        category: 'visual',
-                        severity: 'important',
-                        issue: 'Visual clarity issues detected in this segment.',
-                        suggestion: 'Ensure proper focus and lighting. Consider reshooting if necessary.',
-                        example: 'Use manual focus and ensure adequate lighting for better visual quality.'
-                    });
-                }
-                if (descLower.includes('dark') || descLower.includes('poor lighting')) {
-                    feedback.push({
-                        timestamp: scene.startTime,
-                        endTimestamp: scene.endTime,
-                        category: 'visual',
-                        severity: 'important',
-                        issue: 'Poor lighting detected in this segment.',
-                        suggestion: 'Increase lighting or adjust exposure in post-production.',
-                        example: 'Use natural light from a window or add a ring light for better illumination.'
-                    });
-                }
-            }
-        }
-    }
-
-    // Analyze CTA/ending (last 5 seconds)
-    if (duration > 5) {
-        const lastScene = video.scenes && video.scenes.length > 0 
-            ? video.scenes[video.scenes.length - 1] 
-            : null;
-        
-        if (lastScene && lastScene.endTime >= duration - 5) {
-            const hasCTA = lastScene.onScreenText && (
-                lastScene.onScreenText.toLowerCase().includes('subscribe') ||
-                lastScene.onScreenText.toLowerCase().includes('like') ||
-                lastScene.onScreenText.toLowerCase().includes('follow') ||
-                lastScene.onScreenText.toLowerCase().includes('comment')
-            );
-            
-            if (!hasCTA && !lastScene.audioSummary?.toLowerCase().includes('subscribe')) {
-                feedback.push({
-                    timestamp: Math.max(0, duration - 5),
-                    endTimestamp: duration,
-                    category: 'cta',
-                    severity: 'important',
-                    issue: 'Missing clear call-to-action in the final seconds.',
-                    suggestion: 'Add a clear CTA asking viewers to like, subscribe, comment, or follow.',
-                    example: 'End with: "If you found this helpful, hit the like button and subscribe for more!"'
-                });
-            }
-        }
-    }
-
-    // Use AI to generate additional timestamp-specific feedback if we have analysis data
-    if (video.analysis && video.analysis.length > 0 && video.scenes && video.scenes.length > 0) {
-        try {
-            const aiFeedback = await generateAITimestampFeedback(video);
-            feedback.push(...aiFeedback);
-        } catch (error) {
-            console.error('[Video Feedback] Error generating AI feedback:', error.message);
-            // Continue with manual feedback if AI fails
-        }
-    }
-
-    // Sort feedback by timestamp
-    feedback.sort((a, b) => a.timestamp - b.timestamp);
-
-    return feedback;
-}
-
-/**
- * Generate AI-powered timestamp-specific feedback. Uses scene indices so timestamps are grounded in scene boundaries.
- */
-async function generateAITimestampFeedback(video) {
-    const scenes = video.scenes || [];
-    const sceneList = scenes.map((scene, index) =>
-        `Scene ${index} (${scene.startTime}s - ${scene.endTime}s): ${scene.visualDescription || 'No description'}`
-    ).join('\n');
-
-    const analysisSummary = (video.analysis || []).map(a =>
-        `${a.feature}: ${a.rating || a.score} - ${a.feedback}`
-    ).join('\n');
-
-    const prompt = `Analyze this video and provide timestamp-specific feedback. Focus on critical issues that occur in specific SCENES.
-
-Video Duration: ${video.duration || 'Unknown'} seconds
-
-Scenes (use the scene INDEX 0-based to reference which scene each feedback refers to):
-${sceneList}
-
-Analysis Summary:
-${analysisSummary}
-
-Return a JSON array of feedback objects. Each item MUST use "sceneIndex" (number, 0-based) to reference a single scene. Do NOT use "timestamp" or "endTimestamp" — we will derive those from the scene.
-
-Format:
-[
-  {
-    "sceneIndex": <0-based scene number>,
-    "category": "pacing" | "visual" | "audio" | "engagement" | "hook" | "cta",
-    "severity": "critical" | "important" | "minor",
-    "issue": "<specific issue description>",
-    "suggestion": "<actionable suggestion>",
-    "example": "<optional example>"
-  }
-]
-
-Focus on: hook (scene 0), pacing issues, visual/audio problems, engagement drops, CTA (last scene). Return ONLY valid JSON array, no other text.`;
-
-    try {
-        const response = await requestChatCompletion({
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.3,
-            maxTokens: 2000,
-            systemPrompt: "You are a video analysis expert. Return only valid JSON arrays with sceneIndex, category, severity, issue, suggestion."
-        });
-        const jsonMatch = response.match(/\[[\s\S]*\]/);
-        if (jsonMatch && scenes.length > 0) {
-            const raw = JSON.parse(jsonMatch[0]);
-            return raw
-                .filter(f => f.sceneIndex !== undefined && f.category && f.severity && f.issue && f.suggestion)
-                .map(f => {
-                    const idx = Math.min(scenes.length - 1, Math.max(0, parseInt(f.sceneIndex, 10) || 0));
-                    const scene = scenes[idx];
-                    return {
-                        timestamp: scene.startTime,
-                        endTimestamp: scene.endTime,
-                        category: f.category,
-                        severity: f.severity,
-                        issue: f.issue,
-                        suggestion: f.suggestion,
-                        example: f.example
-                    };
-                });
-        }
-    } catch (error) {
-        console.error('[Video Feedback] AI feedback generation error:', error.message);
-    }
-
-    return [];
-}
-
-/**
- * Format feedback response with summary statistics
- */
-function formatFeedbackResponse(video) {
-    const feedback = video.timestampFeedback || [];
-    
-    const criticalIssues = feedback.filter(f => f.severity === 'critical').length;
-    const importantIssues = feedback.filter(f => f.severity === 'important').length;
-    const minorIssues = feedback.filter(f => f.severity === 'minor').length;
+    const bySeverityLabel = (label) => feedback.filter((f) => f.severityLabel === label).length;
 
     return {
-        videoId: video._id.toString(),
+        videoId: String(videoId),
         feedback,
+        scriptRewrites,
         totalIssues: feedback.length,
-        criticalIssues,
-        importantIssues,
-        minorIssues,
-        summary: generateFeedbackSummary(feedback, criticalIssues, importantIssues, minorIssues)
+        criticalIssues: bySeverityLabel('critical'),
+        importantIssues: bySeverityLabel('important'),
+        minorIssues: bySeverityLabel('minor'),
+        isLegacyFeedback: usingLegacy,
+        summary: buildFeedbackSummary(feedback, usingLegacy),
     };
-}
+};
 
-/**
- * Generate a summary of feedback
- */
-function generateFeedbackSummary(feedback, critical, important, minor) {
+function buildFeedbackSummary(feedback, usingLegacy) {
     if (feedback.length === 0) {
-        return 'No issues detected. Great job!';
+        return 'No frame-level feedback is stored for this video yet. Re-analyze to generate it.';
     }
 
-    const parts = [];
-    if (critical > 0) {
-        parts.push(`${critical} critical issue${critical > 1 ? 's' : ''}`);
-    }
-    if (important > 0) {
-        parts.push(`${important} important issue${important > 1 ? 's' : ''}`);
-    }
-    if (minor > 0) {
-        parts.push(`${minor} minor issue${minor > 1 ? 's' : ''}`);
-    }
+    const counts = [
+        ['critical', feedback.filter((f) => f.severityLabel === 'critical').length],
+        ['important', feedback.filter((f) => f.severityLabel === 'important').length],
+        ['minor', feedback.filter((f) => f.severityLabel === 'minor').length],
+    ]
+        .filter(([, count]) => count > 0)
+        .map(([label, count]) => `${count} ${label}`);
 
-    return `Found ${parts.join(', ')} that need attention.`;
+    const prefix = `Found ${counts.join(', ')} issue${feedback.length === 1 ? '' : 's'}`;
+    return usingLegacy
+        ? `${prefix}. This video was analyzed before frame-level fixes shipped — re-analyze for literal fixes at each timestamp.`
+        : `${prefix}, each with a timestamp and a drop-in fix.`;
 }

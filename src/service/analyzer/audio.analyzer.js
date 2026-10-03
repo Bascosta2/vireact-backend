@@ -1,17 +1,25 @@
-import { requestChatCompletion } from "../openai-response.service.js";
-import openai from "../../lib/openai.js";
-import { KnowledgeBase } from "../../model/knowledge-base.model.js";
-import { KNOWLEDGE_BASE_VECTOR_INDEX } from "../../config/index.js";
-import { parseAnalyzerJson, ratingToScore } from "./parse-analyzer-json.js";
+import { runFeedbackAnalyzer, SPECIFICITY_CONTRACT } from "./run-feedback-analyzer.js";
+import { analyzerJsonSchema } from "./feedback-schema.js";
 
-const JSON_SYSTEM = "You are a concise audio analyst. Return only valid JSON with keys: score (0-100), rating, reasoning, suggestions (array of strings). No markdown, no code fence.";
+const JSON_SYSTEM = [
+    "You are an audio analyst for short-form video. You return structured data only.",
+    "Audio fixes must name the concrete change at a real timestamp: the sound to add, the level to correct, or the delivery to re-record.",
+    SPECIFICITY_CONTRACT,
+].join('\n\n');
 
-export const analyzeAudio = async (scenes) => {
+/**
+ * Audio analysis.
+ *
+ * @param {object[]} scenes
+ * @param {{ rawTranscript?: object[], duration?: number, videoId?: string }} [context]
+ */
+export const analyzeAudio = async (scenes, context = {}) => {
     if (!scenes || scenes.length === 0) {
         throw new Error('Scenes are required for audio analysis');
     }
 
-    // Extract all audio information from scenes
+    const { rawTranscript = [], duration, videoId } = context;
+
     let audioContexts = scenes
         .map((scene, idx) => {
             const audio = scene.audioSummary || '';
@@ -22,9 +30,9 @@ export const analyzeAudio = async (scenes) => {
         })
         .filter(Boolean);
 
-    // Fallback: If no audio summaries found, check onScreenText (captions indicate spoken audio)
+    // Fallback: captions imply spoken audio even when the scene summary omits it.
     if (audioContexts.length === 0) {
-        const captionContexts = scenes
+        audioContexts = scenes
             .map((scene, idx) => {
                 const text = scene.onScreenText || '';
                 if (text && text.trim() !== '' && text.toLowerCase() !== 'none' && text.toLowerCase() !== 'n/a') {
@@ -33,53 +41,28 @@ export const analyzeAudio = async (scenes) => {
                 return null;
             })
             .filter(Boolean);
-
-        if (captionContexts.length > 0) {
-            // Captions exist, infer speech audio is present
-            audioContexts = captionContexts;
-        }
     }
 
-    // Count scenes with and without audio
     const scenesWithAudio = audioContexts.length;
     const scenesWithoutAudio = scenes.length - scenesWithAudio;
+    const hasAudio = scenesWithAudio > 0;
+    const audioContext = hasAudio
+        ? audioContexts.join('\n')
+        : 'No audio content detected in any scene.';
 
-    if (audioContexts.length === 0) {
-        return { score: 15, rating: "Weak", reasoning: "No audio content detected in the video. Audio is crucial for engagement in short-form content.", suggestions: ["Add background music to create mood and maintain viewer interest", "Include voiceover or narration to guide the viewer"] };
-    }
-
-    const audioContext = audioContexts.join('\n');
-
-    // TODO: Uncomment when knowledge base is seeded with audio data
-    // Generate embedding for audio analysis
-    const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: audioContext
-    });
-    const audioEmbedding = embeddingResponse.data[0].embedding;
-
-    // Perform vector search to find relevant knowledge base documents
-    const relevantData = await KnowledgeBase.aggregate([
-        {
-            $vectorSearch: {
-                index: KNOWLEDGE_BASE_VECTOR_INDEX,
-                queryVector: audioEmbedding,
-                path: "embedding",
-                filter: { "metadata.topic": { $in: ["audio", "general"] } },
-                limit: 10,
-                numCandidates: 100
-            }
-        }
-    ]);
-
-    // Format relevant knowledge base context
-    const ragContext = relevantData.length > 0
-        ? relevantData
-            .map((c, i) => `${i + 1}. [${c.metadata.layer.toUpperCase()}] ${c.content}`)
-            .join("\n")
-        : 'No specific knowledge base documents found';
-
-    const prompt = `You are an expert content reviewer trained on Bas's mindset and audio analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
+    return runFeedbackAnalyzer({
+        feature: 'audio',
+        schemaName: 'audio_analysis',
+        jsonSchema: analyzerJsonSchema,
+        systemPrompt: JSON_SYSTEM,
+        ragQuery: hasAudio ? audioContext : 'short-form video with no audio track',
+        ragTopics: ['audio', 'general'],
+        scenes,
+        rawTranscript,
+        duration,
+        videoId,
+        buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
+You are an expert content reviewer trained on Bas's mindset and audio analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
 
 BAS'S AUDIO INSIGHTS AND EXAMPLES:
 ${ragContext}
@@ -93,31 +76,19 @@ AUDIO COVERAGE:
 - Scenes with audio: ${scenesWithAudio} out of ${scenes.length}
 - Scenes without audio: ${scenesWithoutAudio}
 
+TRANSCRIPT (verbatim, with timestamps — use it to locate silence, filler, and low-energy delivery):
+${transcriptBlock}
+
+SCENE DETAIL:
+${scenesBlock}
+
 TASK:
-1. Rate the audio effectiveness as Weak, Medium, or Strong based on:
-   - Presence and coverage across scenes
-   - Variety (music, voiceover, sound effects)
-   - Synchronization with visual content
-   - Contribution to engagement and emotional tone
-   - Overall audio-visual harmony
-
-2. Provide concise reasoning (1-2 sentences) explaining the rating.
-
-3. List up to two actionable improvements for better audio usage.
-
-Return ONLY a valid JSON object with this exact shape, no other text:
-{"score": <number 0-100>, "rating": "<Weak|Medium|Strong>", "reasoning": "<one or two sentences>", "suggestions": ["<suggestion 1>", "<suggestion 2>"]}
-`;
-
-    const response = await requestChatCompletion({
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        maxTokens: 320,
-        systemPrompt: JSON_SYSTEM,
+1. Rate audio effectiveness as Weak, Medium, or Strong (score 0-100: Weak 1-40, Medium 41-70, Strong 71-100) based on presence and coverage, variety (music, voiceover, effects), synchronization with visuals, and contribution to emotional tone.
+   ${hasAudio ? '' : 'No audio was detected — score accordingly and treat each silent stretch as a concrete opportunity.'}
+2. Provide concise reasoning (1-2 sentences).
+3. suggestions: up to two short headlines naming the concrete change.
+4. frameFeedback: one item per audio problem at the exact range. Use fix.type "add_sound" with fix.after naming the specific sound and its placement (for example "add a low whoosh transition at 00:00:03.900 under the cut"; fix.before may be null). Use "reshoot_note" for delivery problems, stating exactly what to change in the re-record. Cite the silent or low-energy range measured from the data above in observed.
+5. scriptRewrites: only when the words themselves cause the audio problem (for example a flat, list-like line). Otherwise return an empty array.
+`,
     });
-
-    const parsed = parseAnalyzerJson(response);
-    if (parsed) return parsed;
-    const fallbackScore = ratingToScore((response || '').match(/rating[:\-\s]*([^\n]+)/i)?.[1]);
-    return { score: fallbackScore, rating: "Unknown", reasoning: response || "", suggestions: [] };
-}
+};

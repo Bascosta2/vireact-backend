@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { KB_SPECIFICITY, KB_EXEMPLAR_TYPES } from "../constants.js";
 
 const KnowledgeBaseSchema = new mongoose.Schema({
   content: {
@@ -42,6 +43,42 @@ const KnowledgeBaseSchema = new mongoose.Schema({
       min: 0.1,
       max: 1,
     },
+    /**
+     * How usable this chunk is as an exemplar for a literal rewrite.
+     * `vague` chunks are excluded from analyzer/chat retrieval so directional
+     * prose can never be cited as the basis for a drop-in fix. `unrated` is the
+     * default for chunks ingested before this tag existed — still retrievable.
+     * Filtering happens in `analyzer/retrieve-knowledge.js` (in code, not in the
+     * `$vectorSearch` filter, so no Atlas index change is required).
+     */
+    specificity: {
+      type: String,
+      enum: Object.values(KB_SPECIFICITY),
+      default: KB_SPECIFICITY.UNRATED,
+      index: true,
+    },
+    /** What kind of exemplar this chunk is, used for prompt labelling. */
+    exemplarType: {
+      type: String,
+      enum: Object.values(KB_EXEMPLAR_TYPES),
+      index: true,
+      sparse: true,
+    },
+    /**
+     * Feedback -> measured-outcome pairing, so `expectedImpact` can be grounded in
+     * an observed number instead of an invented one. Populated from admin creator
+     * ingest, where real performance data exists.
+     */
+    measuredImpact: {
+      /** e.g. 'views', '3s_retention', 'completion_rate' */
+      metric: { type: String },
+      /** Signed percentage change attributed to the change described in `content`. */
+      deltaPercent: { type: Number },
+      /** Free-text note on how the delta was observed. */
+      basis: { type: String },
+    },
+    /** Content category for exemplar retrieval (e.g. 'talking_head', 'tutorial'). */
+    contentCategory: { type: String, index: true, sparse: true },
     platform: { type: String },
     /** Optional; not used for retrieval filtering — RAG uses vector similarity only */
     niche: { type: String },

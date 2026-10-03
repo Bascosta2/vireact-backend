@@ -42,6 +42,63 @@ export const ANALYSIS_STATUS = {
   FAILED: 'failed'
 };
 
+// FRAME-LEVEL FEEDBACK
+// Canonical enums for `Video.timestampFeedback` (FrameFeedback) and
+// `Video.scriptRewrites` (ScriptRewrite). Kept here so the Mongoose models and
+// the analyzer/chat JSON schemas share one source of truth without the model
+// layer importing from the service layer.
+export const FRAME_FEEDBACK_CATEGORIES = ['hook', 'pacing', 'audio', 'caption', 'visual', 'script'];
+
+// `cut`/`trim` carry timestamped instructions; the additive types legitimately
+// have a null `fix.before` because there is no prior content to replace.
+export const FRAME_FEEDBACK_FIX_TYPES = [
+  'replace_line',
+  'cut',
+  'trim',
+  'add_text_overlay',
+  'reshoot_note',
+  'add_sound'
+];
+
+// Which analyzer authored an item. Required for plan gating: Advanced Analytics
+// feedback must be strippable for Free/Premium at the DTO boundary exactly like
+// `features.advanced` / `scores.advanced`. `chat` marks items authored in a chat
+// reply rather than by the analysis pipeline.
+export const FEEDBACK_SOURCE_FEATURES = [
+  'hook',
+  'caption',
+  'pacing',
+  'audio',
+  'advanced_analytics',
+  'views_predictor',
+  'chat'
+];
+
+// Severity is stored as an integer 1-5 and mapped to the documented
+// critical|important|minor DTO contract by `severityToLegacy`.
+export const FEEDBACK_SEVERITY_MIN = 1;
+export const FEEDBACK_SEVERITY_MAX = 5;
+
+// KNOWLEDGE BASE SPECIFICITY
+// Tags how usable a chunk is as an exemplar for a literal rewrite. `VAGUE`
+// chunks are excluded from analyzer/chat retrieval so directional prose cannot
+// be cited as the basis for a drop-in fix. `UNRATED` is the default for chunks
+// ingested before the tag existed — still retrievable.
+export const KB_SPECIFICITY = {
+  LITERAL: 'literal',        // contains quotable before/after content
+  DIRECTIONAL: 'directional',// concrete pattern, no literal line
+  VAGUE: 'vague',            // generic advice; never an exemplar
+  UNRATED: 'unrated'
+};
+
+// What kind of exemplar a chunk represents, for retrieval and prompt labelling.
+export const KB_EXEMPLAR_TYPES = {
+  HOOK_REWRITE: 'hook_rewrite',
+  SCRIPT_REWRITE: 'script_rewrite',
+  FEEDBACK_IMPACT_PAIR: 'feedback_impact_pair',
+  CREATOR_PROFILE: 'creator_profile'
+};
+
 // SUBSCRIPTION STATUS
 export const SUBSCRIPTION_STATUS = {
   ACTIVE: 'active',
