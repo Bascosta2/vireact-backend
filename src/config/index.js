@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import './load-env.js'
 
 // Server port
 export const PORT = process.env.PORT || 5000;

@@ -1,9 +1,9 @@
 /**
  * RAG test: run vector search on KnowledgeBase with a sample query.
  * Run from vireact-backend: node scripts/test-rag.js
- * Uses MONGODB_URI/DB_URL, OPENAI_API_KEY, and optionally KNOWLEDGE_BASE_VECTOR_INDEX from .env
+ * Uses MONGODB_URI/DB_URL, OPENAI_API_KEY, and optionally KNOWLEDGE_BASE_VECTOR_INDEX from .env.local / .env
  */
-import 'dotenv/config';
+import '../src/config/load-env.js';
 import mongoose from 'mongoose';
 import { KnowledgeBase } from '../src/model/knowledge-base.model.js';
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../src/config/index.js';

@@ -1,9 +1,9 @@
 /**
  * One-time diagnostic: VideoPerformanceDataset collection.
  * Run from vireact-backend: node scripts/check-videos.js
- * Uses MONGODB_URI or DB_URL from .env
+ * Uses MONGODB_URI or DB_URL from .env.local / .env
  */
-import 'dotenv/config';
+import '../src/config/load-env.js';
 import mongoose from 'mongoose';
 import { VideoPerformanceDataset } from '../src/model/VideoPerformanceDataset.model.js';
 

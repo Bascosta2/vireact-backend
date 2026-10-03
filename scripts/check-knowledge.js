@@ -1,9 +1,9 @@
 /**
  * One-time diagnostic: KnowledgeBase collection.
  * Run from vireact-backend: node scripts/check-knowledge.js
- * Uses MONGODB_URI or DB_URL from .env
+ * Uses MONGODB_URI or DB_URL from .env.local / .env
  */
-import 'dotenv/config';
+import '../src/config/load-env.js';
 import mongoose from 'mongoose';
 import { KnowledgeBase } from '../src/model/knowledge-base.model.js';
 
