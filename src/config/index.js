@@ -76,6 +76,8 @@ export const STRIPE_PRICE_ID_PREMIUM = process.env.STRIPE_PRICE_ID_PREMIUM;
 export const STRIPE_PRICE_ID_PRO = process.env.STRIPE_PRICE_ID_PRO;
 export const STRIPE_PRICE_ID_ENTERPRISE = process.env.STRIPE_PRICE_ID_ENTERPRISE;
 export const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'support@vireact.io';
+/** Dev-only: when set and NODE_ENV !== 'production', all outgoing email goes here instead (see lib/resend.js). */
+export const EMAIL_DEV_OVERRIDE_TO = process.env.EMAIL_DEV_OVERRIDE_TO;
 
 // Mailchimp Configuration (for /viral-hooks PDF lead-gen)
 // When MAILCHIMP_ENABLED is "true" the subscribe controller calls the Mailchimp API.
@@ -86,3 +88,5 @@ export const MAILCHIMP_API_KEY = process.env.MAILCHIMP_API_KEY;
 export const MAILCHIMP_AUDIENCE_ID = process.env.MAILCHIMP_AUDIENCE_ID;
 export const MAILCHIMP_SERVER_PREFIX = process.env.MAILCHIMP_SERVER_PREFIX;
 export const MAILCHIMP_ENABLED = String(process.env.MAILCHIMP_ENABLED || '').toLowerCase() === 'true';
+// Outside production the Mailchimp call is skipped (log-only) unless this is also "true".
+export const MAILCHIMP_DEV_ENABLED = String(process.env.MAILCHIMP_DEV_ENABLED || '').toLowerCase() === 'true';

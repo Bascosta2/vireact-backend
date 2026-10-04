@@ -4,6 +4,8 @@ import {
     MAILCHIMP_AUDIENCE_ID,
     MAILCHIMP_SERVER_PREFIX,
     MAILCHIMP_ENABLED,
+    MAILCHIMP_DEV_ENABLED,
+    NODE_ENV,
 } from "../config/index.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -18,6 +20,9 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  *   MAILCHIMP_ENABLED=true → POST to Mailchimp lists/{audienceId}/members with
  *     the "pdf-warm" tag. Mailchimp's automation handles the welcome email +
  *     PDF download link, so we never send the PDF directly from this server.
+ *   NODE_ENV !== 'production' → log-only like the default, even when
+ *     MAILCHIMP_ENABLED=true, unless MAILCHIMP_DEV_ENABLED=true. Keeps local
+ *     runs from adding test addresses to the real audience.
  *
  * Already-subscribed (HTTP 400 with title="Member Exists") is treated as
  * success: a returning DM lead should still be redirected to /thank-you and
@@ -34,10 +39,12 @@ export const subscribeEmailService = async ({ email, source }) => {
     const normalisedEmail = email.trim().toLowerCase();
     const tag = 'pdf-warm';
 
-    if (!MAILCHIMP_ENABLED) {
+    const devSkip = NODE_ENV !== 'production' && !MAILCHIMP_DEV_ENABLED;
+    if (!MAILCHIMP_ENABLED || devSkip) {
         // Dev / pre-launch mode: just observe.
+        const reason = !MAILCHIMP_ENABLED ? 'MAILCHIMP_ENABLED=false' : 'non-production and MAILCHIMP_DEV_ENABLED!=true';
         console.log(
-            `[subscribe] MAILCHIMP_ENABLED=false — would subscribe email="${normalisedEmail}" tag="${tag}" source="${source || 'viral-hooks'}"`
+            `[subscribe] ${reason} — would subscribe email="${normalisedEmail}" tag="${tag}" source="${source || 'viral-hooks'}"`
         );
         return { ok: true, simulated: true };
     }
