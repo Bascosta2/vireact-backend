@@ -4,8 +4,11 @@
  * Uses MONGODB_URI or DB_URL from .env.local / .env
  */
 import '../src/config/load-env.js';
+import { assertSafeDatabase } from '../src/config/env-guards.js';
 import mongoose from 'mongoose';
 import { VideoPerformanceDataset } from '../src/model/VideoPerformanceDataset.model.js';
+
+assertSafeDatabase();
 
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DB_URL;
 if (!MONGODB_URI) {

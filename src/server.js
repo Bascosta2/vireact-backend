@@ -1,5 +1,12 @@
 import './config/load-env.js'; // Load environment variables FIRST (.env.local over .env in dev)
-import app from './app.js';
+import { runStartupGuards } from './config/env-guards.js';
+try {
+  runStartupGuards();
+} catch (err) {
+  console.error(`\n❌ ${err.message}\n`);
+  process.exit(1);
+}
+const { default: app } = await import('./app.js');
 import { PORT, NODE_ENV, FRONTEND_URL, BACKEND_URL, DB_URL, JWT_SECRET, ACCESS_TOKEN_SECRET, SESSION_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URL, STRIPE_SECRET_KEY, STRIPE_PRICE_ID_PREMIUM, STRIPE_PRICE_ID_PRO, TWELVE_LABS_API_KEY, TWELVELABS_USER_INDEX, TWELVELABS_DATASET_INDEX, OPENAI_API_KEY, RESEND_API_KEY, UPSTASH_REDIS_REST_URL, QSTASH_TOKEN, QSTASH_URL, QSTASH_CURRENT_SIGNING_KEY, QSTASH_NEXT_SIGNING_KEY, AWS_ACCESS_KEY_ID } from './config/index.js';
 import { connectDB, isConnected } from './db/index.js';
 

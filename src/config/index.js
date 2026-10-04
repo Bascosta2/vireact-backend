@@ -14,6 +14,8 @@ export const BACKEND_URL = process.env.BACKEND_URL;
 export const DB_NAME = process.env.DB_NAME;
 export const DB_PASSWORD = process.env.DB_PASSWORD;
 export const DB_URL = process.env.DB_URL;
+/** Mongoose autoIndex/autoCreate. Off unless explicitly "true"; use scripts/ensure-indexes.js instead. */
+export const MONGO_AUTO_INDEX = String(process.env.MONGO_AUTO_INDEX || '').toLowerCase() === 'true';
 
 // Third Party API & Keys
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY;

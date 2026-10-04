@@ -4,10 +4,13 @@
  * Uses MONGODB_URI/DB_URL, OPENAI_API_KEY, and optionally KNOWLEDGE_BASE_VECTOR_INDEX from .env.local / .env
  */
 import '../src/config/load-env.js';
+import { assertSafeDatabase } from '../src/config/env-guards.js';
 import mongoose from 'mongoose';
 import { KnowledgeBase } from '../src/model/knowledge-base.model.js';
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../src/config/index.js';
 import openai from '../src/lib/openai.js';
+
+assertSafeDatabase();
 
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DB_URL;
 const SAMPLE_QUERY = 'how to make a strong hook for TikTok';

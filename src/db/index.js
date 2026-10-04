@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import debug from 'debug';
-import { DB_URL, IS_LAMBDA, NODE_ENV, DB_NAME } from '../config/index.js';
+import { DB_URL, IS_LAMBDA, NODE_ENV, DB_NAME, MONGO_AUTO_INDEX } from '../config/index.js';
+import { assertSafeDatabase } from '../config/env-guards.js';
 import { CONNECTION_TIMEOUT, MAX_RETRIES,RETRY_DELAY } from '../constants.js';
 const dbDebug = debug('app:database');
 
@@ -10,7 +11,9 @@ const connectionOptions = {
   maxPoolSize: 10, // Reduced for serverless
   minPoolSize: 1, // Reduced for serverless
   // Serverless optimizations
-  autoIndex: NODE_ENV === 'development', // Only enable in development
+  // Index/collection creation is explicit (scripts/ensure-indexes.js) unless MONGO_AUTO_INDEX=true.
+  autoIndex: MONGO_AUTO_INDEX,
+  autoCreate: MONGO_AUTO_INDEX,
   // Serverless-specific options
   connectTimeoutMS: CONNECTION_TIMEOUT,
   retryWrites: true,
@@ -57,6 +60,8 @@ class DatabaseConnection {
   }
 
   async connectWithRetry() {
+    assertSafeDatabase();
+
     // Return cached connection if available and connected
     if (cachedConnection && mongoose.connection.readyState === 1) {
       dbDebug('Using cached database connection');

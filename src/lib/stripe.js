@@ -1,5 +1,8 @@
 import Stripe from 'stripe';
 import { STRIPE_SECRET_KEY } from '../config/index.js';
+import { assertSafeStripeKey } from '../config/env-guards.js';
+
+assertSafeStripeKey();
 
 if (!STRIPE_SECRET_KEY) {
     console.warn('STRIPE_SECRET_KEY is not defined in environment variables. Stripe functionality will be disabled.');
