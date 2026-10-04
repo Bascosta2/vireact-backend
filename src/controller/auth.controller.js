@@ -17,6 +17,9 @@ import passport from "../lib/passport.js";
 import { FRONTEND_URL, NODE_ENV } from "../config/index.js";
 import { getSafeOAuthRedirectUrl } from "../utils/oauth-redirect.js";
 import { isValidAdminKey } from "../middleware/adminAuth.js";
+import { sanitizeAttribution, attributionEventProperties } from "../utils/attribution.js";
+import { captureServerEvent } from "../lib/analytics.js";
+import { storeFirstTouchAttribution } from "../service/attribution.service.js";
 
 // Helper function to get user-friendly provider names
 const getProviderDisplayName = (provider) => {
@@ -47,12 +50,19 @@ export const signupUser = async (req, res, next) => {
             throw new ApiError(400, "All fields are required.")
         }
 
+        const attribution = sanitizeAttribution(req.body.attribution);
         const user = await customSignupUserService(
             name,
             email,
             password,
-            provider
+            provider,
+            attribution
         )
+
+        captureServerEvent(user._id, 'user_signed_up', {
+            method: 'email',
+            ...attributionEventProperties(attribution)
+        });
 
         res.status(201).json(
             ApiResponse.success(
@@ -427,6 +437,22 @@ export const refreshToken = async (req, res, next) => {
                     }
                 )
             );
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /auth/attribution - set-once first-touch attribution for users who did
+// not sign up through the email form (e.g. Google OAuth). Admins are ignored.
+export const saveAttribution = async (req, res, next) => {
+    try {
+        if (!req.user || !req.user._id) {
+            throw new ApiError(401, "Authentication required");
+        }
+        const stored = await storeFirstTouchAttribution(req.user._id, req.body?.attribution);
+        res.status(200).json(
+            ApiResponse.success(200, stored ? "Attribution stored" : "Attribution unchanged", { stored })
+        );
     } catch (error) {
         next(error);
     }

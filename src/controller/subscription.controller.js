@@ -13,6 +13,7 @@ import { PLAN_LIMITS, LIFETIME_FREE_VIDEO_LIMIT } from '../constants.js';
 import { User } from '../model/user.model.js';
 import stripe from '../lib/stripe.js';
 import { STRIPE_WEBHOOK_SECRET } from '../config/index.js';
+import { captureServerEvent } from '../lib/analytics.js';
 
 // GET /subscription
 // Returns { subscription, limits }.
@@ -59,6 +60,7 @@ export const createCheckoutSession = async (req, res, next) => {
         }
 
         const { url, sessionId } = await createCheckoutSessionService(userId, userEmail, plan);
+        captureServerEvent(userId, 'checkout_started', { plan, source: 'server' });
 
         res.status(200).json(
             ApiResponse.success(

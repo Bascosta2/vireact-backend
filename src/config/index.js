@@ -20,6 +20,8 @@ export const MONGO_AUTO_INDEX = String(process.env.MONGO_AUTO_INDEX || '').toLow
 // Third Party API & Keys
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 export const RESEND_API_KEY = process.env.RESEND_API_KEY;
+export const POSTHOG_KEY = process.env.POSTHOG_KEY;
+export const POSTHOG_HOST = process.env.POSTHOG_HOST || 'https://us.i.posthog.com';
 export const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
 export const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 export const AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME;

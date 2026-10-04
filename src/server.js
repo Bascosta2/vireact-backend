@@ -9,6 +9,7 @@ try {
 const { default: app } = await import('./app.js');
 import { PORT, NODE_ENV, FRONTEND_URL, BACKEND_URL, DB_URL, JWT_SECRET, ACCESS_TOKEN_SECRET, SESSION_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URL, STRIPE_SECRET_KEY, STRIPE_PRICE_ID_PREMIUM, STRIPE_PRICE_ID_PRO, TWELVE_LABS_API_KEY, TWELVELABS_USER_INDEX, TWELVELABS_DATASET_INDEX, OPENAI_API_KEY, RESEND_API_KEY, UPSTASH_REDIS_REST_URL, QSTASH_TOKEN, QSTASH_URL, QSTASH_CURRENT_SIGNING_KEY, QSTASH_NEXT_SIGNING_KEY, AWS_ACCESS_KEY_ID } from './config/index.js';
 import { connectDB, isConnected } from './db/index.js';
+import { isServerAnalyticsEnabled, shutdownAnalytics } from './lib/analytics.js';
 
 const startServer = async () => {
   try {
@@ -36,6 +37,7 @@ const startServer = async () => {
     console.log(`   Redis: ${UPSTASH_REDIS_REST_URL ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   QStash: ${QSTASH_TOKEN ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   AWS S3: ${AWS_ACCESS_KEY_ID ? '✅ Configured' : '⚠️ Not configured (optional)'}`);
+    console.log(`   PostHog: ${isServerAnalyticsEnabled() ? '✅ Configured' : '⚠️ Not configured (server events disabled)'}`);
     console.log('───────────────────────────────────────────────────────────\n');
 
     if (NODE_ENV === 'production') {
@@ -140,5 +142,13 @@ const startServer = async () => {
     process.exit(1);
   }
 }
+
+const flushAndExit = async (signal) => {
+  console.log(`\n${signal} received, flushing analytics before exit...`);
+  await Promise.race([shutdownAnalytics(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+  process.exit(0);
+};
+process.once('SIGTERM', () => flushAndExit('SIGTERM'));
+process.once('SIGINT', () => flushAndExit('SIGINT'));
 
 startServer();

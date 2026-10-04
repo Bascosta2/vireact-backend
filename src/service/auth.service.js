@@ -104,7 +104,8 @@ export const customSignupUserService = async (
     name,
     email,
     password,
-    provider
+    provider,
+    attribution = null
 ) => {
     try {
         const existingUser = await User.findOne({ email });
@@ -134,7 +135,8 @@ export const customSignupUserService = async (
             password,
             provider,
             emailVerificationToken: token,
-            isEmailVerified
+            isEmailVerified,
+            ...(attribution ? { attribution } : {})
         });
 
         const savedUser = await user.save();

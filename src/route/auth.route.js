@@ -10,7 +10,8 @@ import {
     googleCallback,
     googleAuthFailure,
     refreshToken,
-    getMe
+    getMe,
+    saveAttribution
 } from '../controller/auth.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -30,6 +31,7 @@ authRoutes.post('/resend-verification', resendEmailVerification);
 
 // Session identity echo for OAuth hydration (cookie- or Bearer-authenticated).
 authRoutes.get('/me', authenticateToken, getMe);
+authRoutes.post('/attribution', authenticateToken, saveAttribution);
 
 // Google OAuth routes
 authRoutes.get('/google', googleAuth);

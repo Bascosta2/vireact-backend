@@ -75,6 +75,21 @@ const userSchema = new mongoose.Schema({
         type: Number,
         default: 0,
         min: 0
+    },
+    // First-touch marketing attribution, written once (signup body or
+    // POST /auth/attribution) and never overwritten. See utils/attribution.js.
+    attribution: {
+        type: new mongoose.Schema({
+            utm_source: String,
+            utm_medium: String,
+            utm_campaign: String,
+            utm_term: String,
+            utm_content: String,
+            referrer: String,
+            landing_path: String,
+            captured_at: Date
+        }, { _id: false }),
+        default: undefined
     }
 }, { timestamps: true });
 
