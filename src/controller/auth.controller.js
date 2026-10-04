@@ -16,6 +16,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import passport from "../lib/passport.js";
 import { FRONTEND_URL, NODE_ENV } from "../config/index.js";
 import { getSafeOAuthRedirectUrl } from "../utils/oauth-redirect.js";
+import { isValidAdminKey } from "../middleware/adminAuth.js";
 
 // Helper function to get user-friendly provider names
 const getProviderDisplayName = (provider) => {
@@ -163,20 +164,20 @@ export const loginAdmin = async (req, res, next) => {
 
         const loggedInAdmin = await Admin
             .findById(admin._id)
-            .select("-password")
+            .select("-password -refreshToken")
             .lean()
 
         res.clearCookie("accessToken", COOKIE_OPTIONS)
         res.clearCookie("refreshToken", COOKIE_OPTIONS)
 
+        // Same contract as loginUser: the refresh token only travels in the HttpOnly cookie.
         res.status(200)
             .cookie("accessToken", accessToken, COOKIE_OPTIONS)
             .cookie("refreshToken", refreshToken, { ...COOKIE_OPTIONS, maxAge: 30 * 24 * 60 * 60 * 1000 }) // 30 days
             .json({
                 message: "Login Successful",
                 admin: loggedInAdmin,
-                accessToken,
-                refreshToken
+                accessToken
             });
     }
     catch (error) {
@@ -210,6 +211,10 @@ export const signup = async (req, res, next) => {
         const { role } = req.body;
 
         if (role === ROLES.ADMIN) {
+            // Admin accounts can only be created by a caller holding ADMIN_API_KEY.
+            if (!isValidAdminKey(req.headers['x-admin-key'])) {
+                throw new ApiError(403, "Admin signup is not allowed.");
+            }
             await signupAdmin(req, res, next);
         }
         else if (role === ROLES.USER) {

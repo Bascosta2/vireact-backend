@@ -6,6 +6,7 @@ import crypto from "crypto"
 import resend from "../lib/resend.js";
 import { OAUTH_PROVIDERS } from "../constants.js";
 import jwt from "jsonwebtoken";
+import { hashRefreshToken, refreshTokenMatches } from "../utils/refresh-token-hash.js";
 
 // Helper function to get user-friendly provider names
 const getProviderDisplayName = (provider) => {
@@ -35,8 +36,8 @@ export const generateAccessToken = async (
         const accessToken = user.generateAccessToken();
         const refreshToken = user.generateRefreshToken();
         
-        // Store refresh token in database
-        user.refreshToken = refreshToken;
+        // Only the hash is persisted; the raw token lives in the HttpOnly cookie.
+        user.refreshToken = hashRefreshToken(refreshToken);
         await user.save({ validateBeforeSave: false });
 
         return { accessToken, refreshToken };
@@ -313,8 +314,8 @@ export const refreshTokenService = async (refreshToken) => {
             throw new ApiError(401, "Invalid refresh token - user not found");
         }
 
-        // Check if the stored refresh token matches
-        if (user.refreshToken !== refreshToken) {
+        // Check the stored hash (or a legacy plaintext token) against the presented token
+        if (!refreshTokenMatches(user.refreshToken, refreshToken)) {
             throw new ApiError(401, "Invalid refresh token");
         }
 
@@ -322,12 +323,13 @@ export const refreshTokenService = async (refreshToken) => {
         const newAccessToken = user.generateAccessToken();
         const newRefreshToken = user.generateRefreshToken();
         
-        // Update refresh token in database
-        user.refreshToken = newRefreshToken;
+        // Rotate: persist only the hash of the new refresh token
+        user.refreshToken = hashRefreshToken(newRefreshToken);
         await user.save({ validateBeforeSave: false });
 
         return { accessToken: newAccessToken, refreshToken: newRefreshToken };
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         if (error.name === 'JsonWebTokenError') {
             throw new ApiError(401, 'Invalid refresh token');
         } else if (error.name === 'TokenExpiredError') {

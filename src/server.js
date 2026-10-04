@@ -62,6 +62,7 @@ const startServer = async () => {
       if (!RESEND_API_KEY) prodWarnings.push('RESEND_API_KEY');
       if (!STRIPE_PRICE_ID_PREMIUM) prodWarnings.push('STRIPE_PRICE_ID_PREMIUM');
       if (!STRIPE_PRICE_ID_PRO) prodWarnings.push('STRIPE_PRICE_ID_PRO');
+      if (!process.env.REFRESH_TOKEN_PEPPER) prodWarnings.push('REFRESH_TOKEN_PEPPER (refresh tokens stored as unpeppered SHA-256)');
       if (prodWarnings.length > 0) {
         console.warn(
           '⚠️  PRODUCTION WARNING: Recommended env vars missing (app may misbehave):',
