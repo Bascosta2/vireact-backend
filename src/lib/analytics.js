@@ -30,6 +30,9 @@ export const captureServerEvent = (distinctId, event, properties = {}) => {
     }
 };
 
+/** Plan name for captureServerEvent: capture(distinctId, event, props). */
+export const capture = captureServerEvent;
+
 export const shutdownAnalytics = async () => {
     if (!client) return;
     try {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidAdminKey, adminAuth } from '../src/middleware/adminAuth.js';
+import { isValidAdminKey, adminAuth, ADMIN_RATE_LIMIT } from '../src/middleware/adminAuth.js';
 import { signup } from '../src/controller/auth.controller.js';
 import { fakeRes } from './helpers/test-db.js';
 
@@ -36,20 +36,27 @@ test('adminAuth middleware rejects a missing or wrong key with 401', () => {
     }
 });
 
-test('POST /auth/signup with role=admin is refused without a valid admin key', async () => {
+test('POST /auth/signup with role=admin returns 404, even with a valid admin key', async () => {
     const prev = process.env.ADMIN_API_KEY;
     process.env.ADMIN_API_KEY = KEY;
     try {
-        for (const headers of [{}, { 'x-admin-key': 'wrong' }]) {
+        for (const headers of [{}, { 'x-admin-key': 'wrong' }, { 'x-admin-key': KEY }]) {
             let err;
+            const res = fakeRes();
             await signup(
-                { body: { role: 'admin', name: 'x', email: 'x@example.com', password: 'pw-123456' }, headers },
-                fakeRes(),
+                { body: { role: 'admin', name: 'x', email: 'x@example.invalid', password: 'pw-123456' }, headers },
+                res,
                 (e) => { err = e; }
             );
-            assert.equal(err?.statusCode, 403);
+            assert.equal(err?.statusCode, 404);
+            assert.equal(res.body, undefined);
         }
     } finally {
         process.env.ADMIN_API_KEY = prev;
     }
+});
+
+test('admin routes are rate limited to 30 requests per minute per IP', () => {
+    assert.equal(ADMIN_RATE_LIMIT.windowMs, 60 * 1000);
+    assert.equal(ADMIN_RATE_LIMIT.max, 30);
 });

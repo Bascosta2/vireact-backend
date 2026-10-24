@@ -1,4 +1,5 @@
 export const ATTRIBUTION_FIELDS = [
+    'ref',
     'utm_source',
     'utm_medium',
     'utm_campaign',

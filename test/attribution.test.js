@@ -17,6 +17,12 @@ test('keeps only whitelisted string fields', () => {
     assert.ok(result.captured_at instanceof Date);
 });
 
+test('keeps the ref parameter', () => {
+    const result = sanitizeAttribution({ ref: 'library' });
+    assert.equal(result.ref, 'library');
+    assert.deepEqual(attributionEventProperties(result), { ref: 'library' });
+});
+
 test('returns null for empty, non-object, or array input', () => {
     assert.equal(sanitizeAttribution(null), null);
     assert.equal(sanitizeAttribution('utm_source=x'), null);

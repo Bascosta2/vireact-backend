@@ -1,4 +1,15 @@
 import crypto from 'node:crypto';
+import rateLimit from 'express-rate-limit';
+
+export const ADMIN_RATE_LIMIT = Object.freeze({ windowMs: 60 * 1000, max: 30 });
+
+/** Per-IP limit for /api/v1/admin/* (default key generator is IPv6-safe). Applied before key checks. */
+export const adminRateLimit = rateLimit({
+    ...ADMIN_RATE_LIMIT,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many admin requests, please try again later' },
+});
 
 /** Constant-time check of a presented admin key against ADMIN_API_KEY. False when either is empty. */
 export function isValidAdminKey(rawKey, expected = (process.env.ADMIN_API_KEY || '').trim()) {

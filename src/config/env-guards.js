@@ -60,6 +60,13 @@ export function assertSafeStripeKey(env = process.env) {
     }
 }
 
+/** Loggable host fragment: first 4 characters of the first label only, e.g. "clus***". */
+export function redactHost(host) {
+    if (!host || typeof host !== 'string') return 'unknown';
+    const label = host.split('.')[0] || '';
+    return `${label.slice(0, 4)}***`;
+}
+
 export function runStartupGuards(env = process.env) {
     assertSafeDatabase(env);
     assertSafeStripeKey(env);

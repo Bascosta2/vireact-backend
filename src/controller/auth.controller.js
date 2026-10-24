@@ -1,6 +1,5 @@
 import {
     generateAccessToken,
-    signupAdminService,
     loginAdminService,
     loginUserService,
     customSignupUserService,
@@ -16,7 +15,6 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import passport from "../lib/passport.js";
 import { FRONTEND_URL, NODE_ENV } from "../config/index.js";
 import { getSafeOAuthRedirectUrl } from "../utils/oauth-redirect.js";
-import { isValidAdminKey } from "../middleware/adminAuth.js";
 import { sanitizeAttribution, attributionEventProperties } from "../utils/attribution.js";
 import { captureServerEvent } from "../lib/analytics.js";
 import { storeFirstTouchAttribution } from "../service/attribution.service.js";
@@ -142,28 +140,6 @@ export const loginUser = async (req, res, next) => {
 };
 
 
-// Signup Admin
-export const signupAdmin = async (req, res, next) => {
-    try {
-        const { name, email, password } = req.body;
-
-        if (!name || !email || !password) {
-            throw new ApiError(400, "All fields are required.")
-        }
-
-        const admin = await signupAdminService(name, email, password)
-
-        res.status(201).json({
-            message: "Admin Created Successfully",
-            id: admin._id.toString()
-        });
-
-    } catch (error) {
-        next(error)
-    }
-};
-
-
 // Login Controller
 export const loginAdmin = async (req, res, next) => {
     try {
@@ -221,11 +197,8 @@ export const signup = async (req, res, next) => {
         const { role } = req.body;
 
         if (role === ROLES.ADMIN) {
-            // Admin accounts can only be created by a caller holding ADMIN_API_KEY.
-            if (!isValidAdminKey(req.headers['x-admin-key'])) {
-                throw new ApiError(403, "Admin signup is not allowed.");
-            }
-            await signupAdmin(req, res, next);
+            // There is no public admin signup; operators use scripts/create-admin.js.
+            throw new ApiError(404, "Not found");
         }
         else if (role === ROLES.USER) {
             await signupUser(req, res, next);

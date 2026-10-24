@@ -80,6 +80,7 @@ const userSchema = new mongoose.Schema({
     // POST /auth/attribution) and never overwritten. See utils/attribution.js.
     attribution: {
         type: new mongoose.Schema({
+            ref: String,
             utm_source: String,
             utm_medium: String,
             utm_campaign: String,

@@ -26,6 +26,7 @@ import profileRoutes from './route/profile.route.js';
 import subscriptionRoutes from './route/subscription.route.js';
 import subscribeRoutes from './route/subscribe.route.js';
 import adminRoutes from './route/admin.routes.js';
+import { adminRateLimit } from './middleware/adminAuth.js';
 import { verifyQStashAndParseBody } from './middleware/qstash-verify.js';
 import { processVideoAnalysis } from './controller/video.controller.js';
 
@@ -227,7 +228,7 @@ app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
-app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/admin', adminRateLimit, adminRoutes);
 
 // /api/subscribe — Mailchimp lead-gen endpoint for the /viral-hooks PDF funnel.
 // Lives outside /api/v1 because it's a public, lightweight endpoint with no

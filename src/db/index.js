@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import debug from 'debug';
 import { DB_URL, IS_LAMBDA, NODE_ENV, DB_NAME, MONGO_AUTO_INDEX } from '../config/index.js';
-import { assertSafeDatabase } from '../config/env-guards.js';
+import { assertSafeDatabase, redactHost } from '../config/env-guards.js';
 import { CONNECTION_TIMEOUT, MAX_RETRIES,RETRY_DELAY } from '../constants.js';
 const dbDebug = debug('app:database');
 
@@ -11,9 +11,9 @@ const connectionOptions = {
   maxPoolSize: 10, // Reduced for serverless
   minPoolSize: 1, // Reduced for serverless
   // Serverless optimizations
-  // Index/collection creation is explicit (scripts/ensure-indexes.js) unless MONGO_AUTO_INDEX=true.
-  autoIndex: MONGO_AUTO_INDEX,
-  autoCreate: MONGO_AUTO_INDEX,
+  // Outside production, index/collection creation is explicit (scripts/ensure-indexes.js) unless MONGO_AUTO_INDEX=true.
+  autoIndex: NODE_ENV === 'production' || MONGO_AUTO_INDEX,
+  autoCreate: NODE_ENV === 'production' || MONGO_AUTO_INDEX,
   // Serverless-specific options
   connectTimeoutMS: CONNECTION_TIMEOUT,
   retryWrites: true,
@@ -35,7 +35,7 @@ class DatabaseConnection {
     mongoose.connection.on('connected', () => {
       const dbName = mongoose.connection.db?.databaseName || 'unknown';
       console.log(`✅ [MONGODB] Connected to database: ${dbName}`);
-      console.log(`   Host: ${mongoose.connection.host || 'unknown'}`);
+      console.log(`   Host: ${redactHost(mongoose.connection.host)}`);
       dbDebug('Mongoose connected to MongoDB');
     });
 
@@ -89,7 +89,7 @@ class DatabaseConnection {
       await mongoose.connect(mongoURI, connectionOptions);
       const dbName = mongoose.connection.db?.databaseName || 'unknown';
       console.log(`✅ [MONGODB] Connected successfully to database: ${dbName}`);
-      console.log(`   Host: ${mongoose.connection.host || 'unknown'}`);
+      console.log(`   Host: ${redactHost(mongoose.connection.host)}`);
       dbDebug('MongoDB connected successfully');
       this.retryCount = 0;
       this.isConnecting = false;

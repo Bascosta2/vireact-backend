@@ -5,6 +5,7 @@ import {
     assertSafeDatabase,
     assertSafeStripeKey,
     databaseNameFromUri,
+    redactHost,
 } from '../src/config/env-guards.js';
 
 const SRV = 'mongodb+srv://fixture-user:fixture-pass@cluster0.example.invalid';
@@ -15,6 +16,11 @@ test('databaseNameFromUri reads the path database', () => {
     assert.equal(databaseNameFromUri(`${SRV}/?retryWrites=true`), null);
     assert.equal(databaseNameFromUri(SRV), null);
     assert.equal(databaseNameFromUri(undefined), null);
+});
+
+test('redactHost logs only a short fragment of the first host label', () => {
+    assert.equal(redactHost('cluster0-shard-00-01.abcde.mongodb.net'), 'clus***');
+    assert.equal(redactHost(undefined), 'unknown');
 });
 
 test('DB guard blocks the production database name outside production', () => {
