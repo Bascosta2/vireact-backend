@@ -18,6 +18,34 @@ import { getSafeOAuthRedirectUrl } from "../utils/oauth-redirect.js";
 import { sanitizeAttribution, attributionEventProperties } from "../utils/attribution.js";
 import { captureServerEvent } from "../lib/analytics.js";
 import { storeFirstTouchAttribution } from "../service/attribution.service.js";
+import { isFunnelV2Enabled } from "../config/flags.js";
+import { isSessionId, linkFunnelSession } from "../service/funnel.service.js";
+import { resolveAccess, computePostAuthPath } from "../service/access.service.js";
+import { Video } from "../model/video.model.js";
+
+const MAX_OAUTH_ATTR_LENGTH = 2048;
+const NEW_GOOGLE_USER_WINDOW_MS = 2 * 60 * 1000;
+
+/** Links a quiz session when the funnel is on. Never fails the auth request. */
+const linkFunnelSafely = async (userId, sessionId) => {
+    if (!isFunnelV2Enabled() || !isSessionId(sessionId)) return { linked: false };
+    try {
+        return await linkFunnelSession(userId, sessionId);
+    } catch (error) {
+        console.error('[funnel] session link failed:', error.message);
+        return { linked: false };
+    }
+};
+
+/** `attr` on /auth/google is base64url JSON of the client's first-touch attribution. */
+const decodeOAuthAttribution = (raw) => {
+    if (typeof raw !== 'string' || !raw || raw.length > MAX_OAUTH_ATTR_LENGTH) return null;
+    try {
+        return sanitizeAttribution(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')));
+    } catch {
+        return null;
+    }
+};
 
 // Helper function to get user-friendly provider names
 const getProviderDisplayName = (provider) => {
@@ -61,6 +89,7 @@ export const signupUser = async (req, res, next) => {
             method: 'email',
             ...attributionEventProperties(attribution)
         });
+        await linkFunnelSafely(user._id, req.body.funnelSessionId);
 
         res.status(201).json(
             ApiResponse.success(
@@ -93,6 +122,7 @@ export const loginUser = async (req, res, next) => {
         }
 
         const user = await loginUserService(email, password);
+        await linkFunnelSafely(user._id, req.body.funnelSessionId);
 
         const { accessToken, refreshToken } = await generateAccessToken(user._id, User, "User");
 
@@ -318,6 +348,14 @@ export const googleAuth = (req, res, next) => {
                 req.session.redirectUrl = safe;
             }
         }
+        // Funnel context rides in the server session; OAuth `state` stays CSRF-only.
+        if (isFunnelV2Enabled()) {
+            const funnel = {};
+            if (isSessionId(req.query.fs)) funnel.sessionId = req.query.fs;
+            const attribution = decodeOAuthAttribution(req.query.attr);
+            if (attribution) funnel.attribution = attribution;
+            if (Object.keys(funnel).length) req.session.funnel = funnel;
+        }
 
         passport.authenticate('google', {
             scope: ['profile', 'email'],
@@ -370,9 +408,32 @@ export const googleCallback = async (req, res, next) => {
             const defaultRedirect = `${FRONTEND_URL}/auth/google/callback`;
             const fromSession = req.session.redirectUrl;
             delete req.session.redirectUrl;
-            const redirectUrl = getSafeOAuthRedirectUrl(fromSession) || defaultRedirect;
+            const funnel = req.session.funnel;
+            delete req.session.funnel;
+            const target = new URL(getSafeOAuthRedirectUrl(fromSession) || defaultRedirect);
+            target.searchParams.set('auth', 'success');
 
-            res.redirect(`${redirectUrl}?auth=success`);
+            const isNewUser = loggedInUser?.createdAt
+                && Date.now() - new Date(loggedInUser.createdAt).getTime() < NEW_GOOGLE_USER_WINDOW_MS;
+            if (isNewUser) {
+                target.searchParams.set('new', '1');
+                captureServerEvent(user._id, 'user_signed_up', {
+                    method: 'google',
+                    ...attributionEventProperties(funnel?.attribution)
+                });
+            }
+
+            if (isFunnelV2Enabled()) {
+                if (funnel?.attribution) await storeFirstTouchAttribution(user._id, funnel.attribution);
+                const link = await linkFunnelSafely(user._id, funnel?.sessionId);
+                if (link.linked) {
+                    const { state } = await resolveAccess(loggedInUser);
+                    const hasUploaded = Boolean(await Video.exists({ uploader_id: user._id }));
+                    target.searchParams.set('next', computePostAuthPath(state, { hasUploaded }));
+                }
+            }
+
+            res.redirect(target.toString());
         })(req, res, next);
     } catch (error) {
         next(error);
@@ -439,8 +500,18 @@ export const getMe = async (req, res, next) => {
         if (!req.user || !req.user._id) {
             throw new ApiError(401, "Authentication required");
         }
+        const data = { user: req.user };
+        if (req.user.role === ROLES.USER) {
+            const [{ state, entitled }, uploaded] = await Promise.all([
+                resolveAccess(req.user),
+                Video.exists({ uploader_id: req.user._id }),
+            ]);
+            const hasUploaded = Boolean(uploaded);
+            data.access = { state, entitled };
+            data.onboarding = { hasUploaded, nextPath: computePostAuthPath(state, { hasUploaded }) };
+        }
         res.status(200).json(
-            ApiResponse.success(200, "Authenticated", { user: req.user })
+            ApiResponse.success(200, "Authenticated", data)
         );
     } catch (error) {
         next(error);

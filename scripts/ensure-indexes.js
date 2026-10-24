@@ -21,8 +21,14 @@ import { Subscription } from '../src/model/subscription.model.js';
 import { StripeWebhookEvent } from '../src/model/stripe-webhook-event.model.js';
 import { EarlyAccess } from '../src/model/early-access.model.js';
 import { VideoPerformanceDataset } from '../src/model/VideoPerformanceDataset.model.js';
+import { LibraryItem } from '../src/model/library-item.model.js';
+import { FunnelSession } from '../src/model/funnel-session.model.js';
+import { RewriteUsage } from '../src/model/rewrite-usage.model.js';
 
-const MODELS = [User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset];
+const MODELS = [
+    User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
+    LibraryItem, FunnelSession, RewriteUsage,
+];
 
 const apply = process.argv.includes('--apply');
 

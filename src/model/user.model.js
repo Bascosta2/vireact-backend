@@ -91,6 +91,22 @@ const userSchema = new mongoose.Schema({
             captured_at: Date
         }, { _id: false }),
         default: undefined
+    },
+    // Funnel V2: first quiz session linked to this account (first wins) and the
+    // answers copied from it. See service/funnel.service.js linkFunnelSession.
+    funnelSessionId: {
+        type: String,
+        default: undefined
+    },
+    onboarding: {
+        type: new mongoose.Schema({
+            answers: { type: mongoose.Schema.Types.Mixed },
+            segment: String,
+            highIntent: Boolean,
+            recommendedPlan: String,
+            linkedAt: Date
+        }, { _id: false }),
+        default: undefined
     }
 }, { timestamps: true });
 
