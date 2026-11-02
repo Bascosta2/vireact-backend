@@ -1,0 +1,31 @@
+* text=auto eol=lf
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.bmp binary
+
+# Fonts
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+
+# Video and audio
+*.mp4 binary
+*.mov binary
+*.webm binary
+*.avi binary
+*.mkv binary
+*.mp3 binary
+*.wav binary
+
+# Other binaries
+*.pdf binary
+*.zip binary
