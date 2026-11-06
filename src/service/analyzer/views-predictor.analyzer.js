@@ -8,7 +8,7 @@ const JSON_SYSTEM = [
 ].join('\n\n');
 
 const RETENTION_CONTEXT = `RETENTION AND DURATION CONTEXT:
-- Retention rate CAN exceed 100% on short-form videos (typically under 20 seconds). This happens when viewers replay the video, which is a strong positive engagement signal — not a data error.
+- Retention rate CAN exceed 100% on short-form videos (typically under 20 seconds). This happens when viewers replay the video, which is a strong positive engagement signal, not a data error.
 - A 13-second video with 180% retention means viewers watched it an average of 1.8 times. This is extremely positive and correlates strongly with viral performance.
 - When retention exceeds 100%, weight it heavily as a virality indicator. A video under 15 seconds with retention over 120% should be treated as having near-perfect hook and loop-ability.
 - For creator videos where retention data is not available, infer retention likelihood from: scene pacing (fast cuts under 2s correlate with higher retention), hook strength (first scene emotional tone and primary action), video duration (shorter videos statistically retain better), audio continuity (consistent audio across scenes correlates with completion), and visual variety (low scene repetition correlates with higher retention).
@@ -17,7 +17,7 @@ const RETENTION_CONTEXT = `RETENTION AND DURATION CONTEXT:
 
 /**
  * Views prediction. Returns view bands plus the specific moments that cap them.
- * Emits `frameFeedback` only — script rewrites belong to the hook/pacing analyzers.
+ * Emits `frameFeedback` only, script rewrites belong to the hook/pacing analyzers.
  *
  * @param {object[]} scenes
  * @param {{ rawTranscript?: object[], duration?: number, videoId?: string }} [context]
@@ -72,9 +72,9 @@ export const analyzeViewsPredictor = async (scenes, context = {}) => {
         videoId,
         maxTokens: 3000,
         buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
-You are an expert psychological content reviewer trained on Bas's mindset and views prediction analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
+You are a strict short-form video editor reviewing one creator's video. You give exact, timestamped instructions, never general tips.
 
-BAS'S VIEWS PREDICTION INSIGHTS AND EXAMPLES:
+REFERENCE NOTES (your private playbook. Apply them; never mention them, their author or that they exist):
 ${ragContext}
 
 Predict the view potential of this short-form social media video based on key performance indicators.
@@ -107,12 +107,18 @@ ${scenesBlock}
 
 ${RETENTION_CONTEXT}
 
+VIEW BASE RATES (use these, not the reference notes, to size the numbers):
+- Most short-form posts from typical creators get under 1,000 views. A median post sits in the low hundreds.
+- 10,000+ views is uncommon (roughly the top 10% of posts). 100,000+ is rare (well under 1%).
+- The reference notes come mostly from videos that already went viral. They show what works, not what is typical. Never size a band from them.
+- Only predict above 10,000 expected views when the hook, pacing and payoff are all clearly strong. When in doubt, go lower.
+
 TASK:
-1. Rate view potential as low, medium, or high (tier).
-2. Estimate view bands in whole numbers (e.g. 50000 for 50K): conservative (low end of realistic range), expected (most likely), optimistic (high end if everything goes well).
+1. Rate view potential as low, medium, or high (tier). Most videos are low. Use high only for a clearly exceptional video.
+2. Estimate view bands in whole numbers (e.g. 800, not "800 views"): conservative (low end of a realistic range), expected (most likely), optimistic (high end if everything goes well). Size them from the base rates above.
 3. Set confidence 0-1 for the prediction.
-4. Provide reasoning (1-2 sentences) and up to two suggestions naming concrete changes that would move the band.
-5. frameFeedback: the specific moments that most constrain the predicted band, each at its exact range with a literal fix and an expectedImpact stated as a view-band or retention delta grounded in the retrieved insights. Return an empty array only when no single moment is limiting the band.
+4. reasoning: one or two short sentences naming the seconds that cap the views and why. suggestions: exactly two complete instructions, each starting with the time range and stating the exact change (words, on-screen text or cut). No generic tips.
+5. frameFeedback: the specific moments that most constrain the predicted band, each at its exact range with a literal fix and an expectedImpact written as a plain outcome (e.g. "more viewers reach the reveal at 0:06"). Return an empty array only when no single moment is limiting the band.
 `,
     });
 };

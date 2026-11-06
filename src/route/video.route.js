@@ -10,7 +10,9 @@ import {
     uploadVideoUrlToTwelveLabs,
     getVideoFeedback,
     getVideoStatus,
-    getVideoById
+    getVideoById,
+    getScriptSuggestions,
+    createScriptSuggestions
 } from '../controller/video.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { uploadSingle } from '../middleware/fileUpload.js';
@@ -45,6 +47,10 @@ videoRoutes.get('/:videoId/status', getVideoStatus);
 
 // Get timestamp-specific video feedback
 videoRoutes.get('/:videoId/feedback', getVideoFeedback);
+
+// Scripts tab: cached alternative scripts, generated on demand
+videoRoutes.get('/:videoId/scripts', getScriptSuggestions);
+videoRoutes.post('/:videoId/scripts', createScriptSuggestions);
 
 // Get single video with analysis DTO (slash-doc shape)
 videoRoutes.get('/:videoId', getVideoById);

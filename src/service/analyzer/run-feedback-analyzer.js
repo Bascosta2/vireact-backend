@@ -14,6 +14,7 @@ import { buildTranscriptBlock, transcriptToPlainText } from '../transcript.servi
 import { retrieveKnowledge, formatKnowledgeContext } from './retrieve-knowledge.js';
 import { normalizeFrameFeedback, normalizeScriptRewrite } from './feedback-schema.js';
 import { runValidatedStructuredCompletion } from './validated-completion.js';
+import { VOICE_RULES, CALIBRATION_RULES, cleanUserFacing, retimeForDuration } from './voice.js';
 
 /** Scene context block shared by all analyzers. */
 export const buildScenesBlock = (scenes) => {
@@ -38,12 +39,16 @@ export const buildScenesBlock = (scenes) => {
 export const SPECIFICITY_CONTRACT = [
     'Every item in frameFeedback and scriptRewrites must satisfy all three rules:',
     '1. TIMESTAMP: cite a real range in seconds taken from the transcript or scene boundaries. Never invent times.',
-    '2. OBSERVED: state what literally happens — quote the spoken words verbatim and give measured facts (e.g. "2.1s of dead air before the value prop"). Adjectives alone are rejected.',
-    '3. FIX: fix.after must be the literal drop-in content the creator uses as-is — the exact new line, the exact overlay text, or an explicit cut range with times. Never "improve X", "tighten Y", "consider Z".',
+    '2. OBSERVED: state what literally happens: quote the spoken words verbatim and give measured facts (e.g. "2.1s of dead air before the value prop"). Adjectives alone are rejected.',
+    '3. FIX: fix.after must be the literal drop-in content the creator uses as-is: the exact new line, the exact overlay text, or an explicit cut range with times. Never "improve X", "tighten Y", "consider Z".',
     '',
     'Banned in fix.after and rewrittenLine: "try to", "consider", "you could", "make it more", "improve your", "be more", placeholders like "[topic]" or "<insert>".',
     'fix.before and originalTranscript must be copied verbatim from the supplied transcript. If the video has no speech, return an empty scriptRewrites array rather than inventing lines.',
     'Return fewer, fully specific items rather than padding the arrays with vague ones.',
+    '',
+    VOICE_RULES,
+    '',
+    CALIBRATION_RULES,
 ].join('\n');
 
 /** Normalize + index ids so every item has a stable per-analyzer id. */
@@ -112,5 +117,6 @@ export const runFeedbackAnalyzer = async ({
         maxTokens,
     });
 
-    return { ...payload, frameFeedback, scriptRewrites };
+    // Safety net: no em dashes, no mentions of the private knowledge base in anything users read.
+    return retimeForDuration(cleanUserFacing({ ...payload, frameFeedback, scriptRewrites }), duration);
 };

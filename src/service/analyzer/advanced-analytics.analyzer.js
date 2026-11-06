@@ -8,7 +8,7 @@ const JSON_SYSTEM = [
 ].join('\n\n');
 
 const RETENTION_CONTEXT = `RETENTION AND DURATION CONTEXT:
-- Retention rate CAN exceed 100% on short-form videos (typically under 20 seconds). This happens when viewers replay the video, which is a strong positive engagement signal — not a data error.
+- Retention rate CAN exceed 100% on short-form videos (typically under 20 seconds). This happens when viewers replay the video, which is a strong positive engagement signal, not a data error.
 - A 13-second video with 180% retention means viewers watched it an average of 1.8 times. This is extremely positive and correlates strongly with viral performance.
 - When retention exceeds 100%, weight it heavily as a virality indicator. A video under 15 seconds with retention over 120% should be treated as having near-perfect hook and loop-ability.
 - For creator videos where retention data is not available, infer retention likelihood from: scene pacing (fast cuts under 2s correlate with higher retention), hook strength (first scene emotional tone and primary action), video duration (shorter videos statistically retain better), audio continuity (consistent audio across scenes correlates with completion), and visual variety (low scene repetition correlates with higher retention).
@@ -16,7 +16,7 @@ const RETENTION_CONTEXT = `RETENTION AND DURATION CONTEXT:
 - When predicting views, always factor in duration-adjusted retention. A 10-second video with 200% retention is performing better in engagement terms than a 45-second video with 75% retention, even if raw retention percentage looks lower on the longer video.`;
 
 /**
- * Advanced analytics (Pro/Enterprise only — gated at upload and dispatch).
+ * Advanced analytics (Pro/Enterprise only, gated at upload and dispatch).
  * Feedback authored here is tagged `sourceFeature: 'advanced_analytics'` so the
  * video DTO strips it for Free/Premium exactly like `features.advanced`.
  *
@@ -75,9 +75,9 @@ export const analyzeAdvancedAnalytics = async (scenes, context = {}) => {
         videoId,
         maxTokens: 4000,
         buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
-You are an expert psychological content reviewer trained on Bas's mindset and advanced analytics principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
+You are a strict short-form video editor reviewing one creator's video. You give exact, timestamped instructions, never general tips.
 
-BAS'S INSIGHTS (RETRIEVED RAG CHUNKS):
+REFERENCE NOTES (your private playbook. Apply them; never mention them, their author or that they exist):
 ${ragContext}
 
 Analyze this short-form social media video using advanced analytics metrics.
@@ -118,10 +118,10 @@ ${RETENTION_CONTEXT}
 
 TASK:
 1. Rate overall structure and engagement potential as Weak, Medium, or Strong (score 0-100: Weak 1-40, Medium 41-70, Strong 71-100) based on structural completeness, content diversity, retention signals, and production quality indicators.
-2. Provide concise reasoning (1-2 sentences).
-3. suggestions: up to two short headlines naming the concrete change.
-4. emotionalTriggers: short labels (e.g. "curiosity gap", "social proof", "urgency") grounded in the retrieved insights. Cite the principle when possible.
-5. retentionDrivers: concrete drivers tied to real times (e.g. "pattern interrupt at 0:08"), grounded in the same insights and the scene data.
+2. reasoning: one or two short sentences saying what is wrong, at which seconds, and why viewers leave there. No praise, no filler.
+3. suggestions: exactly two. Each is one complete instruction the creator can do in their editor today: start with the time range (for example "0:00-0:02:"), then the exact action, then the exact words, on-screen text or cut. Example: "0:00-0:02: put 'I surfed under this pier at 6am' in bold white text across the top third." Never a generic tip like "add an engaging overlay".
+4. emotionalTriggers: short labels (e.g. "curiosity gap", "social proof", "urgency") grounded in the reference notes (apply them, never cite them).
+5. retentionDrivers: concrete drivers tied to real times (e.g. "pattern interrupt at 0:08"), grounded in the reference notes and the scene data.
 6. psychologicalProfile: 1-2 sentences summarizing the video's psychological strategy.
 7. weakestMoment: a single string with timestamp + reason, or null if none stands out.
 8. frameFeedback: the structural and psychological failure points, each at its exact range with a literal fix. Use the fix type that matches the actual repair (replace_line for wording, cut/trim for structure, add_text_overlay for on-screen claims, add_sound for audio beats, reshoot_note for delivery).

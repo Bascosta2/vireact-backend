@@ -176,6 +176,39 @@ const videoSchema = new mongoose.Schema({
      * (`{ start, end, value }` is the SDK ceiling — not word-level), and the
      * single source of truth for every verbatim "before" field downstream.
      */
+    /**
+     * Full alternative scripts for the Scripts tab, generated on demand (not by the analysis job) and
+     * cached here. `generationCount` bounds regenerations per video.
+     */
+    scriptSuggestions: {
+        type: new mongoose.Schema({
+            generatedAt: { type: Date },
+            generationCount: { type: Number, default: 0 },
+            targetSeconds: { type: Number },
+            options: {
+                type: [new mongoose.Schema({
+                    id: { type: String, required: true },
+                    title: { type: String, required: true },
+                    angle: { type: String },
+                    hookLine: { type: String },
+                    beats: {
+                        type: [new mongoose.Schema({
+                            tStart: { type: Number, required: true },
+                            tEnd: { type: Number, required: true },
+                            say: { type: String, default: '' },
+                            onScreenText: { type: String, default: '' },
+                            visual: { type: String, default: '' },
+                        }, { _id: false })],
+                        default: [],
+                    },
+                    cta: { type: String },
+                    whyItWorks: { type: String },
+                }, { _id: false })],
+                default: [],
+            },
+        }, { _id: false }),
+        default: null,
+    },
     rawTranscript: {
         type: [transcriptSegmentSchema],
         default: []

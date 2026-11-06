@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import TwelveLabsClient from '../src/lib/twelve-labs.js';
 import { waitForAssetReady, indexAssetWithRetry, ensureVideoIndexed } from '../src/service/video.service.js';
 
+// The indexing code logs progress with emoji; on Windows that output can corrupt the node --test
+// runner's channel and fail the file. The tests assert behavior, not logs, so silence them here.
+console.log = () => {};
+console.warn = () => {};
+
 // Stub the shared SDK client in place (no network). Restored after each test.
 const original = {
     assetsRetrieve: TwelveLabsClient.assets.retrieve,

@@ -1,4 +1,5 @@
 import { allowedFeaturesForPlan } from '../constants.js';
+import { calibrateViewBand } from './view-calibration.js';
 import {
     severityToLegacy,
     legacyToSeverity,
@@ -172,6 +173,12 @@ export function buildVideoAnalysisDTO(video, userPlan) {
         .filter((r) => canSeeAdvanced || r.sourceFeature !== 'advanced_analytics')
         .map(toScriptRewriteItem);
 
+    // Older reports were stored before the view ceiling existed; calibrate on read too.
+    const views = calibrateViewBand(
+        { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
+        video.viralityScore
+    );
+
     const dto = {
         viralityScore: video.viralityScore ?? 0,
         hookScore: score(hookEntry) ?? 0,
@@ -179,9 +186,9 @@ export function buildVideoAnalysisDTO(video, userPlan) {
         audioScore: score(audioEntry) ?? 0,
         captionClarityScore: score(captionEntry) ?? 0,
         hookSwipeRate: 0,
-        predictedViewsLow: video.predictedViewsLow ?? 0,
-        predictedViewsHigh: video.predictedViewsHigh ?? 0,
-        predictedViewsExpected: video.predictedViewsExpected ?? 0,
+        predictedViewsLow: views.low ?? 0,
+        predictedViewsHigh: views.high ?? 0,
+        predictedViewsExpected: views.expected ?? 0,
         retentionCurve: Array.isArray(video.retentionCurve) ? video.retentionCurve : [],
         feedbackItems,
         scriptRewrites,
@@ -196,9 +203,9 @@ export function buildVideoAnalysisDTO(video, userPlan) {
             advanced: getFeatureScore(analysis, 'advanced_analytics'),
         },
         predictedViews: {
-            low: video.predictedViewsLow ?? null,
-            expected: video.predictedViewsExpected ?? null,
-            high: video.predictedViewsHigh ?? null,
+            low: views.low,
+            expected: views.expected,
+            high: views.high,
         },
         features: {
             hook: getFeatureEntry(analysis, 'hook'),

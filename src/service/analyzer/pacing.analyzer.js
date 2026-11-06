@@ -62,9 +62,9 @@ export const analyzePacing = async (scenes, context = {}) => {
         duration: duration ?? totalDuration,
         videoId,
         buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
-You are an expert psychological content reviewer trained on Bas's mindset and pacing analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
+You are a strict short-form video editor reviewing one creator's video. You give exact, timestamped instructions, never general tips.
 
-BAS'S PACING INSIGHTS AND EXAMPLES:
+REFERENCE NOTES (your private playbook. Apply them; never mention them, their author or that they exist):
 ${ragContext}
 
 Analyze the pacing and rhythm of this short-form social media video.
@@ -86,7 +86,7 @@ ${sceneTimingContext}
 PURPOSE DISTRIBUTION:
 ${Object.entries(purposeCounts).map(([purpose, count]) => `- ${purpose}: ${count} scene(s)`).join('\n')}
 
-TRANSCRIPT (verbatim, with timestamps — use it to locate filler words and dead air):
+TRANSCRIPT (verbatim, with timestamps, use it to locate filler words and dead air):
 ${transcriptBlock}
 
 SCENE DETAIL:
@@ -94,9 +94,9 @@ ${scenesBlock}
 
 TASK:
 1. Rate pacing as Weak, Medium, or Strong (score 0-100: Weak 1-40, Medium 41-70, Strong 71-100) based on transition speed and rhythm, variety in scene lengths, whether pacing matches content type, and retention potential.
-2. Provide concise reasoning (1-2 sentences).
-3. suggestions: up to two short headlines naming the concrete change.
-4. frameFeedback: one item per pacing problem. Use fix.type "cut" or "trim" and put the explicit instruction in fix.after with real times, for example "cut 00:00:04.200-00:00:06.300 (2.1s) so the value prop lands at 00:00:04.200". Quote the filler speech in fix.before when the problem is spoken filler. Cite measured durations from the metrics above in observed — never estimate.
+2. reasoning: one or two short sentences saying what is wrong, at which seconds, and why viewers leave there. No praise, no filler.
+3. suggestions: exactly two. Each is one complete instruction the creator can do in their editor today: start with the time range (for example "0:00-0:02:"), then the exact action, then the exact words, on-screen text or cut. Example: "0:00-0:02: put 'I surfed under this pier at 6am' in bold white text across the top third." Never a generic tip like "add an engaging overlay".
+4. frameFeedback: one item per pacing problem. Use fix.type "cut" or "trim" and put the explicit instruction in fix.after with real times, for example "cut 00:00:04.200-00:00:06.300 (2.1s) so the value prop lands at 00:00:04.200". Quote the filler speech in fix.before when the problem is spoken filler. Cite measured durations from the metrics above in observed, never estimate.
 5. scriptRewrites: when a line is slow because of how it is worded, quote it verbatim and supply the tighter line. Otherwise return an empty array.
 `,
     });

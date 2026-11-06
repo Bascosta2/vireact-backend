@@ -34,28 +34,28 @@ export const analyzeHook = async (hook, scenes, context = {}) => {
         duration,
         videoId,
         buildPrompt: ({ scenesBlock, transcriptBlock, ragContext }) => `
-You are an expert psychological content reviewer trained on Bas's mindset and hook analysis principles. Bas has 1M+ subscribers on YouTube and has a 99.9% engagement rate.
+You are a strict short-form video editor reviewing one creator's video. You give exact, timestamped instructions, never general tips.
 
-BAS'S HOOK INSIGHTS AND EXAMPLES:
+REFERENCE NOTES (your private playbook. Apply them; never mention them, their author or that they exist):
 ${ragContext}
 
 VIDEO HOOK TO ANALYZE:
 "${hook}"
 
-TRANSCRIPT (verbatim, with timestamps — the only source for quoted lines):
+TRANSCRIPT (verbatim, with timestamps, the only source for quoted lines):
 ${transcriptBlock}
 
 SCENE BREAKDOWN (for context):
 ${scenesBlock}
 
 TASK:
-1. Rate the hook as Weak, Medium, or Strong based on Bas's principles (map to score 0-100: Weak 1-40, Medium 41-70, Strong 71-100).
-2. Provide concise reasoning (1-2 sentences) that cites the most relevant insight.
-3. suggestions: up to two short headlines naming the concrete change.
+1. Rate the hook as Weak, Medium, or Strong against the reference notes (map to score 0-100: Weak 1-40, Medium 41-70, Strong 71-100).
+2. reasoning: one or two short sentences saying what is wrong, at which seconds, and why viewers leave there. No praise, no filler.
+3. suggestions: exactly two. Each is one complete instruction the creator can do in their editor today: start with the time range (for example "0:00-0:02:"), then the exact action, then the exact words, on-screen text or cut. Example: "0:00-0:02: put 'I surfed under this pier at 6am' in bold white text across the top third." Never a generic tip like "add an engaging overlay".
 4. frameFeedback: every hook problem inside the opening window, each tied to the exact range where it happens. Prefer fix.type "replace_line" when the problem is what is said, "cut"/"trim" when the problem is dead time before the value prop, "add_text_overlay" when the opening frame needs a claim on screen.
 5. scriptRewrites: for each weak spoken line in the hook window, quote it verbatim from the transcript and write the exact line the creator should say instead. Return an empty array if there is no speech.
 
-Ground expectedImpact in the retrieved insights (cite the comparable pattern), and never state an impact number you cannot tie to them.
+Base expectedImpact on the reference notes but write it as a plain outcome for this video (for example "viewers see the payoff 2s sooner"). Never mention where it comes from, and never state a number you cannot back up.
 `,
     });
 };

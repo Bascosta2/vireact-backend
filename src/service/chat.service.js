@@ -11,6 +11,8 @@ import {
 import { buildTranscriptBlock, transcriptToPlainText } from './transcript.service.js';
 import { retrieveKnowledge, formatKnowledgeContext } from './analyzer/retrieve-knowledge.js';
 import { SPECIFICITY_CONTRACT } from './analyzer/run-feedback-analyzer.js';
+import { cleanUserFacing, cleanUserText, retimeForDuration } from './analyzer/voice.js';
+import { calibrateViewBand } from './view-calibration.js';
 import { runValidatedStructuredCompletion } from './analyzer/validated-completion.js';
 import {
     chatResponseJsonSchema,
@@ -247,14 +249,15 @@ function buildNumericScoresBlock(video) {
         const score = a.score != null ? a.score : (a.rating ? (a.rating.toLowerCase().includes('strong') || a.rating.toLowerCase().includes('high') ? 85 : a.rating.toLowerCase().includes('medium') ? 55 : 25) : null);
         if (score != null) parts.push(`${label}: ${score}/100`);
     });
-    if (video.predictedViewsLow != null && video.predictedViewsHigh != null) {
-        const low = video.predictedViewsLow >= 1000 ? `${(video.predictedViewsLow / 1000).toFixed(1)}K` : String(video.predictedViewsLow);
-        const high = video.predictedViewsHigh >= 1000 ? `${(video.predictedViewsHigh / 1000).toFixed(1)}K` : String(video.predictedViewsHigh);
-        parts.push(`Predicted views: ${low} - ${high}`);
-        if (video.predictedViewsExpected != null) {
-            const exp = video.predictedViewsExpected >= 1000 ? `${(video.predictedViewsExpected / 1000).toFixed(1)}K` : String(video.predictedViewsExpected);
-            parts.push(`Expected: ~${exp}`);
-        }
+    // Same ceiling the report shows, so chat never quotes an uncalibrated (inflated) band.
+    const views = calibrateViewBand(
+        { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
+        video.viralityScore
+    );
+    const fmtViews = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+    if (views.low != null && views.high != null) {
+        parts.push(`Predicted views: ${fmtViews(views.low)} - ${fmtViews(views.high)}`);
+        if (views.expected != null) parts.push(`Expected: ~${fmtViews(views.expected)}`);
     }
     const curve = video.retentionCurve || [];
     if (curve.length > 0) {
@@ -329,10 +332,12 @@ const CHAT_SYSTEM_PROMPT = [
     'Hard rules:',
     '- Ground every claim in the supplied data. Never invent timestamps, quotes, scores, or platform algorithm rules.',
     '- Do not give advice that could apply to any video. If your answer would still be true for a different video, it is not specific enough.',
-    '- When the supplied analysis does not cover what the creator asked, set coverage to "not_covered" and say so plainly in the reply (for example: "The analysis does not cover thumbnail performance — it only measures what happens inside the video."). Never fill the gap with plausible generic advice.',
+    '- When the supplied analysis does not cover what the creator asked, set coverage to "not_covered" and say so plainly in the reply (for example: "The analysis does not cover thumbnail performance. It only measures what happens inside the video."). Never fill the gap with plausible generic advice.',
     '- Hedge phrasing ("try to", "consider", "you could", "make it more ___") is banned unless the very next words are the literal replacement.',
     '- Reference stored items by their ids in citedFeedbackIds / citedRewriteIds instead of restating them loosely.',
-    '- Plain text only: no markdown, no bullet characters, no emojis. Keep the reply under 180 words.',
+    '- Plain text only: no markdown, no bullet characters, no emojis, no em dashes. Keep the reply under 140 words.',
+    '- Lead with the single most important change for this video. Number the steps when there is more than one.',
+    '- Use the RELEVANT EXPERT KNOWLEDGE to decide what to recommend, but never mention it, quote it as a source, or say "examples" or "insights".',
     '',
     SPECIFICITY_CONTRACT,
 ].join('\n');
@@ -393,7 +398,7 @@ async function generateAIResponse(userMessage, video, intent = 'question', prior
         'No knowledge base documents matched. Ground the answer in this video\'s data only.'
     );
 
-    const prompt = `${scoresBlock}TRANSCRIPT (verbatim, with timestamps — the only source for quoted lines):
+    const prompt = `${scoresBlock}TRANSCRIPT (verbatim, with timestamps; the only source for quoted lines):
 ${transcriptBlock}
 
 VIDEO SCENES BREAKDOWN:
@@ -406,7 +411,7 @@ CREATOR'S MESSAGE:
 "${userMessage}"
 
 TASK:
-Answer using this video's data. Reference specific numbers and timestamps. When you propose a change, put it in fixes or scriptRewrites with the literal replacement content — not in prose. If the answer is already covered by a stored item, cite its id instead of duplicating it. If this video's analysis does not contain what was asked, set coverage to "not_covered" and say so in the reply.`;
+Answer using this video's data. Reference specific numbers and timestamps. When you propose a change, put it in fixes or scriptRewrites with the literal replacement content, not in prose. If the answer is already covered by a stored item, cite its id instead of duplicating it. If this video's analysis does not contain what was asked, set coverage to "not_covered" and say so in the reply.`;
 
     const maxHistory = 10;
     const historyMessages = (priorMessages || [])
@@ -427,6 +432,7 @@ Answer using this video's data. Reference specific numbers and timestamps. When 
             maxTokens: 2500,
         });
 
+        const chatDuration = video.duration || video.scenes?.[video.scenes.length - 1]?.endTime;
         const validIds = new Set((video.timestampFeedback || []).map((item) => item.id));
         const validLineIds = new Set((video.scriptRewrites || []).map((item) => item.lineId));
 
@@ -436,11 +442,11 @@ Answer using this video's data. Reference specific numbers and timestamps. When 
         ];
 
         return {
-            text: payload.reply,
+            text: retimeForDuration(cleanUserText(payload.reply), chatDuration),
             isUser: false,
             feedbackRefs,
-            fixes: frameFeedback,
-            scriptRewrites,
+            fixes: retimeForDuration(cleanUserFacing(frameFeedback), chatDuration),
+            scriptRewrites: retimeForDuration(cleanUserFacing(scriptRewrites), chatDuration),
             coverage: payload.coverage || 'grounded',
         };
     } catch (error) {

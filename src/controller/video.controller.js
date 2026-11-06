@@ -28,6 +28,13 @@ import { analyzeAdvancedAnalytics } from '../service/analyzer/advanced-analytics
 import { analyzeViewsPredictor } from '../service/analyzer/views-predictor.analyzer.js';
 import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
+import { calibrateViewBand } from '../service/view-calibration.js';
+import { buildInitialAnalysisMessage } from '../service/initial-analysis-message.js';
+import {
+    generateScriptOptions,
+    toScriptSuggestionsResponse,
+    MAX_SCRIPT_REGENERATIONS,
+} from '../service/script-suggestions.service.js';
 import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from '../service/scene-parser.service.js';
 import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
 import { TWELVELABS_USER_INDEX } from '../config/index.js';
@@ -688,6 +695,20 @@ export const processVideoAnalysis = async (req, res) => {
                 video.viralityScore = null;
             }
 
+            // The predictor reads a viral-heavy knowledge base; cap its band by the overall score.
+            if (video.predictedViewsLow != null || video.predictedViewsHigh != null) {
+                const views = calibrateViewBand(
+                    { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
+                    video.viralityScore
+                );
+                if (views.capped) {
+                    console.log(`[Analysis] View band capped for video ${videoId} (score ${video.viralityScore}): ${video.predictedViewsLow}-${video.predictedViewsHigh} -> ${views.low}-${views.high}`);
+                }
+                video.predictedViewsLow = views.low;
+                video.predictedViewsExpected = views.expected;
+                video.predictedViewsHigh = views.high;
+            }
+
             video.retentionCurve = computeRetentionCurve(video);
 
             const nullScoreFeatures = video.analysis.filter(a => a.score == null).map(a => a.feature);
@@ -850,53 +871,77 @@ export const uploadVideoUrlToTwelveLabs = async (req, res, next) => {
     /* eslint-enable no-unreachable */
 };
 
-// Build initial analysis message for chat from video.analysis array
-function buildInitialAnalysisMessage(video) {
-    const parts = [];
-    const analysisArray = video.analysis || [];
+// ─── Scripts tab ───────────────────────────────────────────────────────────
 
-    // Feature name mapping
-    const featureLabels = {
-        hook: 'Hook',
-        caption: 'Caption',
-        pacing: 'Pacing',
-        audio: 'Audio',
-        advanced_analytics: 'Advanced Analytics',
-        views_predictor: 'Views Predictor'
-    };
+/** Videos with a script generation in flight on this instance (stops double-clicks from paying twice). */
+const scriptGenerationsInFlight = new Set();
 
-    // Process each analyzed feature
-    analysisArray.forEach((analysis, index) => {
-        const featureName = featureLabels[analysis.feature] || analysis.feature;
-        
-        // Add feature name
-        parts.push(featureName);
-        parts.push("");
-        
-        // Add "What's wrong" section
-        parts.push("What's wrong:");
-        const feedback = analysis.feedback && analysis.feedback.trim() 
-            ? analysis.feedback 
-            : "No specific issues identified";
-        parts.push(feedback);
-        parts.push("");
-        
-        // Add "Suggestions to improve" section
-        parts.push("Suggestions to improve:");
-        if (analysis.suggestions && analysis.suggestions.length > 0) {
-            analysis.suggestions.forEach(suggestion => {
-                parts.push(`- ${suggestion}`);
-            });
-        } else {
-            parts.push("- No suggestions available");
+export const getScriptSuggestions = async (req, res, next) => {
+    try {
+        const { videoId } = req.params;
+        const video = await Video.findOne({ _id: videoId, uploader_id: req.user._id }).select('scriptSuggestions').lean();
+        if (!video) {
+            throw new ApiError(404, 'Video not found');
         }
-        
-        // Add spacing between features (except after the last one)
-        if (index < analysisArray.length - 1) {
-            parts.push("");
-            parts.push("");
-        }
-    });
+        res.status(200).json(
+            ApiResponse.success(200, 'Script suggestions retrieved', toScriptSuggestionsResponse(video.scriptSuggestions))
+        );
+    } catch (error) {
+        next(error);
+    }
+};
 
-    return parts.join('\n');
-}
+export const createScriptSuggestions = async (req, res, next) => {
+    const { videoId } = req.params;
+    const regenerate = req.body?.regenerate === true;
+    let locked = false;
+    try {
+        const video = await Video.findOne({ _id: videoId, uploader_id: req.user._id });
+        if (!video) {
+            throw new ApiError(404, 'Video not found');
+        }
+        if (video.analysisStatus !== ANALYSIS_STATUS.COMPLETED) {
+            throw new ApiError(409, 'Scripts are available once the analysis has finished.');
+        }
+        if ((video.scenes || []).length === 0 && (video.rawTranscript || []).length === 0) {
+            throw new ApiError(409, 'This video has no scene breakdown or transcript to write scripts from. Re-analyze it first.');
+        }
+
+        const existing = video.scriptSuggestions;
+        const hasExisting = Array.isArray(existing?.options) && existing.options.length > 0;
+        if (hasExisting && !regenerate) {
+            return res.status(200).json(ApiResponse.success(200, 'Script suggestions retrieved', toScriptSuggestionsResponse(existing)));
+        }
+        const generationCount = existing?.generationCount ?? 0;
+        if (hasExisting && generationCount - 1 >= MAX_SCRIPT_REGENERATIONS) {
+            throw new ApiError(429, `You have used all ${MAX_SCRIPT_REGENERATIONS} script refreshes for this video.`);
+        }
+
+        if (scriptGenerationsInFlight.has(videoId)) {
+            throw new ApiError(409, 'Scripts are already being written for this video. Give it a few seconds.');
+        }
+        scriptGenerationsInFlight.add(videoId);
+        locked = true;
+
+        const { targetSeconds, options } = await generateScriptOptions(video);
+        video.scriptSuggestions = {
+            generatedAt: new Date(),
+            generationCount: generationCount + 1,
+            targetSeconds,
+            options,
+        };
+        await video.save();
+
+        res.status(200).json(
+            ApiResponse.success(200, 'Script suggestions generated', toScriptSuggestionsResponse(video.scriptSuggestions))
+        );
+    } catch (error) {
+        if (!(error instanceof ApiError)) {
+            console.error(`[Scripts] Generation failed for video ${videoId}:`, error?.message);
+            return next(new ApiError(502, 'We could not write scripts right now. Try again in a moment.'));
+        }
+        next(error);
+    } finally {
+        if (locked) scriptGenerationsInFlight.delete(videoId);
+    }
+};

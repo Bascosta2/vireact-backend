@@ -148,7 +148,7 @@ export const frameFeedbackJsonSchema = {
         },
         expectedImpact: {
             type: 'string',
-            description: 'Concrete expected effect with a number or range, grounded in the supplied knowledge base exemplars.',
+            description: 'Plain outcome for this video (e.g. "viewers see the payoff 2s sooner"). Never mention sources, examples or notes. No em dashes.',
         },
         sourceConfidence: {
             type: 'number',
@@ -192,7 +192,7 @@ export const buildAnalyzerJsonSchema = ({ extraProperties = {}, includeScriptRew
     const properties = {
         score: { type: 'integer', description: 'Score 0-100.' },
         rating: { type: 'string', description: 'Weak | Medium | Strong.' },
-        reasoning: { type: 'string', description: 'One or two sentences citing the most relevant supplied insight.' },
+        reasoning: { type: 'string', description: 'One or two short sentences: what is wrong, at which seconds, and why viewers leave there. Never mention sources. No em dashes.' },
         suggestions: arrayOf({ type: 'string' }, 'Short headline suggestions. Each must name the concrete change, not a goal.'),
         frameFeedback: arrayOf(frameFeedbackJsonSchema, 'Every actionable issue, each tied to a real timestamp range with a literal fix.'),
         ...extraProperties,
