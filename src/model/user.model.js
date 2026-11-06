@@ -1,6 +1,7 @@
 import bcrypt, { compare } from "bcryptjs";
 import mongoose from "mongoose"
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } from "../config/index.js";
 import { OAUTH_PROVIDERS, ROLES } from "../constants.js";
 
@@ -23,8 +24,44 @@ const userSchema = new mongoose.Schema({
             return !this.googleId;
         }
     },
+    /** Hash of the most recently issued refresh token (kept for older sessions and admin parity). */
     refreshToken: {
         type: String
+    },
+    /**
+     * One entry per signed-in device (max 10). Each refresh rotates only its own entry, so signing in
+     * on a phone no longer signs the laptop out. Hashes only; never selected unless asked for.
+     */
+    refreshSessions: {
+        type: [{
+            _id: false,
+            hash: { type: String, required: true },
+            createdAt: { type: Date, default: Date.now },
+            lastUsedAt: { type: Date, default: Date.now },
+        }],
+        default: [],
+        select: false
+    },
+    /** Password reset: SHA-256 of the emailed token, its expiry, and when the last email went out. */
+    passwordResetTokenHash: {
+        type: String,
+        default: null,
+        select: false
+    },
+    passwordResetExpires: {
+        type: Date,
+        default: null,
+        select: false
+    },
+    passwordResetRequestedAt: {
+        type: Date,
+        default: null,
+        select: false
+    },
+    /** Last verification email, to rate-limit automatic resends. */
+    verificationEmailSentAt: {
+        type: Date,
+        default: null
     },
     role: {
         type: String,
@@ -124,6 +161,10 @@ userSchema.set("toJSON", {
         delete ret.password;
         delete ret.refreshToken;
         delete ret.emailVerificationToken;
+        delete ret.refreshSessions;
+        delete ret.passwordResetTokenHash;
+        delete ret.passwordResetExpires;
+        delete ret.passwordResetRequestedAt;
         delete ret.__v;
         return ret;
     }
@@ -166,8 +207,9 @@ userSchema.methods.generateRefreshToken = function () {
         expiresIn: "30d"
     };
 
+    // jti makes every refresh token unique, even two issued in the same second.
     return jwt.sign(
-        { _id: this._id, email: this.email },
+        { _id: this._id, email: this.email, jti: crypto.randomUUID() },
         REFRESH_TOKEN_SECRET,
         signOptions
     );
@@ -187,8 +229,9 @@ userSchema.methods.hasPassword = function () {
 };
 
 // Static method to find user by Google ID
+// A Google identity can be linked to an email/password account too, so match on googleId alone.
 userSchema.statics.findByGoogleId = function (googleId) {
-    return this.findOne({ googleId, provider: OAUTH_PROVIDERS.GOOGLE });
+    return this.findOne({ googleId });
 };
 
 // Static method to find or create user by Google profile
@@ -214,29 +257,22 @@ userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) 
         return user;
     }
 
-    // Try to find existing user by email
-    user = await this.findOne({ email });
-
+    // Existing account with this (Google-verified) email: link the Google identity to it.
+    user = await this.findOne({ email: String(email).trim().toLowerCase() });
     if (user) {
-        // Check if user exists with a different provider
-        if (user.provider !== OAUTH_PROVIDERS.GOOGLE) {
-            // Don't auto-link providers - this is a security risk
-            // Instead, we'll handle this in the OAuth callback with proper error messaging
-            throw new Error(`ACCOUNT_EXISTS_WITH_DIFFERENT_PROVIDER:${user.provider}`);
+        if (!user.googleId) user.googleId = googleId;
+        if (!user.avatar && photos && photos[0]) user.avatar = photos[0].value;
+        if (!user.isEmailVerified) {
+            // Nobody had proven they own this address until now. Someone may have registered it
+            // first with a password of their choosing ("pre-hijacking"), so that password is dropped;
+            // the owner can add their own later through Forgot password.
+            user.password = undefined;
+            user.emailVerificationToken = null;
+            user.isEmailVerified = true;
         }
-        
-        // User already has Google account linked, just update the Google ID if needed
-        if (!user.googleId) {
-            user.googleId = googleId;
-            user.isEmailVerified = true; // Google emails are verified
-            if (photos && photos[0]) {
-                user.avatar = photos[0].value;
-            }
-            await user.save();
-        }
+        await user.save({ validateBeforeSave: false });
         return user;
     }
-
     // Create new user
     const newUser = new this({
         name: displayName || email.split('@')[0],

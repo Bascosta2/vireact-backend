@@ -68,6 +68,15 @@ const authRateLimit = rateLimit({
     max: 20,
     message: { error: 'Too many attempts, please try again later' },
 });
+/** Endpoints that take credentials or send emails. Refresh, /me, logout and Google round-trips are not limited. */
+const CREDENTIAL_AUTH_PATHS = new Set([
+    '/api/v1/auth/login',
+    '/api/v1/auth/signup',
+    '/api/v1/auth/verify-email',
+    '/api/v1/auth/resend-verification',
+    '/api/v1/auth/forgot-password',
+    '/api/v1/auth/reset-password',
+]);
 const videoUploadRateLimit = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
@@ -135,7 +144,7 @@ app.use(passport.session());
 // Scoped rate limits: /api/v1/auth/* and /api/v1/videos/upload* only
 app.use((req, res, next) => {
     const p = req.path || '';
-    if (p.startsWith('/api/v1/auth')) {
+    if (CREDENTIAL_AUTH_PATHS.has(p)) {
         return authRateLimit(req, res, next);
     }
     if (p.startsWith('/api/v1/videos/upload')) {

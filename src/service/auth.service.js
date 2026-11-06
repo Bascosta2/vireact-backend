@@ -1,5 +1,5 @@
 import { Admin } from "../model/admin.model.js";
-import { FRONTEND_URL, ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET, RESEND_FROM_EMAIL, NODE_ENV } from "../config/index.js";
+import { FRONTEND_URL, REFRESH_TOKEN_SECRET, RESEND_FROM_EMAIL, NODE_ENV } from "../config/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../model/user.model.js";
 import crypto from "crypto"
@@ -7,6 +7,73 @@ import resend from "../lib/resend.js";
 import { OAUTH_PROVIDERS } from "../constants.js";
 import jwt from "jsonwebtoken";
 import { hashRefreshToken, refreshTokenMatches } from "../utils/refresh-token-hash.js";
+
+/** Signed-in devices kept per user. The oldest falls off when an 11th device signs in. */
+export const MAX_REFRESH_SESSIONS = 10;
+/** Password reset links work for one hour. */
+export const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+/** Minimum gap between automatic verification or reset emails to the same address. */
+export const EMAIL_RESEND_COOLDOWN_MS = 60 * 1000;
+export const PASSWORD_MIN_LENGTH = 6;
+export const PASSWORD_MAX_LENGTH = 128;
+
+export const normalizeEmail = (email) => (typeof email === 'string' ? email.trim().toLowerCase() : '');
+
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
+/** Hash variants a stored session hash may use (peppered and unpeppered), so adding a pepper later never signs users out. */
+const sessionHashCandidates = (token) => {
+    const candidates = new Set([hashRefreshToken(token)]);
+    if (process.env.REFRESH_TOKEN_PEPPER) candidates.add(hashRefreshToken(token, ''));
+    return [...candidates];
+};
+
+const assertValidPassword = (password) => {
+    if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+        throw new ApiError(400, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
+    }
+    if (password.length > PASSWORD_MAX_LENGTH) {
+        throw new ApiError(400, `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`);
+    }
+};
+
+const sendEmail = async ({ to, subject, html }) => {
+    try {
+        const { error } = (await resend.emails.send({ from: RESEND_FROM_EMAIL, to, subject, html })) ?? {};
+        if (error) throw new Error(error.message || 'Resend rejected the email');
+        return true;
+    } catch (error) {
+        console.error(`[Auth] Could not send "${subject}" email: ${error.message}`);
+        return false;
+    }
+};
+
+const sendVerificationEmail = async (user, token) => {
+    const verificationUrl = `${FRONTEND_URL}/verify-email?token=${token}`;
+    const sent = await sendEmail({
+        to: user.email,
+        subject: 'Verify your Vireact email',
+        html: `<div>
+                <p>Hey ${user.name || 'there'}, welcome to Vireact.</p>
+                <p><a href="${verificationUrl}">Verify your email</a> to finish setting up your account.</p>
+                <p>If you didn't create a Vireact account, ignore this email.</p>
+                <p>The Vireact Team</p>
+               </div>`,
+    });
+    if (sent) {
+        await User.updateOne({ _id: user._id }, { $set: { verificationEmailSentAt: new Date() } });
+    }
+    return sent;
+};
+
+/** Issue a fresh verification token and email it, unless one went out in the last minute. */
+const resendVerificationIfDue = async (user) => {
+    const last = user.verificationEmailSentAt ? new Date(user.verificationEmailSentAt).getTime() : 0;
+    if (Date.now() - last < EMAIL_RESEND_COOLDOWN_MS) return false;
+    const token = crypto.randomBytes(32).toString("hex");
+    await User.updateOne({ _id: user._id }, { $set: { emailVerificationToken: token } });
+    return sendVerificationEmail(user, token);
+};
 
 // Helper function to get user-friendly provider names
 const getProviderDisplayName = (provider) => {
@@ -21,6 +88,11 @@ const getProviderDisplayName = (provider) => {
 };
 
 
+/**
+ * Issue an access + refresh token pair.
+ * Users: the refresh token becomes a new per-device session (max MAX_REFRESH_SESSIONS).
+ * Admins: single stored hash, as before.
+ */
 export const generateAccessToken = async (
     userId,
     model,
@@ -35,13 +107,26 @@ export const generateAccessToken = async (
 
         const accessToken = user.generateAccessToken();
         const refreshToken = user.generateRefreshToken();
-        
-        // Only the hash is persisted; the raw token lives in the HttpOnly cookie.
-        user.refreshToken = hashRefreshToken(refreshToken);
-        await user.save({ validateBeforeSave: false });
+        const hash = hashRefreshToken(refreshToken);
+
+        if (model === User) {
+            const now = new Date();
+            await User.updateOne(
+                { _id: user._id },
+                {
+                    $set: { refreshToken: hash },
+                    $push: { refreshSessions: { $each: [{ hash, createdAt: now, lastUsedAt: now }], $slice: -MAX_REFRESH_SESSIONS } },
+                }
+            );
+        } else {
+            // Only the hash is persisted; the raw token lives in the HttpOnly cookie.
+            user.refreshToken = hash;
+            await user.save({ validateBeforeSave: false });
+        }
 
         return { accessToken, refreshToken };
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || `Something went wrong on server, while generating access token for ${userType}.`);
     }
 };
@@ -64,22 +149,11 @@ export const signupAdminService =
 
             return await admin.save();
         } catch (error) {
+            if (error instanceof ApiError) throw error;
             throw new ApiError(500, error?.message || "Failed to create admin.");
         }
     };
-//Login admin by verifying credentials
 
-/*
-- Login Admin
-
-1. Get admin name and pass from req body.
-2. Check if admin exsists - compare email
-3. if admin exsists, compare his pass with pass stored in database.
-5. if comparison become false, return error.
-4. if comparison become successfull, return access token.
-5. Send cookies
-
-*/
 export const loginAdminService = async (email, password) => {
 
     const admin = await Admin.findOne({ email });
@@ -98,8 +172,13 @@ export const loginAdminService = async (email, password) => {
 };
 
 
-
-// Sign up a new user
+/**
+ * Sign up with email + password.
+ * - Existing verified account (or a Google account): 409 with what to do instead.
+ * - Existing account that was never verified: treated as a fresh signup (new name/password, new email),
+ *   so someone who lost the first verification email is never stuck.
+ * The account is saved even if the verification email fails; the user can resend it.
+ */
 export const customSignupUserService = async (
     name,
     email,
@@ -108,64 +187,50 @@ export const customSignupUserService = async (
     attribution = null
 ) => {
     try {
-        const existingUser = await User.findOne({ email });
+        const cleanEmail = normalizeEmail(email);
+        assertValidPassword(password);
+
+        const existingUser = await User.findOne({ email: cleanEmail }).select('+password');
         if (existingUser) {
-            // Check if user exists with a different provider
-            if (existingUser.provider !== provider) {
-                const existingProviderName = getProviderDisplayName(existingUser.provider);
-                throw new ApiError(409, `This email is already registered via ${existingProviderName}. Please log in with ${existingProviderName} instead.`);
-            } else {
-                throw new ApiError(409, "An account with this email already exists. Please log in instead.");
+            if (!existingUser.password && existingUser.googleId) {
+                throw new ApiError(409, "This email already signs in with Google. Use Continue with Google, or Forgot password to add a password.");
             }
+            if (existingUser.isEmailVerified) {
+                throw new ApiError(409, "An account with this email already exists. Log in instead, or use Forgot password.");
+            }
+            // Unverified: restart signup for whoever owns the inbox.
+            const token = crypto.randomBytes(32).toString("hex");
+            existingUser.name = name;
+            existingUser.password = password;
+            existingUser.emailVerificationToken = token;
+            await existingUser.save();
+            await sendVerificationEmail(existingUser, token);
+            return existingUser;
         }
-        const requireVerification = true;
 
-        let token = null;
-        let isEmailVerified = false;
-
-        if (requireVerification) {
-            token = crypto.randomBytes(32).toString("hex");
-        } else {
-            isEmailVerified = true;
-        }
-
+        const token = crypto.randomBytes(32).toString("hex");
         const user = new User({
             name,
-            email,
+            email: cleanEmail,
             password,
-            provider,
+            provider: provider || OAUTH_PROVIDERS.LOCAL,
             emailVerificationToken: token,
-            isEmailVerified,
+            isEmailVerified: false,
             ...(attribution ? { attribution } : {})
         });
 
         const savedUser = await user.save();
-
-        if (requireVerification) {
-            const verificationUrl = `${FRONTEND_URL}/verify-email?token=${token}`;
-
-            await resend.emails.send({
-                from: RESEND_FROM_EMAIL,
-                to: email,
-                subject: 'Verify Your Email',
-                html: `<div>
-                        <p>Hey ${name}, Welcome to Vireact</p>
-                        <p>Please <a href="${verificationUrl}">click here</a> to verify your email.</p>
-                        <p>If you didn't request this verification, please ignore this email.</p>
-                        <p>Thank you for using Vireact!</p>
-                        <p>Best regards,</p>
-                        <p>The Vireact Team</p>
-                       </div>`
-            });
-        }
-
+        await sendVerificationEmail(savedUser, token);
         return savedUser;
 
     } catch (error) {
+        if (error instanceof ApiError) throw error;
+        if (error?.code === 11000) {
+            throw new ApiError(409, "An account with this email already exists. Log in instead, or use Forgot password.");
+        }
         throw new ApiError(500, error?.message || "Failed to create user.");
     }
 };
-
 
 
 export const verifyEmailService = async (token) => {
@@ -177,7 +242,7 @@ export const verifyEmailService = async (token) => {
         const user = await User.findOne({ emailVerificationToken: token });
 
         if (!user) {
-            throw new ApiError(400, "Invalid or expired token.");
+            throw new ApiError(400, "This verification link is invalid or was already used. Log in, or request a new link.");
         }
 
         user.isEmailVerified = true;
@@ -190,102 +255,56 @@ export const verifyEmailService = async (token) => {
             message: "Email verified successfully.",
         };
     } catch (error) {
+        if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || "Failed to verify email.");
     }
 };
 
 
-
+/**
+ * Resend the verification email. Always answers the same way, whether or not the address exists or
+ * is already verified, so it cannot be used to discover accounts.
+ */
 export const resendEmailVerificationService = async (email) => {
-    try {
-        if (!email) {
-            throw new ApiError(400, "Email is required.");
-        }
-
-        const user = await User.findOne({ email });
-
-        if (!user) {
-            throw new ApiError(400, "User not found.");
-        }
-
-        if (user.isEmailVerified) {
-            throw new ApiError(400, "Email is already verified.");
-        }
-
-        const newToken = crypto.randomBytes(32).toString("hex");
-        user.emailVerificationToken = newToken;
-        await user.save({ validateBeforeSave: false });
-
-        const verificationUrl = `${FRONTEND_URL}/verify-email?token=${newToken}`;
-
-        await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: user.email,
-            subject: "Verify your email",
-            html: `
-                <div>
-                    <p>Click <a href="${verificationUrl}">here</a> to verify your email.</p>
-                </div>
-            `
-        });
-
-        return {
-            success: true,
-            message: "Verification email resent successfully."
-        };
-
-    } catch (error) {
-        throw new ApiError(500, error.message || "Failed to resend verification email.");
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) {
+        throw new ApiError(400, "Email is required.");
     }
+    const generic = {
+        success: true,
+        message: "If that email has an account waiting for verification, a new link is on its way.",
+    };
+    try {
+        const user = await User.findOne({ email: cleanEmail });
+        if (user && !user.isEmailVerified) {
+            await resendVerificationIfDue(user);
+        }
+    } catch (error) {
+        console.error('[Auth] Resend verification failed:', error.message);
+    }
+    return generic;
 };
 
 
-
-
-//Login user by verifying credentials
-
-/*
-- Login User
-
-1. Get username and pass from req body.
-2. Check if user exsists - compare email
-3. if user exsists, compare his pass with pass stored in database.
-5. if comparison become false, return error.
-4. if comparison become successfull, return access and refresh token.
-5. Send cookies
-
-*/
-// Generic credential-failure response. The same status, message, and shape are
-// returned for unknown email, bad password, and unverified-but-pending email so
-// that an attacker cannot distinguish them and enumerate accounts. Cross-provider
-// conflict is intentionally NOT collapsed — it is a usability signal ("you have
-// an account, just on a different provider"), not a credential check, and
-// hiding it would frustrate legitimate users without raising the bar for
-// enumeration much (an attacker can already enumerate via OAuth).
+// Generic credential-failure response for unknown email and wrong password, so accounts
+// cannot be enumerated. Messages that need the correct password first (unverified email)
+// or that are a usability signal (Google-only account) are specific.
 const GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email or password";
 
 export const loginUserService = async (email, password) => {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizeEmail(email) });
 
     if (!user) {
         throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
-    // Cross-provider conflict: the email exists but belongs to a different
-    // provider (e.g. Google). Surface the actionable message verbatim — this
-    // is not a credential failure. See note above.
-    if (user.provider !== OAUTH_PROVIDERS.LOCAL) {
-        const providerName = getProviderDisplayName(user.provider);
-        throw new ApiError(409, `This email is already registered via ${providerName}. Please log in with ${providerName} instead.`);
-    }
-
-    // Unverified email is collapsed into the generic 401 to close the
-    // "is this address a verified user?" enumeration vector. The legitimate
-    // owner can self-recover by requesting a new verification email at
-    // /resend-verification, which echoes the same generic outcome whether or
-    // not the address exists.
-    if (!user.isEmailVerified) {
-        throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
+    // Google-only account (no password yet). Not a credential check: tell the user the way in.
+    if (!user.password) {
+        throw new ApiError(
+            409,
+            `This email signs in with ${getProviderDisplayName(OAUTH_PROVIDERS.GOOGLE)}. Use Continue with Google, or Forgot password to add a password.`,
+            { code: 'USE_GOOGLE' }
+        );
     }
 
     const isPasswordValid = await user.comparePassword(password);
@@ -294,42 +313,153 @@ export const loginUserService = async (email, password) => {
         throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
+    // Correct password but the email was never verified. Only the account owner can get here, so it
+    // is safe to say so, and a fresh link goes out (at most once a minute).
+    if (!user.isEmailVerified) {
+        await resendVerificationIfDue(user);
+        throw new ApiError(
+            403,
+            `Verify your email to log in. We sent a new link to ${user.email}. Check your spam folder too.`,
+            { code: 'EMAIL_NOT_VERIFIED', email: user.email }
+        );
+    }
+
     if (NODE_ENV !== 'production') {
         console.log(`[AUTH SERVICE] Login OK for user id: ${user._id}`);
     }
     return user;
 };
 
+
+/**
+ * Forgot password. Always answers the same way. Works for Google-only accounts too, which is how
+ * they add a password.
+ */
+export const forgotPasswordService = async (email) => {
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) {
+        throw new ApiError(400, "Email is required.");
+    }
+    const generic = {
+        success: true,
+        message: "If an account uses that email, a link to reset your password is on its way. It works for one hour.",
+    };
+    try {
+        const user = await User.findOne({ email: cleanEmail }).select('+passwordResetRequestedAt');
+        if (!user) return generic;
+        const last = user.passwordResetRequestedAt ? new Date(user.passwordResetRequestedAt).getTime() : 0;
+        if (Date.now() - last < EMAIL_RESEND_COOLDOWN_MS) return generic;
+
+        const token = crypto.randomBytes(32).toString('hex');
+        await User.updateOne(
+            { _id: user._id },
+            {
+                $set: {
+                    passwordResetTokenHash: sha256(token),
+                    passwordResetExpires: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+                    passwordResetRequestedAt: new Date(),
+                },
+            }
+        );
+        const resetUrl = `${FRONTEND_URL}/reset-password?token=${token}`;
+        const action = user.password ? 'reset your password' : 'set a password for your account';
+        await sendEmail({
+            to: user.email,
+            subject: user.password ? 'Reset your Vireact password' : 'Set a password for Vireact',
+            html: `<div>
+                    <p>Hey ${user.name || 'there'},</p>
+                    <p><a href="${resetUrl}">Click here to ${action}</a>. The link works for one hour.</p>
+                    <p>If you didn't ask for this, ignore this email. Your password stays the same.</p>
+                    <p>The Vireact Team</p>
+                   </div>`,
+        });
+    } catch (error) {
+        console.error('[Auth] Forgot password failed:', error.message);
+    }
+    return generic;
+};
+
+
+/**
+ * Set a new password from a reset link. Proves inbox ownership, so the email becomes verified.
+ * Signs out every device (all refresh sessions are revoked).
+ */
+export const resetPasswordService = async (token, password) => {
+    if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) {
+        throw new ApiError(400, "This reset link is invalid. Request a new one.");
+    }
+    assertValidPassword(password);
+
+    const user = await User.findOne({
+        passwordResetTokenHash: sha256(token),
+        passwordResetExpires: { $gt: new Date() },
+    }).select('+passwordResetTokenHash +passwordResetExpires');
+
+    if (!user) {
+        throw new ApiError(400, "This reset link has expired or was already used. Request a new one.");
+    }
+
+    user.password = password;
+    user.isEmailVerified = true;
+    user.emailVerificationToken = null;
+    user.passwordResetTokenHash = null;
+    user.passwordResetExpires = null;
+    user.refreshSessions = [];
+    user.refreshToken = undefined;
+    await user.save();
+
+    return { success: true, message: "Password updated. You can log in now.", email: user.email };
+};
+
+
+/**
+ * Rotate a refresh token.
+ * Users: the presented token must match one device session; only that session rotates, and the
+ * old token stops working immediately (replay -> 401). Sessions created before per-device sessions
+ * existed match the single stored hash and are moved into the session list on first use.
+ */
 export const refreshTokenService = async (refreshToken) => {
     try {
         if (!refreshToken) {
             throw new ApiError(401, "Refresh token is required");
         }
 
-        // Verify the refresh token (separate secret in production; see REFRESH_TOKEN_SECRET)
         const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET);
-        
-        // Find user by ID from token
-        const user = await User.findById(decoded._id);
-        
+
+        const user = await User.findById(decoded._id).select('+refreshSessions');
         if (!user) {
             throw new ApiError(401, "Invalid refresh token - user not found");
         }
 
-        // Check the stored hash (or a legacy plaintext token) against the presented token
-        if (!refreshTokenMatches(user.refreshToken, refreshToken)) {
-            throw new ApiError(401, "Invalid refresh token");
-        }
-
-        // Generate new tokens
         const newAccessToken = user.generateAccessToken();
         const newRefreshToken = user.generateRefreshToken();
-        
-        // Rotate: persist only the hash of the new refresh token
-        user.refreshToken = hashRefreshToken(newRefreshToken);
-        await user.save({ validateBeforeSave: false });
+        const newHash = hashRefreshToken(newRefreshToken);
+        const now = new Date();
 
-        return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+        // Per-device session: rotate exactly the matching entry, atomically.
+        const rotated = await User.updateOne(
+            { _id: user._id, 'refreshSessions.hash': { $in: sessionHashCandidates(refreshToken) } },
+            { $set: { 'refreshSessions.$.hash': newHash, 'refreshSessions.$.lastUsedAt': now, refreshToken: newHash } }
+        );
+        if (rotated.modifiedCount === 1) {
+            return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+        }
+
+        // Older single-session sign-in (or a legacy plaintext token).
+        if (refreshTokenMatches(user.refreshToken, refreshToken) || sessionHashCandidates(refreshToken).includes(user.refreshToken)) {
+            const migrated = await User.updateOne(
+                { _id: user._id, refreshToken: user.refreshToken },
+                {
+                    $set: { refreshToken: newHash },
+                    $push: { refreshSessions: { $each: [{ hash: newHash, createdAt: now, lastUsedAt: now }], $slice: -MAX_REFRESH_SESSIONS } },
+                }
+            );
+            if (migrated.modifiedCount === 1) {
+                return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+            }
+        }
+
+        throw new ApiError(401, "Invalid refresh token");
     } catch (error) {
         if (error instanceof ApiError) throw error;
         if (error.name === 'JsonWebTokenError') {
@@ -339,4 +469,18 @@ export const refreshTokenService = async (refreshToken) => {
         }
         throw new ApiError(500, error?.message || "Failed to refresh token");
     }
+};
+
+
+/**
+ * Sign out one device (the one presenting this refresh token). Without a token, signs out everywhere.
+ */
+export const revokeRefreshSession = async (userId, refreshToken) => {
+    if (!refreshToken) {
+        await User.updateOne({ _id: userId }, { $set: { refreshSessions: [] }, $unset: { refreshToken: 1 } });
+        return;
+    }
+    const candidates = sessionHashCandidates(refreshToken);
+    await User.updateOne({ _id: userId }, { $pull: { refreshSessions: { hash: { $in: candidates } } } });
+    await User.updateOne({ _id: userId, refreshToken: { $in: candidates } }, { $unset: { refreshToken: 1 } });
 };

@@ -22,3 +22,14 @@ test('without SENTRY_DSN or OPS_ALERT_EMAIL, monitoring is a silent no-op', asyn
     assert.doesNotThrow(() => captureError(new Error('x'), { stage: 'test' }));
     await alertFailure({ stage: 'analysis', videoId: 'v1', error: new Error('boom') });
 });
+
+test('Google sign-in may return to www or the bare domain, never elsewhere', async () => {
+    const { getSafeOAuthRedirectUrl } = await import('../src/utils/oauth-redirect.js');
+    const { getAllowedCorsOrigins } = await import('../src/config/cors-allowed-origins.js');
+    for (const origin of getAllowedCorsOrigins()) {
+        assert.equal(getSafeOAuthRedirectUrl(`${origin}/pricing?x=1`), `${origin}/pricing?x=1`);
+    }
+    assert.equal(getSafeOAuthRedirectUrl('https://evil.example/steal'), null);
+    assert.equal(getSafeOAuthRedirectUrl('javascript:alert(1)'), null);
+    assert.equal(getSafeOAuthRedirectUrl('//evil.example'), null);
+});

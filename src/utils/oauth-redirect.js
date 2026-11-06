@@ -1,4 +1,5 @@
 import { FRONTEND_URL } from '../config/index.js';
+import { getAllowedCorsOrigins } from '../config/cors-allowed-origins.js';
 
 /**
  * Returns a redirect URL that is same-origin as FRONTEND_URL, or null if unsafe.
@@ -48,7 +49,9 @@ export function getSafeOAuthRedirectUrl(raw) {
     if (candidate.protocol !== 'http:' && candidate.protocol !== 'https:') {
         return null;
     }
-    if (candidate.origin !== baseUrl.origin) {
+    // Same site: FRONTEND_URL's origin, or another production origin of the site (vireact.io / www).
+    const allowedOrigins = new Set([baseUrl.origin, ...getAllowedCorsOrigins()]);
+    if (!allowedOrigins.has(candidate.origin)) {
         return null;
     }
     return `${candidate.origin}${candidate.pathname}${candidate.search}${candidate.hash}`;

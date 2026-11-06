@@ -5,8 +5,13 @@ import {
     customSignupUserService,
     verifyEmailService,
     resendEmailVerificationService,
-    refreshTokenService
+    refreshTokenService,
+    forgotPasswordService,
+    resetPasswordService,
+    revokeRefreshSession
 } from "../service/auth.service.js";
+import jwt from "jsonwebtoken";
+import { REFRESH_TOKEN_SECRET } from "../config/index.js";
 import { Admin } from "../model/admin.model.js";
 import { User } from "../model/user.model.js";
 import { COOKIE_OPTIONS, OAUTH_PROVIDERS, ROLES } from "../constants.js";
@@ -263,7 +268,7 @@ export const resendEmailVerification = async (req, res, next) => {
 
 
 export const verifyEmail = async (req, res, next) => {
-    const { token } = req.query;
+    const token = req.query?.token || req.body?.token;
 
     try {
         if (!token) {
@@ -302,12 +307,20 @@ export const logoutAdmin = async (req, res, next) => {
 // req.user is hydrated and we know whose token to revoke.
 export const logoutUser = async (req, res, next) => {
     try {
-        if (req.user && req.user._id) {
-            await User.findByIdAndUpdate(
-                req.user._id,
-                { $unset: { refreshToken: 1 } },
-                { new: false }
-            );
+        // Identify the account from the access token, or from the refresh cookie when the access
+        // token has already expired (expired refresh tokens still identify the session to revoke).
+        const cookieToken = req.cookies?.refreshToken;
+        let userId = req.user?._id;
+        if (!userId && cookieToken) {
+            try {
+                userId = jwt.verify(cookieToken, REFRESH_TOKEN_SECRET, { ignoreExpiration: true })?._id;
+            } catch {
+                userId = null;
+            }
+        }
+        if (userId) {
+            // Sign out this device only; other devices stay signed in.
+            await revokeRefreshSession(userId, cookieToken);
         }
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
@@ -381,14 +394,16 @@ export const googleCallback = async (req, res, next) => {
                 }
                 if (err.message === 'GOOGLE_EMAIL_NOT_VERIFIED') {
                     return res.redirect(
-                        `${FRONTEND_URL}/auth/error?message=${encodeURIComponent('Google account email must be verified before sign-in.')}`
+                        `${FRONTEND_URL}/login?error=${encodeURIComponent('Your Google account email is not verified yet. Verify it with Google, or sign up with email and password.')}`
                     );
                 }
-                return res.redirect(`${FRONTEND_URL}/auth/error?message=${encodeURIComponent(err.message)}`);
+                console.error('[Auth] Google sign-in failed:', err.message);
+                return res.redirect(`${FRONTEND_URL}/login?error=${encodeURIComponent('Google sign-in did not complete. Try again, or log in with email.')}`);
             }
 
             if (!user) {
-                return res.redirect(`${FRONTEND_URL}/auth/error?message=${encodeURIComponent('Authentication failed')}`);
+                // Usually the user cancelled on Google's screen, or the sign-in took too long.
+                return res.redirect(`${FRONTEND_URL}/login?error=${encodeURIComponent('Google sign-in was cancelled or expired. Try again.')}`);
             }
 
             // Generate access and refresh tokens for the user
@@ -441,7 +456,7 @@ export const googleCallback = async (req, res, next) => {
 };
 
 export const googleAuthFailure = (req, res) => {
-    res.redirect(`${FRONTEND_URL}/auth/error?message=${encodeURIComponent('Google authentication failed')}`);
+    res.redirect(`${FRONTEND_URL}/login?error=${encodeURIComponent('Google sign-in did not complete. Try again, or log in with email.')}`);
 };
 
 // Refresh Token Controller
@@ -513,6 +528,27 @@ export const getMe = async (req, res, next) => {
         res.status(200).json(
             ApiResponse.success(200, "Authenticated", data)
         );
+    } catch (error) {
+        next(error);
+    }
+};
+// POST /auth/forgot-password { email } - always the same answer (no account discovery).
+export const forgotPassword = async (req, res, next) => {
+    try {
+        const result = await forgotPasswordService(req.body?.email);
+        res.status(200).json(ApiResponse.success(200, result.message, { sent: true }));
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /auth/reset-password { token, password } - sets the password and signs out every device.
+export const resetPassword = async (req, res, next) => {
+    try {
+        const result = await resetPasswordService(req.body?.token, req.body?.password);
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(ApiResponse.success(200, result.message, { email: result.email }));
     } catch (error) {
         next(error);
     }

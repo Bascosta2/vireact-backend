@@ -11,9 +11,11 @@ import {
     googleAuthFailure,
     refreshToken,
     getMe,
-    saveAttribution
+    saveAttribution,
+    forgotPassword,
+    resetPassword
 } from '../controller/auth.controller.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, optionalAuth } from '../middleware/auth.js';
 
 const authRoutes = Router();
 
@@ -24,10 +26,13 @@ authRoutes.post('/login', login);
 // persisted refresh token. Clients with already-expired access tokens will
 // receive 401 here; the frontend should treat that as "already logged out"
 // and clear local state.
-authRoutes.post('/logout', authenticateToken, logout);
+// Logout works with an expired access token too: the refresh cookie identifies the device to sign out.
+authRoutes.post('/logout', optionalAuth, logout);
 authRoutes.post('/refresh-token', refreshToken);
 authRoutes.post('/verify-email', verifyEmail);
 authRoutes.post('/resend-verification', resendEmailVerification);
+authRoutes.post('/forgot-password', forgotPassword);
+authRoutes.post('/reset-password', resetPassword);
 
 // Session identity echo for OAuth hydration (cookie- or Bearer-authenticated).
 authRoutes.get('/me', authenticateToken, getMe);
