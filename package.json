@@ -30,6 +30,7 @@
     "@aws-sdk/client-s3": "^3.937.0",
     "@aws-sdk/s3-request-presigner": "^3.937.0",
     "@gohighlevel/api-client": "^1.0.1",
+    "@sentry/node": "11.8.0",
     "@upstash/qstash": "^2.8.4",
     "@upstash/redis": "^1.35.7",
     "bcryptjs": "^3.0.2",

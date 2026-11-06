@@ -12,7 +12,8 @@ import {
     getVideoStatus,
     getVideoById,
     getScriptSuggestions,
-    createScriptSuggestions
+    createScriptSuggestions,
+    reportActualViews
 } from '../controller/video.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { uploadSingle } from '../middleware/fileUpload.js';
@@ -51,6 +52,9 @@ videoRoutes.get('/:videoId/feedback', getVideoFeedback);
 // Scripts tab: cached alternative scripts, generated on demand
 videoRoutes.get('/:videoId/scripts', getScriptSuggestions);
 videoRoutes.post('/:videoId/scripts', createScriptSuggestions);
+
+// Real view count after posting (improves future predictions)
+videoRoutes.patch('/:videoId/actual-views', reportActualViews);
 
 // Get single video with analysis DTO (slash-doc shape)
 videoRoutes.get('/:videoId', getVideoById);

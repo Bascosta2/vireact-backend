@@ -1,4 +1,5 @@
 import openai from "../lib/openai.js";
+import { buildCompletionParams } from "../config/ai-models.js";
 
 const DEFAULT_SYSTEM_PROMPT =
     "You are a concise video analytics assistant. Respond in plain text, without markdown, asterisk or emojis. Keep answers focused, neutral, and under 160 words unless otherwise specified.";
@@ -7,12 +8,15 @@ const MAX_MESSAGE_CONTENT_CHARS = 12000;
 /** Structured-output prompts carry transcript + scenes + RAG, so they need more room. */
 const MAX_STRUCTURED_CONTENT_CHARS = 60000;
 
-/** Strict `json_schema` requires a structured-outputs capable model. */
-const STRUCTURED_OUTPUT_MODEL = "gpt-4o-mini";
-
+/**
+ * Models come from src/config/ai-models.js by role ("structured", "writer", "classifier").
+ * Pass `model` only to override a role for one call.
+ */
 export const requestChatCompletion = async ({
     messages,
-    model = "gpt-4o-mini",
+    role = "structured",
+    model,
+    reasoningEffort,
     temperature = 0.3,
     maxTokens = 500,
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
@@ -33,10 +37,8 @@ export const requestChatCompletion = async ({
     }));
 
     const response = await openai.chat.completions.create({
-        model,
+        ...buildCompletionParams({ role, model, reasoningEffort, temperature, maxTokens }),
         messages: safeMessages,
-        temperature,
-        max_tokens: maxTokens,
     });
 
     return response?.choices?.[0]?.message?.content || "";
@@ -57,7 +59,9 @@ export const requestStructuredCompletion = async ({
     messages,
     schemaName,
     jsonSchema,
-    model = STRUCTURED_OUTPUT_MODEL,
+    role = "structured",
+    model,
+    reasoningEffort,
     temperature = 0.2,
     maxTokens = 3000,
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
@@ -81,10 +85,8 @@ export const requestStructuredCompletion = async ({
     }));
 
     const response = await openai.chat.completions.create({
-        model,
+        ...buildCompletionParams({ role, model, reasoningEffort, temperature, maxTokens }),
         messages: safeMessages,
-        temperature,
-        max_tokens: maxTokens,
         response_format: {
             type: "json_schema",
             json_schema: { name: schemaName, schema: jsonSchema, strict: true },

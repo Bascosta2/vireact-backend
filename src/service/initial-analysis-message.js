@@ -26,7 +26,14 @@ export const formatClock = (seconds) => {
 const quote = (text) => `"${String(text).trim().replace(/^"+|"+$/g, '')}"`;
 
 /** The literal change for one fix, phrased as an instruction. */
-export const describeFix = (fix) => {
+/** On-screen text changes, whichever fix type the analyzer picked. */
+const isTextFix = (fix, category) =>
+    fix?.type === 'add_text_overlay' || (fix?.type === 'replace_line' && (category === 'caption' || category === 'visual'));
+
+/** Fixes that compete for the same thing on screen or in the edit count as one kind when de-duplicating. */
+const fixKind = (item) => (isTextFix(item?.fix, item?.category) ? 'text' : item?.fix?.type);
+
+export const describeFix = (fix, category) => {
     const after = typeof fix?.after === 'string' ? fix.after.trim() : '';
     if (!after) return '';
     // The model often already wrote the instruction ("add a splash at 0:12"): don't prefix it twice.
@@ -35,7 +42,8 @@ export const describeFix = (fix) => {
     }
     switch (fix.type) {
         case 'replace_line':
-            return `Say this instead: ${quote(after)}`;
+            // A caption/visual "line" is on-screen text, not something said out loud.
+            return isTextFix(fix, category) ? `Change the on-screen text to: ${quote(after)}` : `Say this instead: ${quote(after)}`;
         case 'add_text_overlay':
             return `Put this text on screen: ${quote(after)}`;
         case 'cut':
@@ -73,12 +81,12 @@ export function buildInitialAnalysisMessage(video, { maxFixes = 3 } = {}) {
     const overlaps = (a, b) => (a.tStart ?? 0) < (b.tEnd ?? b.tStart ?? 0) && (b.tStart ?? 0) < (a.tEnd ?? a.tStart ?? 0);
     const fixes = [];
     (video?.timestampFeedback || [])
-        .filter((item) => item && item.sourceFeature !== 'advanced_analytics' && describeFix(item.fix))
+        .filter((item) => item && item.sourceFeature !== 'advanced_analytics' && describeFix(item.fix, item.category))
         .slice()
         .sort((a, b) => (b.severity ?? 0) - (a.severity ?? 0) || (a.tStart ?? 0) - (b.tStart ?? 0))
         .forEach((item) => {
             if (fixes.length >= maxFixes) return;
-            if (fixes.some((kept) => kept.fix?.type === item.fix?.type && overlaps(kept, item))) return;
+            if (fixes.some((kept) => fixKind(kept) === fixKind(item) && overlaps(kept, item))) return;
             fixes.push(item);
         });
     fixes.sort((a, b) => (a.tStart ?? 0) - (b.tStart ?? 0));
@@ -95,7 +103,7 @@ export function buildInitialAnalysisMessage(video, { maxFixes = 3 } = {}) {
         fixes.forEach((item, index) => {
             const range = `${formatClock(item.tStart)}-${formatClock(item.tEnd ?? item.tStart)}`;
             const issue = sentence(item.issue);
-            const change = sentence(describeFix(item.fix));
+            const change = sentence(describeFix(item.fix, item.category));
             lines.push(`${index + 1}. ${range}. ${issue} ${change}`.replace(/\s+/g, ' ').trim());
         });
     } else {

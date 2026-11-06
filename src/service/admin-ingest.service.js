@@ -1,9 +1,8 @@
 import { Readable } from 'stream';
-import { analyzeVideoScenes } from '../lib/twelve-labs-analyze.js';
+import { getVideoScenes } from './video-scenes.service.js';
 import { twelveLabsCreateDirectAsset } from '../lib/twelve-labs-ingest.helper.js';
 import { TWELVELABS_DATASET_INDEX } from '../config/index.js';
 import { waitForAssetReady, indexAssetWithRetry } from './video.service.js';
-import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from './scene-parser.service.js';
 import { analyzeHook } from './analyzer/hook.analyzer.js';
 import { analyzeCaption } from './analyzer/caption.analyzer.js';
 import { analyzePacing } from './analyzer/pacing.analyzer.js';
@@ -12,10 +11,11 @@ import { analyzeAdvancedAnalytics } from './analyzer/advanced-analytics.analyzer
 import { analyzeViewsPredictor } from './analyzer/views-predictor.analyzer.js';
 import { KnowledgeBase } from '../model/knowledge-base.model.js';
 import openai from '../lib/openai.js';
+import { embeddingModel } from '../config/ai-models.js';
+import { requestChatCompletion } from './openai-response.service.js';
 import { KB_SPECIFICITY, KB_EXEMPLAR_TYPES } from '../constants.js';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
-const CREATOR_PSYCH_MODEL = 'gpt-4o-mini';
+const EMBEDDING_MODEL = embeddingModel();
 const FEATURES = ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor'];
 const WEIGHTS = { hook: 0.35, pacing: 0.25, audio: 0.20, caption: 0.10, views_predictor: 0.10 };
 
@@ -162,10 +162,11 @@ async function ingestFileToDatasetIndex(file, datasetId) {
     const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_DATASET_INDEX);
     const twelveLabsVideoId = indexedAssetId;
 
-    // Pegasus 1.5 reads the asset directly (Pegasus 1.2 / index-based analyze was sunset).
-    const videoAnalysisResult = await analyzeVideoScenes({ assetId: twelveLabsAssetId }, TWELVE_LABS_SCENE_PROMPT);
-
-    const scenes = await parseScenesWithOpenAI(videoAnalysisResult);
+    // Pegasus reads the asset directly (structured JSON first, text breakdown as fallback).
+    const { scenes, via: sceneSource, error: sceneError } = await getVideoScenes({ assetId: twelveLabsAssetId });
+    if (scenes.length === 0) {
+        throw new Error(`No scene breakdown for this video (${sceneSource}${sceneError ? `: ${sceneError}` : ''}).`);
+    }
     const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
     const hookText = hookScene?.primaryAction || hookScene?.visualDescription || '';
 
@@ -261,13 +262,11 @@ export async function generateCreatorPsychologicalSummary(doc) {
         featureAnalysis: analysisBrief,
     };
 
-    const completion = await openai.chat.completions.create({
-        model: CREATOR_PSYCH_MODEL,
+    const completionText = await requestChatCompletion({
+        role: 'structured',
         temperature: 0.3,
-        messages: [
-            {
-                role: 'system',
-                content: `You write dense, retrieval-friendly summaries for a video performance knowledge base.
+        maxTokens: 1500,
+        systemPrompt: `You write dense, retrieval-friendly summaries for a video performance knowledge base.
 Focus on PSYCHOLOGICAL and STRUCTURAL signals, not topic/niche (ignore whether content is cooking, finance, etc.).
 
 Cover when evident from the data:
@@ -279,15 +278,10 @@ Cover when evident from the data:
 - Performance outcome: relate actual views to creator size (e.g. micro account vs viral outcome)
 
 Output 4-8 short paragraphs OR bullet sections as plain text only (no JSON, no markdown code fences). Start with a line: [CREATOR_PERFORMANCE_PROFILE]`,
-            },
-            {
-                role: 'user',
-                content: JSON.stringify(userPayload),
-            },
-        ],
+        messages: [{ role: 'user', content: JSON.stringify(userPayload) }],
     });
 
-    const text = completion?.choices?.[0]?.message?.content?.trim();
+    const text = completionText?.trim();
     if (!text) {
         throw new Error('Empty psychological summary from model');
     }

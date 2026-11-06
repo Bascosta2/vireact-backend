@@ -2,8 +2,8 @@ import mongoose from "mongoose";
 import { KnowledgeBase } from "../../model/knowledge-base.model.js";
 
 // ---- UPDATE THESE ----
-const SOURCE_MONGO_URI = "";       // your cluster
-const DEST_MONGO_URI = "";         // Bas's cluster
+const SOURCE_MONGO_URI = process.env.SOURCE_MONGO_URI || "";  // copy FROM (e.g. production)
+const DEST_MONGO_URI = process.env.DEST_MONGO_URI || "";      // copy TO (e.g. staging)
 // ----------------------
 
 // Optional: Same schema for both sides

@@ -137,3 +137,19 @@ test('impossible timecodes are repaired using the video length; internal fix ids
     assert.equal(cleanUserText('cut 00:00:11.000-00:00:16.000 to maintain viewer engagement.'), 'cut 0:11-0:16.');
     assert.equal(describeFix({ type: 'add_sound', after: 'add a splash at 0:12' }), 'Add a splash at 0:12');
 });
+
+test('caption replacements read as on-screen text and do not duplicate an overlay at the same moment', () => {
+    assert.equal(describeFix({ type: 'replace_line', after: 'Surfing under the pier' }, 'caption'), 'Change the on-screen text to: "Surfing under the pier"');
+    assert.equal(describeFix({ type: 'replace_line', after: 'I made it' }, 'hook'), 'Say this instead: "I made it"');
+    const message = buildInitialAnalysisMessage({
+        viralityScore: 40,
+        analysis: [{ feature: 'hook', score: 38 }, { feature: 'audio', score: 52 }],
+        timestampFeedback: [
+            { tStart: 0, tEnd: 5, severity: 5, category: 'hook', sourceFeature: 'hook', issue: 'No action named', fix: { type: 'add_text_overlay', after: 'Surfing under the pier' } },
+            { tStart: 0, tEnd: 5, severity: 4, category: 'caption', sourceFeature: 'caption', issue: 'Date only', fix: { type: 'replace_line', after: 'Bajo el muelle' } },
+            { tStart: 12, tEnd: 21, severity: 3, category: 'pacing', sourceFeature: 'pacing', issue: 'Repeats', fix: { type: 'cut', after: 'cut 0:12-0:21' } },
+        ],
+    });
+    assert.match(message, /Do these 2 things first/);
+    assert.doesNotMatch(message, /Bajo el muelle/);
+});

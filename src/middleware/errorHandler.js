@@ -2,6 +2,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { NODE_ENV } from "../config/index.js";
 import { getAllowedCorsOrigins } from "../config/cors-allowed-origins.js";
+import { captureError } from "../service/ops-monitoring.service.js";
 
 export const errorHandler = (err, req, res, next) => {
     // Ensure CORS headers are set even for error responses
@@ -17,6 +18,7 @@ export const errorHandler = (err, req, res, next) => {
     }
 
     if (err instanceof ApiError) {
+        if (err.statusCode >= 500) captureError(err, { route: `${req.method} ${req.originalUrl?.split('?')[0]}` });
         res.status(err.statusCode).json(
             ApiResponse.error(err.statusCode, err.message, err.data)
         );
@@ -31,6 +33,7 @@ export const errorHandler = (err, req, res, next) => {
                 ApiResponse.error(400, err.message, null)
             );
         } else {
+            captureError(err, { route: `${req.method} ${req.originalUrl?.split('?')[0]}` });
             res.status(500).json(
                 ApiResponse.error(500, "Internal Server Error", null)
             );

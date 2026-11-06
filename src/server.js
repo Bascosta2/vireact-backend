@@ -9,6 +9,39 @@ try {
 const { default: app } = await import('./app.js');
 import { PORT, NODE_ENV, FRONTEND_URL, BACKEND_URL, DB_URL, JWT_SECRET, ACCESS_TOKEN_SECRET, SESSION_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URL, STRIPE_SECRET_KEY, STRIPE_PRICE_ID_PREMIUM, STRIPE_PRICE_ID_PRO, TWELVE_LABS_API_KEY, TWELVELABS_USER_INDEX, TWELVELABS_DATASET_INDEX, OPENAI_API_KEY, RESEND_API_KEY, UPSTASH_REDIS_REST_URL, QSTASH_TOKEN, QSTASH_URL, QSTASH_CURRENT_SIGNING_KEY, QSTASH_NEXT_SIGNING_KEY, AWS_ACCESS_KEY_ID } from './config/index.js';
 import { connectDB, isConnected } from './db/index.js';
+import { markShuttingDown, runningJobIds, waitForRunningJobs } from './queue/analysis-runtime.js';
+import { sweepStuckAnalyses, handOffRunningJobs } from './service/analysis-recovery.service.js';
+import { cleanStaleUploads } from './middleware/fileUpload.js';
+import { initErrorTracking, sendDailySummary } from './service/ops-monitoring.service.js';
+
+/** UTC hour for the daily summary (default 13:00 UTC, 8 or 9 am US Eastern). */
+const DAILY_SUMMARY_UTC_HOUR = Number(process.env.DAILY_SUMMARY_UTC_HOUR ?? 13);
+let lastSummaryDay = null;
+const maybeSendDailySummary = async () => {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  if (now.getUTCHours() !== DAILY_SUMMARY_UTC_HOUR || lastSummaryDay === day || !isConnected()) return;
+  lastSummaryDay = day;
+  await sendDailySummary();
+};
+
+/** How long a deploy waits for running analyses before handing them to the new instance. */
+const SHUTDOWN_GRACE_MS = Number(process.env.SHUTDOWN_GRACE_MS) || 25000;
+/** How often stuck analyses are looked for (default 5 minutes). */
+const ANALYSIS_SWEEP_INTERVAL_MS = Number(process.env.ANALYSIS_SWEEP_INTERVAL_MS) || 5 * 60 * 1000;
+
+let httpServer = null;
+let sweepTimer = null;
+
+const runSweep = async () => {
+  await cleanStaleUploads();
+  if (!isConnected()) return;
+  try {
+    await sweepStuckAnalyses();
+  } catch (error) {
+    console.error('[Recovery] Sweep failed:', error.message);
+  }
+};
 import { isServerAnalyticsEnabled, shutdownAnalytics } from './lib/analytics.js';
 
 const startServer = async () => {
@@ -77,6 +110,7 @@ const startServer = async () => {
     console.log(`   Connection String: ${DB_URL ? DB_URL.replace(/\/\/[^:]+:[^@]+@/, '//***:***@') : 'NOT SET'}`);
     
     // Wait for MongoDB connection before starting server
+    await initErrorTracking();
     await connectDB();
     
     // Verify connection
@@ -91,6 +125,7 @@ const startServer = async () => {
     
     // Start server after MongoDB connection
     const server = app.listen(PORT, '0.0.0.0', () => {
+      httpServer = server;
       console.log('\n✅ Server started successfully!');
       console.log('═══════════════════════════════════════════════════════════');
       console.log(`📍 Port: ${PORT}`);
@@ -122,6 +157,12 @@ const startServer = async () => {
       console.log('===================================\n');
     });
     
+    // Recover analyses interrupted by a deploy or crash: first check a minute after boot, then every 5 minutes.
+    setTimeout(runSweep, 60 * 1000).unref?.();
+    sweepTimer = setInterval(runSweep, ANALYSIS_SWEEP_INTERVAL_MS);
+    sweepTimer.unref?.();
+    setInterval(() => void maybeSendDailySummary(), 10 * 60 * 1000).unref?.();
+
     // Handle server errors (port conflicts, etc.)
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
@@ -143,8 +184,29 @@ const startServer = async () => {
   }
 }
 
+/**
+ * Graceful shutdown (Railway sends SIGTERM on every deploy):
+ * 1. stop taking analysis jobs (the webhook answers 503 so QStash retries on the new instance);
+ * 2. hand running jobs back to the queue, delayed past the grace period, so nothing is lost if this
+ *    process is killed (if it finishes first, its result wins and the delayed message is a no-op);
+ * 3. stop accepting connections, give running jobs SHUTDOWN_GRACE_MS to finish, flush analytics, exit.
+ */
 const flushAndExit = async (signal) => {
-  console.log(`\n${signal} received, flushing analytics before exit...`);
+  console.log(`\n${signal} received, shutting down gracefully...`);
+  markShuttingDown();
+  if (sweepTimer) clearInterval(sweepTimer);
+  try {
+    if (runningJobIds().length > 0 && isConnected()) {
+      await handOffRunningJobs({ delaySeconds: Math.ceil(SHUTDOWN_GRACE_MS / 1000) + 20 });
+    }
+  } catch (error) {
+    console.error('[Shutdown] Could not hand off running jobs:', error.message);
+  }
+  if (httpServer) httpServer.close();
+  const stillRunning = await waitForRunningJobs(SHUTDOWN_GRACE_MS);
+  if (stillRunning.length > 0) {
+    console.warn(`[Shutdown] ${stillRunning.length} job(s) still running; they were handed to the queue and will resume on the new instance`);
+  }
   await Promise.race([shutdownAnalytics(), new Promise((resolve) => setTimeout(resolve, 3000))]);
   process.exit(0);
 };

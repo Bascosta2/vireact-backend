@@ -14,6 +14,7 @@ export const VOICE_RULES = [
     '- No filler or hype words: engaging, captivating, compelling, dynamic, enhance, elevate, resonate, seamless, leverage, impactful, "boost engagement", "grab attention", "take it to the next level".',
     '- No praise padding and no summary sentences that repeat what you already said.',
     '- Every recommendation names the timestamp, the exact action, and the exact words, text or cut. If you cannot say exactly what to do, leave it out.',
+    '- Write your explanations in English. Write suggested spoken lines and on-screen text in the language people speak in the video; if nobody speaks, use English, even when on-screen text is in another language.',
     '- Write times as M:SS, where 0:05 means five seconds in. Never "00:00:05.000" or "5:00" for five seconds.',
     '- Hook lines and on-screen text must name something concrete from this video: the place, the action, a number, the stakes, or a question the video answers. Generic hype ("Catch the thrill!", "Surf\'s up!", "Epic ride!", "You won\'t believe this!") is rejected. No exclamation marks.',
     '- Do not explain the benefit with filler like "to enhance the atmosphere" or "to maintain viewer engagement". Say what the viewer will see or hear instead, or stop the sentence.',

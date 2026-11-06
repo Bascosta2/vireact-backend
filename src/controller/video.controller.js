@@ -9,7 +9,8 @@ import {
     ensureVideoIndexed,
     waitForAssetReady
 } from '../service/video.service.js';
-import { analyzeVideoScenes, transcribeVideoWithPegasus } from '../lib/twelve-labs-analyze.js';
+import { transcribeVideoWithPegasus } from '../lib/twelve-labs-analyze.js';
+import { getVideoScenes } from '../service/video-scenes.service.js';
 import { notifyUserShortsReady } from '../service/notification.service.js';
 import { User } from '../model/user.model.js';
 import { getVideoFeedbackService } from '../service/video-feedback.service.js';
@@ -19,6 +20,10 @@ import { Video } from '../model/video.model.js';
 import { Chat } from '../model/chat.model.js';
 import { ANALYSIS_STATUS, allowedFeaturesForPlan, SUBSCRIPTION_PLANS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
+import { isShuttingDown, trackJobStart, trackJobEnd } from '../queue/analysis-runtime.js';
+import { removeUploadedFile } from '../middleware/fileUpload.js';
+import { alertFailure } from '../service/ops-monitoring.service.js';
+import { startHeartbeat } from '../service/analysis-recovery.service.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
 import { analyzeHook } from '../service/analyzer/hook.analyzer.js';
 import { analyzeCaption } from '../service/analyzer/caption.analyzer.js';
@@ -28,14 +33,13 @@ import { analyzeAdvancedAnalytics } from '../service/analyzer/advanced-analytics
 import { analyzeViewsPredictor } from '../service/analyzer/views-predictor.analyzer.js';
 import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
-import { calibrateViewBand } from '../service/view-calibration.js';
+import { predictViewBand, normalizeFollowers, normalizePlatform } from '../service/view-prediction.service.js';
 import { buildInitialAnalysisMessage } from '../service/initial-analysis-message.js';
 import {
     generateScriptOptions,
     toScriptSuggestionsResponse,
     MAX_SCRIPT_REGENERATIONS,
 } from '../service/script-suggestions.service.js';
-import { TWELVE_LABS_SCENE_PROMPT, parseScenesWithOpenAI } from '../service/scene-parser.service.js';
 import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
 import { TWELVELABS_USER_INDEX } from '../config/index.js';
 import { buildFeedbackId, buildScriptRewriteId } from '../service/analyzer/feedback-schema.js';
@@ -324,6 +328,8 @@ export const reanalyzeVideo = async (req, res, next) => {
         video.analysisStatus = ANALYSIS_STATUS.QUEUED;
         video.lastError = null;
         video.lastErrorAt = null;
+        video.analysisAttempts = 0;
+        video.analysisHeartbeatAt = null;
         await video.save();
 
         await publishVideoAnalysisJob({
@@ -359,11 +365,19 @@ export const processVideoAnalysis = async (req, res) => {
         return res.status(200).json({ received: true });
     }
 
+    // During a deploy this instance is going away: a non-2xx makes QStash retry, and the retry lands
+    // on the new instance. The video stays "queued" until then.
+    if (isShuttingDown()) {
+        console.warn(`[QStash] Shutting down; asking QStash to retry video ${videoId} later`);
+        return res.status(503).json({ received: false, retry: true });
+    }
+
     res.status(200).json({ received: true, videoId });
     console.log('[QStash] Acknowledged to QStash, starting background analysis:', videoId);
 
     setImmediate(async () => {
         let video;
+        let stopHeartbeat = null;
         try {
             console.log('[QStash] Background analysis started for:', videoId);
             try {
@@ -372,7 +386,7 @@ export const processVideoAnalysis = async (req, res) => {
                         _id: videoId,
                         analysisStatus: ANALYSIS_STATUS.QUEUED
                     },
-                    { $set: { analysisStatus: ANALYSIS_STATUS.PROCESSING } },
+                    { $set: { analysisStatus: ANALYSIS_STATUS.PROCESSING, analysisHeartbeatAt: new Date() } },
                     { new: true }
                 );
             } catch (dbErr) {
@@ -391,6 +405,8 @@ export const processVideoAnalysis = async (req, res) => {
             }
 
             console.log('[QStash] Video claimed for processing, id:', videoId, 'analysisStatus:', video.analysisStatus);
+            trackJobStart(videoId);
+            stopHeartbeat = startHeartbeat(videoId);
 
             if (!video.twelveLabsVideoId && twelveLabsVideoId) {
                 video.twelveLabsVideoId = twelveLabsVideoId;
@@ -424,14 +440,11 @@ export const processVideoAnalysis = async (req, res) => {
                 ({ rawTranscript, streamUrl, thumbnailUrl } = await fetchIndexedVideoMedia(TWELVELABS_USER_INDEX, indexedVideoId));
             }
 
-            // Scene breakdown (Pegasus 1.5 on the asset, retried on transient errors) and, when the index had
-            // no transcription, a Pegasus transcript — both requested in parallel.
+            // Scene breakdown (Pegasus structured JSON, text breakdown as fallback) and, when the index had
+            // no transcription, a Pegasus transcript. Both requested in parallel.
             const pegasusSource = { assetId: video.twelveLabsAssetId, streamUrl: streamUrl || video.streamUrl || null };
-            const [sceneText, pegasusTranscript] = await Promise.all([
-                analyzeVideoScenes(pegasusSource, TWELVE_LABS_SCENE_PROMPT).catch((analyzeError) => {
-                    console.error(`[QStash] Scene breakdown unavailable for video ${videoId}:`, analyzeError?.statusCode ?? '', analyzeError?.message);
-                    return null;
-                }),
+            const [sceneResult, pegasusTranscript] = await Promise.all([
+                getVideoScenes(pegasusSource),
                 rawTranscript.length === 0 ? transcribeVideoWithPegasus(pegasusSource) : Promise.resolve([]),
             ]);
             if (rawTranscript.length === 0 && pegasusTranscript.length > 0) {
@@ -444,19 +457,8 @@ export const processVideoAnalysis = async (req, res) => {
             if (thumbnailUrl) video.thumbnailUrl = thumbnailUrl;
             console.log(`[QStash] Transcript segments: ${rawTranscript.length}, stream URL: ${streamUrl ? 'yes' : 'no'}`);
 
-            let scenes = [];
-            if (sceneText) {
-                try {
-                    scenes = await parseScenesWithOpenAI(sceneText);
-                } catch (parseError) {
-                    console.error(`[QStash] Scene parsing failed for video ${videoId}:`, parseError.message);
-                    scenes = [];
-                }
-                console.log(`[QStash] Scene breakdown parsed, scene count: ${scenes.length}`);
-                if (scenes.length === 0) {
-                    console.warn(`[QStash] No scenes parsed for video ${videoId}. First 500 chars:`, sceneText.slice(0, 500));
-                }
-            }
+            let scenes = sceneResult.scenes;
+            console.log(`[QStash] Scene breakdown for video ${videoId}: ${scenes.length} scenes via ${sceneResult.via}${sceneResult.error ? ` (${sceneResult.error})` : ''}`);
 
             video.scenes = scenes;
 
@@ -695,18 +697,22 @@ export const processVideoAnalysis = async (req, res) => {
                 video.viralityScore = null;
             }
 
-            // The predictor reads a viral-heavy knowledge base; cap its band by the overall score.
-            if (video.predictedViewsLow != null || video.predictedViewsHigh != null) {
-                const views = calibrateViewBand(
-                    { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
-                    video.viralityScore
-                );
-                if (views.capped) {
-                    console.log(`[Analysis] View band capped for video ${videoId} (score ${video.viralityScore}): ${video.predictedViewsLow}-${video.predictedViewsHigh} -> ${views.low}-${views.high}`);
-                }
+            // Predicted views from the best evidence available: comparable real results scaled to the
+            // creator's followers, a follower-based estimate, or the model's band capped by the score.
+            if (video.predictedViewsLow != null || video.predictedViewsHigh != null || video.creatorFollowers) {
+                const views = await predictViewBand({
+                    viralityScore: video.viralityScore,
+                    followers: video.creatorFollowers,
+                    platform: video.creatorPlatform,
+                    modelBand: { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
+                    excludeVideoId: video._id,
+                });
+                console.log(`[Analysis] Views for ${videoId} via ${views.method} (${views.comparables} comparables): ${views.low}-${views.high}, expected ${views.expected}`);
                 video.predictedViewsLow = views.low;
                 video.predictedViewsExpected = views.expected;
                 video.predictedViewsHigh = views.high;
+                video.viewPredictionMethod = views.method;
+                video.viewPredictionComparables = views.comparables;
             }
 
             video.retentionCurve = computeRetentionCurve(video);
@@ -718,6 +724,8 @@ export const processVideoAnalysis = async (req, res) => {
 
             video.analysisStatus = ANALYSIS_STATUS.COMPLETED;
             video.isAnalysisReady = true;
+            video.analysisHeartbeatAt = null;
+            video.analysisAttempts = 0;
             await video.save();
 
             try {
@@ -771,12 +779,17 @@ export const processVideoAnalysis = async (req, res) => {
                     v.analysisStatus = ANALYSIS_STATUS.FAILED;
                     v.lastError = errMsg;
                     v.lastErrorAt = new Date();
+                    v.analysisHeartbeatAt = null;
                     await v.save();
                     console.log('[QStash] Video marked as failed in DB:', videoId);
                 }
+                void alertFailure({ stage: 'analysis', videoId, userId: userId || v?.uploader_id, error: bgError });
             } catch (saveErr) {
                 console.error('[QStash] Failed to save error state:', saveErr.message);
             }
+        } finally {
+            if (stopHeartbeat) stopHeartbeat();
+            trackJobEnd(videoId);
         }
     });
 };
@@ -799,7 +812,7 @@ export const uploadVideoToTwelveLabs = async (req, res, next) => {
         }
 
         // Log file info for debugging
-        console.log(`📁 File received: ${filename}, size: ${file.size}, mimetype: ${file.mimetype}, buffer size: ${file.buffer?.length || 'N/A'}`);
+        console.log(`📁 File received: ${filename}, size: ${file.size}, mimetype: ${file.mimetype}, stored ${file.path ? 'on disk' : 'in memory'}`);
 
         const selectedFeaturesArray = selectedFeatures
             ? (Array.isArray(selectedFeatures) ? selectedFeatures : JSON.parse(selectedFeatures))
@@ -810,7 +823,8 @@ export const uploadVideoToTwelveLabs = async (req, res, next) => {
             userId,
             file,
             filename,
-            selectedFeaturesArray
+            selectedFeaturesArray,
+            { platform: req.body.platform, followers: req.body.followers }
         );
 
         res.status(200).json(
@@ -822,6 +836,9 @@ export const uploadVideoToTwelveLabs = async (req, res, next) => {
         );
     } catch (error) {
         next(error);
+    } finally {
+        // The file is on Twelve Labs (or the upload failed): the temp copy is no longer needed.
+        await removeUploadedFile(req.file || req.files?.file);
     }
 };
 
@@ -943,5 +960,40 @@ export const createScriptSuggestions = async (req, res, next) => {
         next(error);
     } finally {
         if (locked) scriptGenerationsInFlight.delete(videoId);
+    }
+};
+
+// ─── Real results ──────────────────────────────────────────────────────────
+
+/** The creator reports how many views the video actually got. Feeds future predictions. */
+export const reportActualViews = async (req, res, next) => {
+    try {
+        const { videoId } = req.params;
+        const views = normalizeFollowers(req.body?.views);
+        if (views == null) {
+            throw new ApiError(400, 'Enter the number of views as a whole number.');
+        }
+        const update = { actualViews: views, actualViewsReportedAt: new Date() };
+        const platform = normalizePlatform(req.body?.platform);
+        if (platform) update.creatorPlatform = platform;
+        const followers = normalizeFollowers(req.body?.followers);
+        if (followers != null) update.creatorFollowers = followers;
+
+        const video = await Video.findOneAndUpdate(
+            { _id: videoId, uploader_id: req.user._id },
+            { $set: update },
+            { new: true }
+        ).select('actualViews actualViewsReportedAt creatorPlatform creatorFollowers');
+        if (!video) {
+            throw new ApiError(404, 'Video not found');
+        }
+        res.status(200).json(ApiResponse.success(200, 'Thanks, your result was saved', {
+            actualViews: video.actualViews,
+            actualViewsReportedAt: video.actualViewsReportedAt,
+            creatorPlatform: video.creatorPlatform,
+            creatorFollowers: video.creatorFollowers,
+        }));
+    } catch (error) {
+        next(error);
     }
 };

@@ -18,7 +18,6 @@ export const MAX_SCRIPT_REGENERATIONS = 3;
 export const SCRIPT_OPTION_COUNT = 4;
 /** Comfortable speaking pace for short-form voiceover. */
 const MAX_WORDS_PER_SECOND = 3;
-const SCRIPT_MODEL = 'gpt-4o';
 
 const MIN_TARGET_SECONDS = 6;
 const MAX_TARGET_SECONDS = 90;
@@ -195,14 +194,15 @@ Write ${SCRIPT_OPTION_COUNT} complete alternative scripts for this exact video. 
 6. Fix the problems listed above.
 7. Every hookLine, "say" line and on-screen text must point at something concrete in this footage (what happens, where, what is at stake, or what the viewer is about to see). Write the way a creator talks, not like an ad. Bad: "Catch the thrill!", "Ride the waves!". Better: "I'm surfing straight through these pier legs", "Watch the gap on the left pillar". No exclamation marks, no hype words.
 8. Do not invent facts you cannot see or hear in this video (names, times of day, numbers, results, follower counts). Use details that are visible or audible instead.
-9. whyItWorks: one or two plain sentences about why this version keeps viewers watching this particular video.`;
+9. Language: write every hookLine, "say" line and on-screen text in the language people speak in this video. If nobody speaks, write them in English even when existing on-screen text is in another language. Write title, angle and whyItWorks in English.
+10. whyItWorks: one or two plain sentences about why this version keeps viewers watching this particular video.`;
 
     const payload = await requestStructuredCompletion({
         messages: [{ role: 'user', content: prompt }],
         schemaName: 'script_suggestions',
         jsonSchema: scriptSuggestionsJsonSchema,
         systemPrompt: SYSTEM_PROMPT,
-        model: SCRIPT_MODEL,
+        role: 'writer',
         temperature: 0.7,
         maxTokens: 4000,
     });

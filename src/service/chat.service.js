@@ -225,6 +225,7 @@ Respond with ONLY the category name (question, greeting, thanks, feedback, or ot
     try {
         const response = await requestChatCompletion({
             messages: [{ role: "user", content: prompt }],
+            role: 'classifier',
             temperature: 0.1,
             maxTokens: 20,
             systemPrompt: "You are an intent classifier. Return only the category name."
@@ -250,10 +251,13 @@ function buildNumericScoresBlock(video) {
         if (score != null) parts.push(`${label}: ${score}/100`);
     });
     // Same ceiling the report shows, so chat never quotes an uncalibrated (inflated) band.
-    const views = calibrateViewBand(
-        { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
-        video.viralityScore
-    );
+    const personalised = video.viewPredictionMethod === 'followers' || video.viewPredictionMethod === 'dataset';
+    const views = personalised
+        ? { low: video.predictedViewsLow ?? null, expected: video.predictedViewsExpected ?? null, high: video.predictedViewsHigh ?? null }
+        : calibrateViewBand(
+            { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
+            video.viralityScore
+        );
     const fmtViews = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
     if (views.low != null && views.high != null) {
         parts.push(`Predicted views: ${fmtViews(views.low)} - ${fmtViews(views.high)}`);
@@ -430,6 +434,7 @@ Answer using this video's data. Reference specific numbers and timestamps. When 
             transcriptText,
             temperature: 0.4,
             maxTokens: 2500,
+            role: 'writer',
         });
 
         const chatDuration = video.duration || video.scenes?.[video.scenes.length - 1]?.endTime;

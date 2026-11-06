@@ -4,9 +4,10 @@ import { BACKEND_URL } from '../config/index.js';
 /**
  * Publish video analysis job to QStash
  * @param {Object} jobData - Job data containing videoId and twelveLabsVideoId / userId
+ * @param {{ delaySeconds?: number }} [options] - deliver later (used when handing jobs over during a deploy)
  * @returns {Promise<string>} Message ID (normalized string for v1 or v2 SDK)
  */
-export const publishVideoAnalysisJob = async (jobData) => {
+export const publishVideoAnalysisJob = async (jobData, { delaySeconds = 0 } = {}) => {
     if (!BACKEND_URL || String(BACKEND_URL).trim() === '') {
         throw new Error('BACKEND_URL is required to publish QStash video analysis jobs');
     }
@@ -20,6 +21,7 @@ export const publishVideoAnalysisJob = async (jobData) => {
         url: webhookUrl,
         body: jobData,
         retries: 3,
+        ...(delaySeconds > 0 ? { delay: Math.round(delaySeconds) } : {}),
     });
 
     const messageId =

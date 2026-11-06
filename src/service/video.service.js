@@ -1,3 +1,7 @@
+import fs from 'fs';
+import { createSemaphore } from '../utils/semaphore.js';
+import { alertFailure } from './ops-monitoring.service.js';
+import { normalizePlatform, normalizeFollowers } from './view-prediction.service.js';
 import { Video } from '../model/video.model.js';
 import { Chat } from '../model/chat.model.js';
 // import { uploadFileUrl, deleteFile } from '../lib/aws_s3.js';
@@ -23,6 +27,12 @@ import { downloadSocialVideoForIngest } from './social-video-fetch.service.js';
 import { Readable } from 'stream';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * At most this many uploads are sent to Twelve Labs at once (TWELVELABS_MAX_CONCURRENT_UPLOADS, default 2).
+ * The SDK keeps a copy of each file in memory while sending it, so this bounds memory under bursts.
+ */
+const twelveLabsUploadSlots = createSemaphore(process.env.TWELVELABS_MAX_CONCURRENT_UPLOADS || 2);
 
 /**
  * Twelve Labs readiness limits. Indexing a short video usually takes 1-4 minutes but can take
@@ -446,7 +456,7 @@ const filterFeaturesForUser = async (userId, selectedFeatures) => {
     return selectedFeatures.filter(f => allowed.includes(f));
 };
 
-export const uploadVideoToTwelveLabsService = async (userId, file, filename, selectedFeatures = []) => {
+export const uploadVideoToTwelveLabsService = async (userId, file, filename, selectedFeatures = [], creator = {}) => {
     let quotaClaimed = false;
     let keepVideoQuota = false;
     try {
@@ -474,6 +484,8 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             _id: videoId,
             filename,
             fileSize: fileSize,
+            creatorPlatform: normalizePlatform(creator.platform),
+            creatorFollowers: normalizeFollowers(creator.followers),
             uploadStatus: UPLOAD_STATUS.UPLOADING,
             selectedFeatures: Array.isArray(filteredFeatures) ? filteredFeatures : [],
             uploader_id: userId
@@ -490,7 +502,10 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             // Convert buffer to Stream as TwelveLabs SDK expects a Stream
             let fileToUpload;
             
-            if (Buffer.isBuffer(file)) {
+            if (file?.path) {
+                // Disk upload (multer diskStorage): stream from the temp file, never load it into memory.
+                fileToUpload = fs.createReadStream(file.path);
+            } else if (Buffer.isBuffer(file)) {
                 // Convert Buffer to Readable Stream
                 fileToUpload = Readable.from(file);
             } else if (file.buffer) {
@@ -506,7 +521,11 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             
             console.log(`📤 Uploading file to TwelveLabs: ${filename}, size: ${file.size || file.buffer?.length || 'unknown'}`);
 
-            const assetResponse = await twelveLabsCreateDirectAsset(fileToUpload);
+            const slots = twelveLabsUploadSlots.stats();
+            if (slots.active >= slots.limit) {
+                console.log(`[Upload] ${slots.active} uploads already sending to Twelve Labs; ${filename} waits for a free slot`);
+            }
+            const assetResponse = await twelveLabsUploadSlots.run(() => twelveLabsCreateDirectAsset(fileToUpload));
 
             console.log(`📦 TwelveLabs response:`, JSON.stringify(assetResponse, null, 2));
             // Readiness + indexing now run in the background job (see ensureVideoIndexed).
@@ -539,6 +558,7 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             video.uploadStatus = UPLOAD_STATUS.FAILED;
             await video.save();
 
+            void alertFailure({ stage: 'upload', videoId: String(video._id), userId: String(userId), error: twelveLabsError });
             console.error("❌ TwelveLabs upload error:", {
                 message: twelveLabsError.message,
                 statusCode: twelveLabsError.statusCode,

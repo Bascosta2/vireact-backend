@@ -26,6 +26,7 @@ import {
  * @param {string} [params.transcriptText] Enables the verbatim check
  * @param {number} [params.temperature]
  * @param {number} [params.maxTokens]
+ * @param {string} [params.role] model role from config/ai-models.js (default "structured")
  * @returns {Promise<{ payload: object, frameFeedback: object[], scriptRewrites: object[], valid: boolean }>}
  */
 export const runValidatedStructuredCompletion = async ({
@@ -39,6 +40,7 @@ export const runValidatedStructuredCompletion = async ({
     transcriptText = '',
     temperature = 0.2,
     maxTokens = 3500,
+    role = 'structured',
 }) => {
     let payload = await requestStructuredCompletion({
         messages,
@@ -47,6 +49,7 @@ export const runValidatedStructuredCompletion = async ({
         systemPrompt,
         temperature,
         maxTokens,
+        role,
     });
 
     let normalized = normalize(payload);
@@ -81,6 +84,7 @@ export const runValidatedStructuredCompletion = async ({
             systemPrompt,
             temperature,
             maxTokens,
+            role,
         });
 
         const retryNormalized = normalize(retryPayload);

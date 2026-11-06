@@ -9,7 +9,7 @@ const openai = new OpenAI({
 
 async function testOpenAI() {
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: process.env.AI_MODEL_STRUCTURED || 'gpt-6-luna',
     messages: [{ role: "user", content: "Hello, how are you?" }],
   });
 

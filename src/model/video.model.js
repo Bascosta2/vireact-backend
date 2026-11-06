@@ -40,6 +40,47 @@ const videoSchema = new mongoose.Schema({
         default: ANALYSIS_STATUS.PENDING,
         required: true
     },
+    /** Creator context given at upload, used to size predicted views (see view-prediction.service.js). */
+    creatorPlatform: {
+        type: String,
+        enum: ['tiktok', 'instagram', 'youtube', 'facebook', 'other', null],
+        default: null
+    },
+    creatorFollowers: {
+        type: Number,
+        default: null,
+        min: 0
+    },
+    /** How predictedViews* were produced: score (capped model guess), followers (heuristic) or dataset. */
+    viewPredictionMethod: {
+        type: String,
+        enum: ['score', 'followers', 'dataset', null],
+        default: null
+    },
+    viewPredictionComparables: {
+        type: Number,
+        default: null
+    },
+    /** Real result the creator reported after posting; feeds future predictions. */
+    actualViews: {
+        type: Number,
+        default: null,
+        min: 0
+    },
+    actualViewsReportedAt: {
+        type: Date,
+        default: null
+    },
+    /** Automatic recovery attempts after a job was interrupted (see analysis-recovery.service.js). */
+    analysisAttempts: {
+        type: Number,
+        default: 0
+    },
+    /** Written every minute while an analysis runs; a stale value means the job died. */
+    analysisHeartbeatAt: {
+        type: Date,
+        default: null
+    },
     isAnalysisReady: {
         type: Boolean,
         default: false

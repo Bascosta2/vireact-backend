@@ -173,11 +173,15 @@ export function buildVideoAnalysisDTO(video, userPlan) {
         .filter((r) => canSeeAdvanced || r.sourceFeature !== 'advanced_analytics')
         .map(toScriptRewriteItem);
 
-    // Older reports were stored before the view ceiling existed; calibrate on read too.
-    const views = calibrateViewBand(
-        { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
-        video.viralityScore
-    );
+    // Follower- and dataset-based bands are stored final. Score-based and older reports (stored before the
+    // view ceiling existed) are capped on read.
+    const personalised = video.viewPredictionMethod === 'followers' || video.viewPredictionMethod === 'dataset';
+    const views = personalised
+        ? { low: video.predictedViewsLow ?? null, expected: video.predictedViewsExpected ?? null, high: video.predictedViewsHigh ?? null }
+        : calibrateViewBand(
+            { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
+            video.viralityScore
+        );
 
     const dto = {
         viralityScore: video.viralityScore ?? 0,
@@ -206,7 +210,13 @@ export function buildVideoAnalysisDTO(video, userPlan) {
             low: views.low,
             expected: views.expected,
             high: views.high,
+            method: video.viewPredictionMethod || 'score',
+            comparables: video.viewPredictionComparables ?? 0,
+            followers: video.creatorFollowers ?? null,
+            platform: video.creatorPlatform ?? null,
         },
+        actualViews: video.actualViews ?? null,
+        actualViewsReportedAt: video.actualViewsReportedAt ?? null,
         features: {
             hook: getFeatureEntry(analysis, 'hook'),
             pacing: getFeatureEntry(analysis, 'pacing'),

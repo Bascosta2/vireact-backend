@@ -18,11 +18,12 @@
  */
 
 import openai from '../lib/openai.js';
+import { embeddingModel } from '../config/ai-models.js';
 import { KnowledgeBase } from '../model/knowledge-base.model.js';
 import { KB_SPECIFICITY, KB_EXEMPLAR_TYPES } from '../constants.js';
 import { formatTimecode } from './analyzer/feedback-schema.js';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = embeddingModel();
 
 /** Topic bucket per feedback category, matching `KnowledgeBase.metadata.topic`. */
 const CATEGORY_TO_TOPIC = {

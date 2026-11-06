@@ -1,7 +1,8 @@
 import { KnowledgeBase } from '../model/knowledge-base.model.js';
+import { embeddingModel } from '../config/ai-models.js';
 import openai from '../lib/openai.js';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = embeddingModel();
 const TARGET_CHUNK_TOKENS = 500;
 const APPROX_CHARS_PER_TOKEN = 4;
 const TARGET_CHUNK_CHARS = TARGET_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN;

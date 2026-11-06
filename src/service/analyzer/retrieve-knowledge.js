@@ -14,11 +14,12 @@
  */
 
 import openai from '../../lib/openai.js';
+import { embeddingModel } from '../../config/ai-models.js';
 import { KnowledgeBase } from '../../model/knowledge-base.model.js';
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../../config/index.js';
 import { KB_SPECIFICITY } from '../../constants.js';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = embeddingModel();
 
 /**
  * @param {object} params

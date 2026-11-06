@@ -2,7 +2,8 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import TwelveLabsClient from '../src/lib/twelve-labs.js';
 import {
-    PEGASUS_MODEL,
+    pegasusModel,
+    parsePegasusScenes,
     buildVideoContext,
     isRetryableTwelveLabsError,
     analyzeVideoScenes,
@@ -17,7 +18,7 @@ afterEach(() => {
 
 const apiError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 
-test('Pegasus 1.5 reads the asset directly (no index video id)', async () => {
+test('Pegasus reads the asset directly (no index video id), default model pegasus1.6', async () => {
     let captured;
     TwelveLabsClient.analyze = async (request) => {
         captured = request;
@@ -25,8 +26,8 @@ test('Pegasus 1.5 reads the asset directly (no index video id)', async () => {
     };
     const text = await analyzeVideoScenes({ assetId: 'asset_1' }, 'PROMPT');
     assert.equal(text, 'SCENE: 1\nSTART_TIME: 0\nEND_TIME: 2');
-    assert.equal(PEGASUS_MODEL, 'pegasus1.5');
-    assert.equal(captured.modelName, 'pegasus1.5');
+    assert.equal(pegasusModel(), process.env.AI_MODEL_VIDEO || 'pegasus1.6');
+    assert.equal(captured.modelName, pegasusModel());
     assert.deepEqual(captured.video, { type: 'asset_id', assetId: 'asset_1' });
     assert.equal(captured.prompt, 'PROMPT');
     assert.equal('videoId' in captured, false);
@@ -89,4 +90,16 @@ test('Pegasus transcript: structured request, parsed into sorted segments, never
     assert.deepEqual(await transcribeVideoWithPegasus({ assetId: 'a' }, { attempts: 1 }), []);
     assert.deepEqual(parsePegasusTranscript('not json'), []);
     assert.deepEqual(parsePegasusTranscript('{"segments":[]}'), []);
+});
+
+test('structured Pegasus scenes are parsed, cleaned, ordered and numbered', () => {
+    const scenes = parsePegasusScenes(JSON.stringify({ scenes: [
+        { startTime: 5, endTime: 12, visualDescription: 'Wave', onScreenText: 'NONE', audioSummary: 'Music', primaryAction: 'Riding', emotionalTone: 'excited', purpose: 'Story' },
+        { startTime: 0, endTime: 5, visualDescription: 'Pier', onScreenText: '', audioSummary: '', primaryAction: 'Paddling', emotionalTone: 'calm', purpose: 'hook' },
+        { startTime: 'x', endTime: 3 },
+    ] }));
+    assert.equal(scenes.length, 2);
+    assert.deepEqual(scenes.map((s) => [s.sceneNumber, s.startTime, s.purpose]), [[1, 0, 'hook'], [2, 5, 'story']]);
+    assert.equal(scenes[1].onScreenText, '');
+    assert.deepEqual(parsePegasusScenes('not json'), []);
 });
