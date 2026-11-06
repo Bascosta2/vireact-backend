@@ -9,6 +9,14 @@ import {
     createLibraryItemFromKb,
     searchKnowledgeBaseAdmin,
 } from '../controller/admin-library.controller.js';
+import {
+    postResearchRun,
+    getResearchRuns,
+    listCandidates,
+    postApproveCandidate,
+    postApproveBatch,
+    postRejectCandidate,
+} from '../controller/kb-research.controller.js';
 
 const adminRoutes = Router();
 
@@ -67,5 +75,13 @@ adminRoutes.get('/library/items', listLibraryItemsAdmin);
 adminRoutes.patch('/library/items/:id', patchLibraryItemAdmin);
 adminRoutes.post('/library/items/from-kb/:kbId', createLibraryItemFromKb);
 adminRoutes.get('/library/kb-search', searchKnowledgeBaseAdmin);
+
+// Knowledge research agent: web lessons wait in a review queue until approved into the knowledge base.
+adminRoutes.post('/kb-research/run', postResearchRun);
+adminRoutes.get('/kb-research/runs', getResearchRuns);
+adminRoutes.get('/kb-candidates', listCandidates);
+adminRoutes.post('/kb-candidates/approve-batch', postApproveBatch);
+adminRoutes.post('/kb-candidates/:id/approve', postApproveCandidate);
+adminRoutes.post('/kb-candidates/:id/reject', postRejectCandidate);
 
 export default adminRoutes;

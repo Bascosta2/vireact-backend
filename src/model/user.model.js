@@ -288,4 +288,8 @@ userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) 
 };
 
 
+// Emailed-link lookups (verify email, reset password). Partial: only users with a live token are indexed.
+userSchema.index({ emailVerificationToken: 1 }, { partialFilterExpression: { emailVerificationToken: { $type: 'string' } } });
+userSchema.index({ passwordResetTokenHash: 1 }, { partialFilterExpression: { passwordResetTokenHash: { $type: 'string' } } });
+
 export const User = mongoose.model("User", userSchema);

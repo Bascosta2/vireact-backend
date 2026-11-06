@@ -24,10 +24,12 @@ import { VideoPerformanceDataset } from '../src/model/VideoPerformanceDataset.mo
 import { LibraryItem } from '../src/model/library-item.model.js';
 import { FunnelSession } from '../src/model/funnel-session.model.js';
 import { RewriteUsage } from '../src/model/rewrite-usage.model.js';
+import { KbCandidate } from '../src/model/kb-candidate.model.js';
+import { KbResearchRun } from '../src/model/kb-research-run.model.js';
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
-    LibraryItem, FunnelSession, RewriteUsage,
+    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun,
 ];
 
 const apply = process.argv.includes('--apply');

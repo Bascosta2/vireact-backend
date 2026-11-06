@@ -315,5 +315,7 @@ const videoSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 videoSchema.index({ uploader_id: 1, createdAt: -1 });
+// Stuck-analysis sweeper (every 5 minutes) and ops stats filter on status, then age.
+videoSchema.index({ analysisStatus: 1, updatedAt: 1 });
 
 export const Video = mongoose.model('Video', videoSchema);

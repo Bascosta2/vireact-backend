@@ -83,6 +83,15 @@ const videoUploadRateLimit = rateLimit({
     message: { error: 'Upload limit reached, please try again later' },
 });
 
+/** Public sign-up forms (free guide, early access): stop scripted sign-up floods into Mailchimp and the DB. */
+const publicSignupRateLimit = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many sign-ups from this network, please try again later' },
+});
+
 // Logging
 app.use(morgan('dev'));
 
@@ -234,7 +243,7 @@ app.get('/api/db-status', async (req, res) => {
 
 // Routes
 app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/early-access', earlyAccessRoutes);
+app.use('/api/v1/early-access', publicSignupRateLimit, earlyAccessRoutes);
 app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
@@ -246,7 +255,7 @@ app.use('/api/v1/funnel', funnelRoutes);
 // /api/subscribe — Mailchimp lead-gen endpoint for the /viral-hooks PDF funnel.
 // Lives outside /api/v1 because it's a public, lightweight endpoint with no
 // auth, no versioned contract, and is what the frontend POSTs to directly.
-app.use('/api/subscribe', subscribeRoutes);
+app.use('/api/subscribe', publicSignupRateLimit, subscribeRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

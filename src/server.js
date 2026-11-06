@@ -13,6 +13,7 @@ import { markShuttingDown, runningJobIds, waitForRunningJobs } from './queue/ana
 import { sweepStuckAnalyses, handOffRunningJobs } from './service/analysis-recovery.service.js';
 import { cleanStaleUploads } from './middleware/fileUpload.js';
 import { initErrorTracking, sendDailySummary } from './service/ops-monitoring.service.js';
+import { maybeRunScheduledResearch } from './service/kb-research/runner.js';
 
 /** UTC hour for the daily summary (default 13:00 UTC, 8 or 9 am US Eastern). */
 const DAILY_SUMMARY_UTC_HOUR = Number(process.env.DAILY_SUMMARY_UTC_HOUR ?? 13);
@@ -162,6 +163,8 @@ const startServer = async () => {
     sweepTimer = setInterval(runSweep, ANALYSIS_SWEEP_INTERVAL_MS);
     sweepTimer.unref?.();
     setInterval(() => void maybeSendDailySummary(), 10 * 60 * 1000).unref?.();
+    // Weekly knowledge research (only when KB_RESEARCH_AUTO=true); results wait for review.
+    setInterval(() => void maybeRunScheduledResearch(), 6 * 60 * 60 * 1000).unref?.();
 
     // Handle server errors (port conflicts, etc.)
     server.on('error', (err) => {
