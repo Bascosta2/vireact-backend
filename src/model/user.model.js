@@ -55,14 +55,15 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: null
     },
-    // Email notification preferences
+    // Email notification preferences. Per-video emails (short ready, export/report ready) are
+    // opt-in and start off; new features and events (notifyProductUpdates) start on.
     notifyShortsReady: {
         type: Boolean,
-        default: true
+        default: false
     },
     notifyExportReady: {
         type: Boolean,
-        default: true
+        default: false
     },
     notifyProductUpdates: {
         type: Boolean,

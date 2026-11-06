@@ -162,8 +162,8 @@ export const getNotificationPreferencesService = async (userId) => {
         }
 
         return {
-            notifyShortsReady: user.notifyShortsReady ?? true,
-            notifyExportReady: user.notifyExportReady ?? true,
+            notifyShortsReady: user.notifyShortsReady ?? false,
+            notifyExportReady: user.notifyExportReady ?? false,
             notifyProductUpdates: user.notifyProductUpdates ?? true
         };
     } catch (error) {
