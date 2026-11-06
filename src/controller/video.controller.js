@@ -6,8 +6,10 @@ import {
     markAnalysisViewedService,
     uploadVideoToTwelveLabsService,
     uploadVideoUrlToTwelveLabsService,
-    ensureVideoIndexed
+    ensureVideoIndexed,
+    waitForAssetReady
 } from '../service/video.service.js';
+import { analyzeVideoScenes, transcribeVideoWithPegasus } from '../lib/twelve-labs-analyze.js';
 import { notifyUserShortsReady } from '../service/notification.service.js';
 import { User } from '../model/user.model.js';
 import { getVideoFeedbackService } from '../service/video-feedback.service.js';
@@ -18,7 +20,6 @@ import { Chat } from '../model/chat.model.js';
 import { ANALYSIS_STATUS, allowedFeaturesForPlan, SUBSCRIPTION_PLANS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
-import TwelveLabsClient from '../lib/twelve-labs.js';
 import { analyzeHook } from '../service/analyzer/hook.analyzer.js';
 import { analyzeCaption } from '../service/analyzer/caption.analyzer.js';
 import { analyzePacing } from '../service/analyzer/pacing.analyzer.js';
@@ -388,68 +389,69 @@ export const processVideoAnalysis = async (req, res) => {
                 video.twelveLabsVideoId = twelveLabsVideoId;
             }
 
-            // Uploads now return as soon as the file reaches Twelve Labs; readiness and indexing
-            // happen here, in the background, with a generous time limit.
-            console.log(`[QStash] Ensuring Twelve Labs indexing for video ${videoId} (asset ${video.twelveLabsAssetId || 'n/a'})`);
-            const indexedVideoId = await ensureVideoIndexed(video);
-
-            console.log(`[QStash] Processing analysis for video ${videoId}, TwelveLabs video ID: ${indexedVideoId}`);
+            console.log(`[QStash] Processing analysis for video ${videoId} (asset ${video.twelveLabsAssetId || 'n/a'})`);
             if (userId) {
                 console.log(`[QStash] User ID: ${userId}`);
             }
 
-            // Scene breakdown from Twelve Labs. One retry on failure; if it still fails, the job
-            // continues on the transcript alone rather than failing the whole video.
-            let videoAnalysisResult = null;
-            for (let attempt = 1; attempt <= 2 && videoAnalysisResult == null; attempt++) {
-                try {
-                    videoAnalysisResult = await TwelveLabsClient.analyze(
-                        {
-                            videoId: indexedVideoId,
-                            prompt: TWELVE_LABS_SCENE_PROMPT,
-                            temperature: 0.2,
-                            maxTokens: 4096
-                        },
-                        { timeoutInSeconds: 180 }
-                    );
-                    console.log(`[QStash] TwelveLabs analyze completed for video ${videoId} (attempt ${attempt})`);
-                } catch (analyzeError) {
-                    console.error(
-                        `[QStash] TwelveLabs analyze failed for video ${videoId} (attempt ${attempt}):`,
-                        analyzeError?.statusCode ?? '',
-                        analyzeError?.message
-                    );
-                    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 5000));
-                }
+            // Pegasus reads the uploaded asset, which must be `ready` first.
+            if (video.twelveLabsAssetId) {
+                await waitForAssetReady(video.twelveLabsAssetId, null);
             }
 
-            let scenes = [];
-            if (videoAnalysisResult != null) {
-                try {
-                    scenes = await parseScenesWithOpenAI(videoAnalysisResult);
-                } catch (parseError) {
-                    console.error(`[QStash] Scene parsing failed for video ${videoId}:`, parseError.message);
-                    scenes = [];
-                }
-                console.log(`[QStash] parseScenesWithOpenAI done, scene count: ${scenes.length}`);
-                if (scenes.length === 0) {
-                    console.warn('[QStash] No scenes were parsed from the analysis result. Raw result:', JSON.stringify(videoAnalysisResult, null, 2));
-                }
+            // Indexing supplies the player stream and the transcript. Since Pegasus 1.5 the analysis itself
+            // no longer needs the index, so an indexing failure only loses those extras (when we have an asset).
+            let indexedVideoId = video.twelveLabsVideoId || null;
+            try {
+                indexedVideoId = await ensureVideoIndexed(video);
+            } catch (indexError) {
+                if (!video.twelveLabsAssetId) throw indexError;
+                console.error(`[QStash] Indexing failed for video ${videoId}; analyzing the asset without index extras:`, indexError.message);
             }
 
-            video.scenes = scenes;
+            // Transcript + HLS stream from the index (segment-level; source of truth for verbatim quotes).
+            let rawTranscript = [];
+            let streamUrl = null;
+            let thumbnailUrl = null;
+            if (indexedVideoId) {
+                ({ rawTranscript, streamUrl, thumbnailUrl } = await fetchIndexedVideoMedia(TWELVELABS_USER_INDEX, indexedVideoId));
+            }
 
-            // Transcript + HLS stream, fetched once and reused by every analyzer.
-            // Segment-level granularity is the Twelve Labs ceiling; this is the
-            // single source of truth for verbatim quotes downstream.
-            const { rawTranscript, streamUrl, thumbnailUrl } = await fetchIndexedVideoMedia(
-                TWELVELABS_USER_INDEX,
-                indexedVideoId
-            );
+            // Scene breakdown (Pegasus 1.5 on the asset, retried on transient errors) and, when the index had
+            // no transcription, a Pegasus transcript — both requested in parallel.
+            const pegasusSource = { assetId: video.twelveLabsAssetId, streamUrl: streamUrl || video.streamUrl || null };
+            const [sceneText, pegasusTranscript] = await Promise.all([
+                analyzeVideoScenes(pegasusSource, TWELVE_LABS_SCENE_PROMPT).catch((analyzeError) => {
+                    console.error(`[QStash] Scene breakdown unavailable for video ${videoId}:`, analyzeError?.statusCode ?? '', analyzeError?.message);
+                    return null;
+                }),
+                rawTranscript.length === 0 ? transcribeVideoWithPegasus(pegasusSource) : Promise.resolve([]),
+            ]);
+            if (rawTranscript.length === 0 && pegasusTranscript.length > 0) {
+                rawTranscript = pegasusTranscript;
+                console.log(`[QStash] Using Pegasus transcript (${rawTranscript.length} segments) for video ${videoId}`);
+            }
+
             video.rawTranscript = rawTranscript;
             if (streamUrl) video.streamUrl = streamUrl;
             if (thumbnailUrl) video.thumbnailUrl = thumbnailUrl;
             console.log(`[QStash] Transcript segments: ${rawTranscript.length}, stream URL: ${streamUrl ? 'yes' : 'no'}`);
+
+            let scenes = [];
+            if (sceneText) {
+                try {
+                    scenes = await parseScenesWithOpenAI(sceneText);
+                } catch (parseError) {
+                    console.error(`[QStash] Scene parsing failed for video ${videoId}:`, parseError.message);
+                    scenes = [];
+                }
+                console.log(`[QStash] Scene breakdown parsed, scene count: ${scenes.length}`);
+                if (scenes.length === 0) {
+                    console.warn(`[QStash] No scenes parsed for video ${videoId}. First 500 chars:`, sceneText.slice(0, 500));
+                }
+            }
+
+            video.scenes = scenes;
 
             // With neither a scene breakdown nor speech there is nothing real to analyze; failing with a
             // clear reason (user can Re-analyze) beats a report of invented feedback.

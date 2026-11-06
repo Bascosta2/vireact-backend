@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import TwelveLabsClient from '../lib/twelve-labs.js';
+import { analyzeVideoScenes } from '../lib/twelve-labs-analyze.js';
 import { twelveLabsCreateDirectAsset } from '../lib/twelve-labs-ingest.helper.js';
 import { TWELVELABS_DATASET_INDEX } from '../config/index.js';
 import { waitForAssetReady, indexAssetWithRetry } from './video.service.js';
@@ -162,11 +162,8 @@ async function ingestFileToDatasetIndex(file, datasetId) {
     const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_DATASET_INDEX);
     const twelveLabsVideoId = indexedAssetId;
 
-    const videoAnalysisResult = await TwelveLabsClient.analyze({
-        videoId: twelveLabsVideoId,
-        prompt: TWELVE_LABS_SCENE_PROMPT,
-        temperature: 0.2,
-    });
+    // Pegasus 1.5 reads the asset directly (Pegasus 1.2 / index-based analyze was sunset).
+    const videoAnalysisResult = await analyzeVideoScenes({ assetId: twelveLabsAssetId }, TWELVE_LABS_SCENE_PROMPT);
 
     const scenes = await parseScenesWithOpenAI(videoAnalysisResult);
     const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
