@@ -5,7 +5,8 @@ import {
     deleteVideoService,
     markAnalysisViewedService,
     uploadVideoToTwelveLabsService,
-    uploadVideoUrlToTwelveLabsService
+    uploadVideoUrlToTwelveLabsService,
+    ensureVideoIndexed
 } from '../service/video.service.js';
 import { notifyUserShortsReady } from '../service/notification.service.js';
 import { User } from '../model/user.model.js';
@@ -127,6 +128,27 @@ export const markAnalysisViewed = async (req, res, next) => {
         next(error);
     }
 };
+
+/**
+ * Fallback scenes when Twelve Labs' scene breakdown is unavailable: one scene per transcript segment,
+ * carrying the real time range and the verbatim words. First segment is the hook, last is the close.
+ */
+export function buildScenesFromTranscript(rawTranscript) {
+    if (!Array.isArray(rawTranscript) || rawTranscript.length === 0) return [];
+    const last = rawTranscript.length - 1;
+    return rawTranscript.map((segment, index) => ({
+        sceneNumber: index + 1,
+        startTime: segment.tStart,
+        endTime: Math.max(segment.tEnd, segment.tStart),
+        visualDescription: '',
+        onScreenText: '',
+        audioSummary: `Spoken: "${segment.text}"`,
+        // Used as the hook text for the first scene, so it carries the actual words.
+        primaryAction: `Says "${segment.text}"`,
+        emotionalTone: '',
+        purpose: index === 0 ? 'hook' : index === last && last > 0 ? 'cta' : 'context',
+    }));
+}
 
 /** Safe copy for clients when analysis failed — never expose raw provider strings. */
 function getVideoStatusErrorSummary(analysisStatus, lastError) {
@@ -280,21 +302,26 @@ export const reanalyzeVideo = async (req, res, next) => {
             throw new ApiError(404, 'Video not found');
         }
 
-        if (!video.twelveLabsVideoId) {
+        // An asset that reached Twelve Labs but never finished indexing can be retried: the job
+        // indexes it (or resumes the pending indexing run) before analyzing.
+        if (!video.twelveLabsVideoId && !video.twelveLabsAssetId) {
             return res.status(400).json(
                 ApiResponse.error(
                     400,
-                    'TwelveLabs indexing incomplete, please delete and re-upload this video'
+                    'This video never reached Twelve Labs. Please delete it and upload it again.'
                 )
             );
         }
 
         video.analysisStatus = ANALYSIS_STATUS.QUEUED;
+        video.lastError = null;
+        video.lastErrorAt = null;
         await video.save();
 
         await publishVideoAnalysisJob({
             videoId: video._id.toString(),
-            twelveLabsVideoId: video.twelveLabsVideoId,
+            twelveLabsVideoId: video.twelveLabsVideoId || null,
+            twelveLabsAssetId: video.twelveLabsAssetId || null,
             userId: userId.toString(),
         });
 
@@ -357,49 +384,57 @@ export const processVideoAnalysis = async (req, res) => {
 
             console.log('[QStash] Video claimed for processing, id:', videoId, 'analysisStatus:', video.analysisStatus);
 
-            const indexedVideoId = video.twelveLabsVideoId || twelveLabsVideoId;
-
-            if (!indexedVideoId) {
-                if (video.twelveLabsAssetId) {
-                    console.log(`[QStash] Video ${videoId} has asset ID but not indexed. Attempting to index...`);
-                    throw new Error('Video has not been indexed yet. Please wait for indexing to complete.');
-                }
-                throw new Error('TwelveLabs video ID is required. Video may not have been uploaded to TwelveLabs.');
+            if (!video.twelveLabsVideoId && twelveLabsVideoId) {
+                video.twelveLabsVideoId = twelveLabsVideoId;
             }
 
-            console.log(`[QStash] Processing analysis for video ${videoId}`);
-            console.log(`[QStash] TwelveLabs Video ID (indexed): ${indexedVideoId}`);
-            if (video.twelveLabsAssetId) {
-                console.log(`[QStash] TwelveLabs Asset ID: ${video.twelveLabsAssetId}`);
-            }
+            // Uploads now return as soon as the file reaches Twelve Labs; readiness and indexing
+            // happen here, in the background, with a generous time limit.
+            console.log(`[QStash] Ensuring Twelve Labs indexing for video ${videoId} (asset ${video.twelveLabsAssetId || 'n/a'})`);
+            const indexedVideoId = await ensureVideoIndexed(video);
+
+            console.log(`[QStash] Processing analysis for video ${videoId}, TwelveLabs video ID: ${indexedVideoId}`);
             if (userId) {
                 console.log(`[QStash] User ID: ${userId}`);
             }
 
-            console.log(`[QStash] Analyzing video using indexed video ID: ${indexedVideoId}`);
-
-            const videoAnalysisResult = await TwelveLabsClient.analyze(
-                {
-                    videoId: indexedVideoId,
-                    prompt: TWELVE_LABS_SCENE_PROMPT,
-                    temperature: 0.2
-                },
-                { timeoutInSeconds: 180 }
-            );
-
-            console.log('[QStash] TwelveLabs analyze completed for video:', videoId);
-
-            console.log('Video Analysis Result', videoAnalysisResult);
-            console.log('Video Analysis Result Type:', typeof videoAnalysisResult);
-            if (typeof videoAnalysisResult === 'object') {
-                console.log('Video Analysis Result Keys:', Object.keys(videoAnalysisResult));
+            // Scene breakdown from Twelve Labs. One retry on failure; if it still fails, the job
+            // continues on the transcript alone rather than failing the whole video.
+            let videoAnalysisResult = null;
+            for (let attempt = 1; attempt <= 2 && videoAnalysisResult == null; attempt++) {
+                try {
+                    videoAnalysisResult = await TwelveLabsClient.analyze(
+                        {
+                            videoId: indexedVideoId,
+                            prompt: TWELVE_LABS_SCENE_PROMPT,
+                            temperature: 0.2,
+                            maxTokens: 4096
+                        },
+                        { timeoutInSeconds: 180 }
+                    );
+                    console.log(`[QStash] TwelveLabs analyze completed for video ${videoId} (attempt ${attempt})`);
+                } catch (analyzeError) {
+                    console.error(
+                        `[QStash] TwelveLabs analyze failed for video ${videoId} (attempt ${attempt}):`,
+                        analyzeError?.statusCode ?? '',
+                        analyzeError?.message
+                    );
+                    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 5000));
+                }
             }
 
-            const scenes = await parseScenesWithOpenAI(videoAnalysisResult);
-            console.log(`[QStash] parseScenesWithOpenAI done, scene count: ${scenes.length}`);
-
-            if (scenes.length === 0) {
-                console.warn('[QStash] No scenes were parsed from the analysis result. Raw result:', JSON.stringify(videoAnalysisResult, null, 2));
+            let scenes = [];
+            if (videoAnalysisResult != null) {
+                try {
+                    scenes = await parseScenesWithOpenAI(videoAnalysisResult);
+                } catch (parseError) {
+                    console.error(`[QStash] Scene parsing failed for video ${videoId}:`, parseError.message);
+                    scenes = [];
+                }
+                console.log(`[QStash] parseScenesWithOpenAI done, scene count: ${scenes.length}`);
+                if (scenes.length === 0) {
+                    console.warn('[QStash] No scenes were parsed from the analysis result. Raw result:', JSON.stringify(videoAnalysisResult, null, 2));
+                }
             }
 
             video.scenes = scenes;
@@ -415,6 +450,20 @@ export const processVideoAnalysis = async (req, res) => {
             if (streamUrl) video.streamUrl = streamUrl;
             if (thumbnailUrl) video.thumbnailUrl = thumbnailUrl;
             console.log(`[QStash] Transcript segments: ${rawTranscript.length}, stream URL: ${streamUrl ? 'yes' : 'no'}`);
+
+            // With neither a scene breakdown nor speech there is nothing real to analyze; failing with a
+            // clear reason (user can Re-analyze) beats a report of invented feedback.
+            if (scenes.length === 0 && rawTranscript.length === 0) {
+                throw new Error('Twelve Labs returned no scene breakdown and no transcript for this video.');
+            }
+
+            // No scene breakdown but we have speech: build one scene per spoken segment (real times,
+            // verbatim words) so every analyzer still has grounded input instead of failing.
+            if (scenes.length === 0) {
+                scenes = buildScenesFromTranscript(rawTranscript);
+                video.scenes = scenes;
+                console.warn(`[QStash] Using ${scenes.length} transcript-derived scenes for video ${videoId} (no Twelve Labs scene breakdown)`);
+            }
 
             console.log(`[QStash] Storing ${video.scenes.length} scenes in video document`);
             await video.save();
@@ -457,7 +506,11 @@ export const processVideoAnalysis = async (req, res) => {
             }
 
             const hookScene = scenes.find(s => s.purpose?.toLowerCase() === 'hook') || scenes[0];
-            const hook = hookScene?.primaryAction || hookScene?.visualDescription || '';
+            // Without a scene breakdown, the opening spoken line is the hook.
+            const hook =
+                hookScene?.primaryAction ||
+                hookScene?.visualDescription ||
+                (video.rawTranscript?.[0]?.text ? `Opening line: "${video.rawTranscript[0].text}"` : '');
 
             video.analysis = [];
             const featureOutputs = {};
@@ -525,39 +578,35 @@ export const processVideoAnalysis = async (req, res) => {
                 return 55;
             };
 
-            for (const feature of gatedFeatures) {
+            // Analyzers are independent, so they run in parallel (results are applied below in the
+            // original order). A failing analyzer never fails the video.
+            const runAnalyzer = async (feature) => {
+                switch (feature) {
+                    case 'hook':
+                        return hook ? analyzeHook(hook, scenes, analyzerContext) : null;
+                    case 'caption':
+                        return analyzeCaption(scenes, analyzerContext);
+                    case 'pacing':
+                        return analyzePacing(scenes, analyzerContext);
+                    case 'audio':
+                        return analyzeAudio(scenes, analyzerContext);
+                    case 'advanced_analytics':
+                        return analyzeAdvancedAnalytics(scenes, analyzerContext);
+                    case 'views_predictor':
+                        return analyzeViewsPredictor(scenes, analyzerContext);
+                    default:
+                        console.warn(`[QStash] Unknown feature: ${feature}`);
+                        return null;
+                }
+            };
+            const settled = await Promise.allSettled(gatedFeatures.map((feature) => runAnalyzer(feature)));
+
+            for (const [index, feature] of gatedFeatures.entries()) {
                 try {
-                    let analysisResult = null;
-                    switch (feature) {
-                        case 'hook':
-                            if (hook) {
-                                analysisResult = await analyzeHook(hook, scenes, analyzerContext);
-                                featureOutputs.hook = analysisResult;
-                            }
-                            break;
-                        case 'caption':
-                            analysisResult = await analyzeCaption(scenes, analyzerContext);
-                            featureOutputs.caption = analysisResult;
-                            break;
-                        case 'pacing':
-                            analysisResult = await analyzePacing(scenes, analyzerContext);
-                            featureOutputs.pacing = analysisResult;
-                            break;
-                        case 'audio':
-                            analysisResult = await analyzeAudio(scenes, analyzerContext);
-                            featureOutputs.audio = analysisResult;
-                            break;
-                        case 'advanced_analytics':
-                            analysisResult = await analyzeAdvancedAnalytics(scenes, analyzerContext);
-                            featureOutputs.advanced_analytics = analysisResult;
-                            break;
-                        case 'views_predictor':
-                            analysisResult = await analyzeViewsPredictor(scenes, analyzerContext);
-                            featureOutputs.views_predictor = analysisResult;
-                            break;
-                        default:
-                            console.warn(`[QStash] Unknown feature: ${feature}`);
-                    }
+                    const outcome = settled[index];
+                    if (outcome.status === 'rejected') throw outcome.reason;
+                    const analysisResult = outcome.value ?? null;
+                    if (analysisResult !== null) featureOutputs[feature] = analysisResult;
 
                     if (analysisResult !== null) {
                         // Validated frame feedback / rewrites from this analyzer.
@@ -588,9 +637,10 @@ export const processVideoAnalysis = async (req, res) => {
                         }
                     }
                 } catch (featureError) {
-                    console.error(`[QStash] Error analyzing feature ${feature}:`, featureError.message);
+                    const featureMessage = featureError instanceof Error ? featureError.message : String(featureError);
+                    console.error(`[QStash] Error analyzing feature ${feature}:`, featureMessage);
                     featureOutputs[feature] = {
-                        error: `Analysis failed: ${featureError.message}`
+                        error: `Analysis failed: ${featureMessage}`
                     };
                     video.analysis.push({
                         feature,

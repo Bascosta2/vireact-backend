@@ -196,6 +196,14 @@ const videoSchema = new mongoose.Schema({
         index: true,
         sparse: true
     },
+    /**
+     * Indexed-asset id while Twelve Labs indexing is still running (background job). Lets a retried
+     * job resume the same indexing run instead of indexing the asset twice. Cleared when ready.
+     */
+    twelveLabsPendingIndexId: {
+        type: String,
+        default: null
+    },
     twelveLabsVideoId: {
         type: String,
         default: null,

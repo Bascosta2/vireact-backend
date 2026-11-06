@@ -22,77 +22,197 @@ import { isAllowedSocialVideoUrl } from '../lib/social-video-url.js';
 import { downloadSocialVideoForIngest } from './social-video-fetch.service.js';
 import { Readable } from 'stream';
 
-export const waitForAssetReady = async (assetId, initialStatus) => {
-    let assetStatus = initialStatus;
-    let attempts = 0;
-    const maxAttempts = 30; // Wait up to 5 minutes (30 * 10 seconds)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    while (assetStatus !== 'ready' && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 10000));
+/**
+ * Twelve Labs readiness limits. Indexing a short video usually takes 1-4 minutes but can take
+ * longer under load, so the background job waits generously. (The old 2.5-minute cap, enforced
+ * inside the upload HTTP request, failed uploads whose indexing ran long.)
+ */
+export const TWELVE_LABS_ASSET_MAX_WAIT_MS = 10 * 60 * 1000;
+export const TWELVE_LABS_INDEX_MAX_WAIT_MS = 20 * 60 * 1000;
+
+export const waitForAssetReady = async (
+    assetId,
+    initialStatus,
+    { maxWaitMs = TWELVE_LABS_ASSET_MAX_WAIT_MS, pollMs = 5000 } = {}
+) => {
+    let assetStatus = initialStatus;
+    const deadline = Date.now() + maxWaitMs;
+    let attempts = 0;
+
+    while (assetStatus !== 'ready') {
+        if (assetStatus === 'failed') {
+            throw new Error(`Twelve Labs could not process asset ${assetId} (status: failed).`);
+        }
+        if (Date.now() >= deadline) {
+            throw new Error(`Asset ${assetId} did not become ready within ${Math.round(maxWaitMs / 60000)} minutes. Current status: ${assetStatus}`);
+        }
+        // Check immediately the first time when the status is unknown, then poll.
+        if (attempts > 0 || assetStatus != null) await sleep(pollMs);
+        attempts++;
         try {
             const assetCheck = await TwelveLabsClient.assets.retrieve(assetId);
             assetStatus = assetCheck?.status;
-            console.log(`⏳ Asset status: ${assetStatus} (attempt ${attempts + 1}/${maxAttempts})`);
+            console.log(`⏳ Asset status: ${assetStatus} (check ${attempts})`);
         } catch (error) {
             console.warn(`⚠️ Error checking asset status: ${error.message}`);
         }
-        attempts++;
-    }
-
-    if (assetStatus !== 'ready') {
-        throw new Error(`Asset ${assetId} did not become ready after ${maxAttempts} attempts. Current status: ${assetStatus}`);
     }
 };
 
-export const indexAssetWithRetry = async (assetId, indexId) => {
+/**
+ * Index an asset and wait until it is ready.
+ *
+ * @param {string} assetId
+ * @param {string} indexId
+ * @param {object} [options]
+ * @param {string|null} [options.existingIndexedAssetId] Resume polling an indexing run that was already
+ *   started (e.g. the job was retried after a restart) instead of indexing the asset a second time.
+ * @param {(indexedAssetId: string) => Promise<void>|void} [options.onCreated] Called once the indexed
+ *   asset id is known, so the caller can persist it before the (long) wait.
+ * @param {number} [options.maxWaitMs]
+ * @param {number} [options.pollMs]
+ */
+export const indexAssetWithRetry = async (
+    assetId,
+    indexId,
+    {
+        existingIndexedAssetId = null,
+        onCreated,
+        maxWaitMs = TWELVE_LABS_INDEX_MAX_WAIT_MS,
+        pollMs = 10000,
+    } = {}
+) => {
     if (!indexId || String(indexId).trim() === '') {
         throw new Error('Twelve Labs index id is required for indexing.');
     }
 
-    console.log(`📚 Indexing asset ${assetId} into index ${indexId}...`);
+    let indexedAssetId = existingIndexedAssetId;
+    let indexedStatus = null;
 
-    const indexResponse = await TwelveLabsClient.indexes.indexedAssets.create(
-        indexId,
-        {
-            assetId,
-            enableVideoStream: true
+    if (indexedAssetId) {
+        console.log(`📚 Resuming indexing of asset ${assetId} (indexed asset ${indexedAssetId})...`);
+    } else {
+        console.log(`📚 Indexing asset ${assetId} into index ${indexId}...`);
+        const indexResponse = await TwelveLabsClient.indexes.indexedAssets.create(
+            indexId,
+            {
+                assetId,
+                enableVideoStream: true
+            }
+        );
+
+        indexedAssetId = indexResponse?.id;
+        indexedStatus = indexResponse?.status;
+
+        if (!indexedAssetId) {
+            console.error('❌ Could not find indexed asset ID in response. Response structure:', indexResponse);
+            throw new Error('Failed to get indexed asset ID from TwelveLabs response');
         }
-    );
-
-    const indexedAssetId = indexResponse?.id;
-    let indexedStatus = indexResponse?.status;
-
-    if (!indexedAssetId) {
-        console.error('❌ Could not find indexed asset ID in response. Response structure:', indexResponse);
-        throw new Error('Failed to get indexed asset ID from TwelveLabs response');
+        if (onCreated) await onCreated(indexedAssetId);
     }
 
+    const deadline = Date.now() + maxWaitMs;
     let attempts = 0;
-    const maxAttempts = 30;
 
-    while (indexedStatus !== 'ready' && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
+    while (indexedStatus !== 'ready') {
+        if (indexedStatus === 'failed') {
+            throw new Error(`Twelve Labs indexing failed for indexed asset ${indexedAssetId}.`);
+        }
+        if (Date.now() >= deadline) {
+            throw new Error(`Indexed asset ${indexedAssetId} did not become ready within ${Math.round(maxWaitMs / 60000)} minutes. Current status: ${indexedStatus}`);
+        }
+        if (attempts > 0 || indexedStatus != null) await sleep(pollMs);
+        attempts++;
         try {
             const indexedAsset = await TwelveLabsClient.indexes.indexedAssets.retrieve(
                 indexId,
                 indexedAssetId
             );
             indexedStatus = indexedAsset?.status;
-            console.log(`⏳ Indexed asset status: ${indexedStatus} (attempt ${attempts + 1}/${maxAttempts})`);
+            console.log(`⏳ Indexed asset status: ${indexedStatus} (check ${attempts})`);
         } catch (statusError) {
             console.warn(`⚠️ Error checking indexed asset status: ${statusError.message}`);
         }
-        attempts++;
-    }
-
-    if (indexedStatus !== 'ready') {
-        throw new Error(`Indexed asset ${indexedAssetId} did not become ready after ${maxAttempts} attempts. Current status: ${indexedStatus}`);
     }
 
     return {
         indexedAssetId,
         indexedStatus
     };
+};
+
+/**
+ * Make sure a video's Twelve Labs asset is indexed, waiting as long as needed (background job only).
+ * Persists the indexed asset id as soon as indexing starts so a retried job resumes instead of
+ * indexing twice. Sets `video.twelveLabsVideoId` and saves when ready.
+ *
+ * @param {import('mongoose').Document} video
+ * @returns {Promise<string>} the indexed video id
+ */
+export const ensureVideoIndexed = async (video) => {
+    if (video.twelveLabsVideoId) return video.twelveLabsVideoId;
+    if (!video.twelveLabsAssetId) {
+        throw new Error('TwelveLabs asset is missing. The upload did not reach Twelve Labs; please upload the video again.');
+    }
+    if (!TWELVELABS_USER_INDEX) {
+        throw new Error('TWELVELABS_USER_INDEX is not configured.');
+    }
+
+    await waitForAssetReady(video.twelveLabsAssetId, null);
+
+    const { indexedAssetId } = await indexAssetWithRetry(video.twelveLabsAssetId, TWELVELABS_USER_INDEX, {
+        existingIndexedAssetId: video.twelveLabsPendingIndexId || null,
+        onCreated: async (id) => {
+            video.twelveLabsPendingIndexId = id;
+            await video.save();
+        },
+    });
+
+    video.twelveLabsVideoId = indexedAssetId;
+    video.twelveLabsPendingIndexId = null;
+    await video.save();
+    console.log(`✅ Asset ${video.twelveLabsAssetId} indexed, video ID: ${indexedAssetId}`);
+    return indexedAssetId;
+};
+
+/**
+ * After the file reaches Twelve Labs, record the asset and queue the analysis job straight away.
+ * Asset readiness and indexing run inside the background job, so the upload request returns in
+ * seconds instead of holding a (mobile) connection open for minutes.
+ *
+ * @returns {Promise<void>} throws ApiError(502) when the job cannot be queued (video marked failed)
+ */
+const queueAnalysisForUploadedAsset = async (video, assetResponse, userId) => {
+    const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
+    if (!twelveLabsAssetId) {
+        throw new Error('Failed to get asset ID from TwelveLabs response');
+    }
+    console.log(`✅ TwelveLabs upload successful, asset ID: ${twelveLabsAssetId}, status: ${assetResponse?.status || 'unknown'}`);
+
+    video.twelveLabsAssetId = twelveLabsAssetId;
+    video.uploadStatus = UPLOAD_STATUS.COMPLETED;
+    // Webhook claims queued → processing, then indexes and analyzes.
+    video.analysisStatus = ANALYSIS_STATUS.QUEUED;
+    await video.save();
+
+    try {
+        const messageId = await publishVideoAnalysisJob({
+            videoId: video._id.toString(),
+            twelveLabsAssetId,
+            userId: userId.toString()
+        });
+        console.log(`[Service] Analysis job published to QStash for video ${video._id}, asset ${twelveLabsAssetId}, messageId: ${messageId}`);
+    } catch (queueError) {
+        const errMsg = 'Failed to queue analysis job. Please use Re-analyze.';
+        console.error(`[Service] Failed to publish analysis job to QStash for video ${video._id}:`, queueError.message);
+        video.analysisStatus = ANALYSIS_STATUS.FAILED;
+        video.lastError = errMsg;
+        video.lastErrorAt = new Date();
+        await video.save();
+        throw new ApiError(502, errMsg);
+    }
 };
 
 // export const generatePresignedUploadUrlService = async (userId, filename, contentType, selectedFeatures = []) => {
@@ -389,60 +509,27 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             const assetResponse = await twelveLabsCreateDirectAsset(fileToUpload);
 
             console.log(`📦 TwelveLabs response:`, JSON.stringify(assetResponse, null, 2));
-
-            const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
-
-            console.log(`✅ TwelveLabs upload successful, asset ID: ${twelveLabsAssetId}, status: ${assetResponse?.status || 'unknown'}`);
-
-            // Store asset ID
-            video.twelveLabsAssetId = twelveLabsAssetId;
-
-            await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
-
-            // Index the asset into an index to get a video ID (required for analysis)
-            const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_USER_INDEX);
-            const twelveLabsVideoId = indexedAssetId;
-
-            console.log(`✅ Asset indexed successfully, video ID: ${twelveLabsVideoId}`);
-
-            // Update video with video ID and mark as completed
-            video.twelveLabsVideoId = twelveLabsVideoId;
-            video.uploadStatus = UPLOAD_STATUS.COMPLETED;
-            
-            // Set analysis status to queued before enqueueing (webhook claims queued → processing)
-            video.analysisStatus = ANALYSIS_STATUS.QUEUED;
-            await video.save();
-
-            // Publish video analysis job to QStash
+            // Readiness + indexing now run in the background job (see ensureVideoIndexed).
+            let queueError = null;
             try {
-                const messageId = await publishVideoAnalysisJob({
-                    videoId: video._id.toString(),
-                    twelveLabsVideoId: twelveLabsVideoId,
-                    userId: userId.toString()
-                });
-                console.log(`[Service] Analysis job published to QStash for video ${video._id}, TwelveLabs video ID: ${twelveLabsVideoId}, messageId: ${messageId}`);
-            } catch (queueError) {
-                const errMsg = 'Failed to queue analysis job. Please use Re-analyze.';
-                console.error(`[Service] Failed to publish analysis job to QStash for video ${video._id}:`, queueError.message);
-                video.analysisStatus = ANALYSIS_STATUS.FAILED;
-                video.lastError = errMsg;
-                video.lastErrorAt = new Date();
-                await video.save();
-                keepVideoQuota = true;
-                try {
-                    await incrementLifetimeFreeVideoCount(userId);
-                } catch (err) {
-                    console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
+                await queueAnalysisForUploadedAsset(video, assetResponse, userId);
+            } catch (err) {
+                if (err instanceof ApiError && err.statusCode === 502) {
+                    queueError = err;
+                } else {
+                    throw err;
                 }
-                throw new ApiError(502, errMsg);
             }
 
+            // The file reached Twelve Labs: the upload counts against quota even if queueing failed
+            // (the user can Re-analyze without uploading again).
             keepVideoQuota = true;
             try {
                 await incrementLifetimeFreeVideoCount(userId);
             } catch (err) {
                 console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
             }
+            if (queueError) throw queueError;
             return video;
         } catch (twelveLabsError) {
             if (twelveLabsError instanceof ApiError && twelveLabsError.statusCode === 502) {
@@ -536,60 +623,27 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
                 assetResponse = await twelveLabsCreateUrlAsset(url);
                 console.log(`📦 TwelveLabs URL upload response:`, JSON.stringify(assetResponse, null, 2));
             }
-
-            const twelveLabsAssetId = assetResponse?.id || assetResponse?._id;
-
-            console.log(`✅ TwelveLabs upload successful, asset ID: ${twelveLabsAssetId}, status: ${assetResponse?.status || 'unknown'}`);
-
-            // Store asset ID
-            video.twelveLabsAssetId = twelveLabsAssetId;
-
-            await waitForAssetReady(twelveLabsAssetId, assetResponse?.status);
-
-            // Index the asset into an index to get a video ID (required for analysis)
-            const { indexedAssetId } = await indexAssetWithRetry(twelveLabsAssetId, TWELVELABS_USER_INDEX);
-            const twelveLabsVideoId = indexedAssetId;
-
-            console.log(`✅ Asset indexed successfully, video ID: ${twelveLabsVideoId}`);
-
-            // Update video with video ID and mark as completed
-            video.twelveLabsVideoId = twelveLabsVideoId;
-            video.uploadStatus = UPLOAD_STATUS.COMPLETED;
-            
-            // Set analysis status to queued before enqueueing (webhook claims queued → processing)
-            video.analysisStatus = ANALYSIS_STATUS.QUEUED;
-            await video.save();
-
-            // Publish video analysis job to QStash
+            // Readiness + indexing now run in the background job (see ensureVideoIndexed).
+            let queueError = null;
             try {
-                const messageId = await publishVideoAnalysisJob({
-                    videoId: video._id.toString(),
-                    twelveLabsVideoId: twelveLabsVideoId,
-                    userId: userId.toString()
-                });
-                console.log(`[Service] Analysis job published to QStash for video ${video._id}, TwelveLabs video ID: ${twelveLabsVideoId}, messageId: ${messageId}`);
-            } catch (queueError) {
-                const errMsg = 'Failed to queue analysis job. Please use Re-analyze.';
-                console.error(`[Service] Failed to publish analysis job to QStash for video ${video._id}:`, queueError.message);
-                video.analysisStatus = ANALYSIS_STATUS.FAILED;
-                video.lastError = errMsg;
-                video.lastErrorAt = new Date();
-                await video.save();
-                keepVideoQuota = true;
-                try {
-                    await incrementLifetimeFreeVideoCount(userId);
-                } catch (err) {
-                    console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
+                await queueAnalysisForUploadedAsset(video, assetResponse, userId);
+            } catch (err) {
+                if (err instanceof ApiError && err.statusCode === 502) {
+                    queueError = err;
+                } else {
+                    throw err;
                 }
-                throw new ApiError(502, errMsg);
             }
 
+            // The file reached Twelve Labs: the upload counts against quota even if queueing failed
+            // (the user can Re-analyze without uploading again).
             keepVideoQuota = true;
             try {
                 await incrementLifetimeFreeVideoCount(userId);
             } catch (err) {
                 console.error(`[Upload] Failed to increment lifetime counter for ${userId}:`, err.message);
             }
+            if (queueError) throw queueError;
             return video;
         } catch (ingestErr) {
             if (ingestErr instanceof ApiError && ingestErr.statusCode === 502) {
