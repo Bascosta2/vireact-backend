@@ -1,6 +1,7 @@
 import { getChatMessagesService, sendChatMessageService } from '../service/chat.service.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
+import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 
 export const getChatMessages = async (req, res, next) => {
     try {
@@ -42,7 +43,11 @@ export const sendChatMessage = async (req, res, next) => {
             throw new ApiError(400, 'Message too long (max 2000 characters)');
         }
 
-        const { userMessage, aiMessage } = await sendChatMessageService(videoId, userId, text.trim());
+        // One trace per message; all messages about this video form one AI session (lib/ai-tracking.js).
+        const { userMessage, aiMessage } = await withAiContext(
+            { feature: 'chat', videoId, userId, distinctId: userId, traceId: newTraceId('chat'), sessionId: `chat-${videoId}-${userId}` },
+            () => sendChatMessageService(videoId, userId, text.trim())
+        );
 
         res.status(200).json(
             ApiResponse.success(

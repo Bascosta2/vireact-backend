@@ -8,6 +8,7 @@
  */
 import TwelveLabsClient from './twelve-labs.js';
 import { videoModel } from '../config/ai-models.js';
+import { recordGeneration, withAiContext } from './ai-tracking.js';
 
 /** Pegasus model id (AI_MODEL_VIDEO, default pegasus1.6). Read per call so env changes apply. */
 export const pegasusModel = () => videoModel();
@@ -38,6 +39,26 @@ const describeError = (error) => {
     return `${status}${error?.message || String(error)}${body}`;
 };
 
+/** Record one Pegasus call for AI observability. The prompt is the input; the video is noted beside it. */
+const trackPegasus = ({ request, label, attempt, started, response, text, error }) => {
+    const video = request?.video || {};
+    const videoRef = video.assetId ? `asset:${video.assetId}` : video.url ? 'hls-url' : request?.videoId ? `index-video:${request.videoId}` : 'unknown';
+    withAiContext({ attempt }, () => recordGeneration({
+        provider: 'twelvelabs',
+        model: request?.modelName || pegasusModel(),
+        label,
+        input: [{ role: 'user', content: `[video: ${videoRef}]
+${request?.prompt || ''}` }],
+        output: text ?? (typeof response?.data === 'string' ? response.data : ''),
+        usage: { inputTokens: response?.usage?.inputTokens, outputTokens: response?.usage?.outputTokens },
+        latencyMs: Date.now() - started,
+        stopReason: response?.finishReason,
+        error,
+        params: { temperature: request?.temperature, maxTokens: request?.maxTokens },
+        properties: response?.id ? { twelvelabs_response_id: response.id } : undefined,
+    }));
+};
+
 /**
  * One Pegasus request with up to `attempts` tries on transient errors.
  * @returns {Promise<string>} the generated text
@@ -45,14 +66,18 @@ const describeError = (error) => {
 const runAnalyze = async (request, { attempts = 2, label = 'analyze', retryDelayMs = 5000 } = {}) => {
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt++) {
+        const started = Date.now();
+        let response;
         try {
-            const response = await TwelveLabsClient.analyze(request, { timeoutInSeconds: ANALYZE_TIMEOUT_SECONDS });
+            response = await TwelveLabsClient.analyze(request, { timeoutInSeconds: ANALYZE_TIMEOUT_SECONDS });
             const text = typeof response?.data === 'string' ? response.data : '';
             if (!text.trim()) {
                 throw new Error(`Twelve Labs ${label} returned an empty response${response?.finishReason ? ` (finish reason: ${response.finishReason})` : ''}`);
             }
+            trackPegasus({ request, label, attempt, started, response, text });
             return text;
         } catch (error) {
+            trackPegasus({ request, label, attempt, started, response, error });
             lastError = error;
             console.error(`[TwelveLabs] ${label} failed (attempt ${attempt}/${attempts}): ${describeError(error)}`);
             if (attempt < attempts && isRetryableTwelveLabsError(error)) {

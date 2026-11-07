@@ -224,6 +224,7 @@ Respond with ONLY the category name (question, greeting, thanks, feedback, or ot
 
     try {
         const response = await requestChatCompletion({
+            label: 'chat_intent',
             messages: [{ role: "user", content: prompt }],
             role: 'classifier',
             temperature: 0.1,

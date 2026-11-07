@@ -7,6 +7,7 @@ import { NICHES, PROBLEMS } from '../constants/library.js';
 import { QUIZ_OPTIONS } from '../constants/funnel-quiz.js';
 import { resolveAccess } from '../service/access.service.js';
 import { rewriteHook, MAX_HOOK_LINE_LENGTH } from '../service/hook-rewriter.service.js';
+import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 import {
     createSession,
     findSession,
@@ -127,12 +128,14 @@ export const postHookRewrite = async (req, res, next) => {
 
         const pick = (value, allowed) => (allowed.includes(value) ? value : undefined);
         const answers = session?.answers || {};
-        const result = await rewriteHook({
+        // Signed-in users by id; anonymous quiz takers by funnel session id (aliased to the user on signup).
+        const aiDistinctId = req.user?._id || req.body?.sessionId || undefined;
+        const result = await withAiContext({ feature: 'hook_rewrite', userId: req.user?._id, distinctId: aiDistinctId, traceId: newTraceId('hook') }, () => rewriteHook({
             hookLine,
             niche: pick(req.body?.niche, NICHES) || answers.niche,
             platform: pick(req.body?.platform, QUIZ_OPTIONS.platform) || answers.platform,
             problem: pick(req.body?.problem, PROBLEMS) || answers.problem,
-        });
+        }));
         refunds.length = 0;
         res.status(200).json(ApiResponse.success(200, 'Rewrites ready', result));
     } catch (error) {

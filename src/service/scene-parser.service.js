@@ -290,6 +290,7 @@ Return ONLY a valid JSON array of scenes, no other text. Example format:
 
     try {
         const response = await requestChatCompletion({
+            label: 'scene_parse',
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.1,
             maxTokens: 2000,

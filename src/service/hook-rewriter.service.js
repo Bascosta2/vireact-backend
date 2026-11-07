@@ -1,4 +1,5 @@
 import { requestStructuredCompletion } from './openai-response.service.js';
+import { withAiContext } from '../lib/ai-tracking.js';
 import { validateScriptRewriteItem } from './analyzer/feedback-validator.js';
 import { LibraryItem } from '../model/library-item.model.js';
 import { LIBRARY_REVIEW_STATUS, LIBRARY_VISIBILITY } from '../constants/library.js';
@@ -99,7 +100,7 @@ export async function rewriteHook({ hookLine, niche, platform, problem }, { comp
             `Return ${REWRITE_COUNT} literal, complete lines that differ from the original, and a diagnosis of at least one full sentence.`,
         ].join('\n');
         const retry = screenRewrites(
-            await ask([...messages, { role: 'assistant', content: JSON.stringify({ rewrites: result.rejected }) }, { role: 'user', content: correction }]),
+            await withAiContext({ attempt: 2 }, () => ask([...messages, { role: 'assistant', content: JSON.stringify({ rewrites: result.rejected }) }, { role: 'user', content: correction }])),
             { hookLine, exemplarSlugs }
         );
         if (retry.accepted.length >= result.accepted.length && retry.diagnosis.length >= 8) result = retry;

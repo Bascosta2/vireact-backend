@@ -16,6 +16,7 @@ import { requestStructuredCompletion } from '../openai-response.service.js';
 import { cleanUserText } from '../analyzer/voice.js';
 import { createSemaphore } from '../../utils/semaphore.js';
 import { fetchPageText, hostOf, isBlockedDomain } from './safe-fetch.js';
+import { recordGeneration, recordEmbedding, withAiContext, openAiUsage } from '../../lib/ai-tracking.js';
 
 export const RESEARCH_TOPICS = Object.freeze(['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor', 'general']);
 
@@ -84,16 +85,33 @@ export const extractUrls = (text) => {
 /** Ask the model to search the web and list readable source pages for one query. */
 export const searchSources = async (query, { limit = 4, client = openai } = {}) => {
     const { model } = modelForRole('writer');
-    const response = await client.responses.create({
-        model,
-        reasoning: { effort: 'low' },
-        tools: [{ type: 'web_search' }],
-        input: [
-            `Find up to ${limit} publicly readable web pages about: ${query}.`,
-            'Prefer pages with measured data, platform documentation, detailed case studies, or agency breakdowns that quote real scripts and edits.',
-            'Prefer pages published in 2024 or later. Skip paywalled pages, forums, and pages on tiktok.com, instagram.com, youtube.com, facebook.com, x.com, reddit.com, linkedin.com, or medium.com.',
-            'Reply with one line per page in the form: URL | title. No other text.',
-        ].join('\n'),
+    const input = [
+        `Find up to ${limit} publicly readable web pages about: ${query}.`,
+        'Prefer pages with measured data, platform documentation, detailed case studies, or agency breakdowns that quote real scripts and edits.',
+        'Prefer pages published in 2024 or later. Skip paywalled pages, forums, and pages on tiktok.com, instagram.com, youtube.com, facebook.com, x.com, reddit.com, linkedin.com, or medium.com.',
+        'Reply with one line per page in the form: URL | title. No other text.',
+    ].join('\n');
+    const tools = [{ type: 'web_search' }];
+    const started = Date.now();
+    let response;
+    try {
+        response = await client.responses.create({ model, reasoning: { effort: 'low' }, tools, input });
+    } catch (error) {
+        recordGeneration({ provider: 'openai', model, label: 'kb_web_search', input, latencyMs: Date.now() - started, error, tools, params: { reasoningEffort: 'low' } });
+        throw error;
+    }
+    recordGeneration({
+        provider: 'openai',
+        model: response?.model || model,
+        label: 'kb_web_search',
+        input,
+        output: response?.output_text || '',
+        usage: openAiUsage(response?.usage),
+        latencyMs: Date.now() - started,
+        stopReason: response?.status,
+        tools,
+        params: { reasoningEffort: 'low' },
+        properties: { search_query: query },
     });
     const annotated = (response.output || [])
         .flatMap((item) => item?.content || [])
@@ -234,7 +252,9 @@ export const cosine = (a, b) => {
 
 export const embedTexts = async (texts, { client = openai } = {}) => {
     if (!texts.length) return [];
+    const started = Date.now();
     const response = await client.embeddings.create({ model: embeddingModel(), input: texts, encoding_format: 'float' });
+    recordEmbedding({ model: embeddingModel(), inputTokens: response?.usage?.prompt_tokens, latencyMs: Date.now() - started, label: 'kb_research_embedding' });
     return response.data.sort((x, y) => x.index - y.index).map((d) => d.embedding);
 };
 
@@ -277,7 +297,16 @@ const defaultDeps = () => ({
  * @param {object} [deps] injectable search/fetchPage/extract/embed/nearest/seenUrls/save
  * @returns {Promise<{runId: string, stats: object, candidates: object[], skipped: {url: string, reason: string}[]}>}
  */
-export const runResearch = async (options = {}, deps = {}) => {
+/** One research run is one AI trace (trace id = run id), owned by a system user rather than a person. */
+export const runResearch = (options = {}, deps = {}) => {
+    const runId = options.runId || `kbr_${new Date().toISOString().slice(0, 10)}_${crypto.randomBytes(3).toString('hex')}`;
+    return withAiContext(
+        { feature: 'kb_research', distinctId: 'system:kb-research', traceId: runId },
+        () => runResearchImpl({ ...options, runId }, deps)
+    );
+};
+
+const runResearchImpl = async (options = {}, deps = {}) => {
     const {
         topics = RESEARCH_TOPICS,
         sourcesPerQuery = 3,

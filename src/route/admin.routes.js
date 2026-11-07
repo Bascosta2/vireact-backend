@@ -24,10 +24,20 @@ import {
     postApproveBatch,
     postRejectCandidate,
 } from '../controller/kb-research.controller.js';
+import {
+    listAiResponsesAdmin,
+    getAiResponseStatsAdmin,
+    getAiResponseAdmin,
+    reviewAiResponseAdmin,
+} from '../controller/ai-response.controller.js';
+import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 
 const adminRoutes = Router();
 
 adminRoutes.use(adminAuth);
+
+// Model calls made by admin work (ingest, research runs) are tracked as system work, one trace per request.
+adminRoutes.use((req, res, next) => withAiContext({ feature: 'admin', distinctId: 'system:admin', traceId: newTraceId('admin') }, next));
 
 adminRoutes.get('/ping', (req, res) => {
     res.status(200).json({ ok: true });
@@ -138,5 +148,11 @@ adminRoutes.get('/kb-candidates', listCandidates);
 adminRoutes.post('/kb-candidates/approve-batch', postApproveBatch);
 adminRoutes.post('/kb-candidates/:id/approve', postApproveCandidate);
 adminRoutes.post('/kb-candidates/:id/reject', postRejectCandidate);
+
+// AI responses: every stored model call (prompt, output, tokens, cost, latency) for review.
+adminRoutes.get('/ai-responses', listAiResponsesAdmin);
+adminRoutes.get('/ai-responses/stats', getAiResponseStatsAdmin);
+adminRoutes.get('/ai-responses/:id', getAiResponseAdmin);
+adminRoutes.patch('/ai-responses/:id/review', reviewAiResponseAdmin);
 
 export default adminRoutes;

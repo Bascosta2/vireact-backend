@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Vireact AI Review</title>
+  <style>
+    :root {
+      --bg: #0a0a0f; --text: #ffffff; --muted: #8a8a94; --pink: #FF3CAC; --orange: #FF8C00;
+      --card-bg: rgba(255,255,255,0.04); --card-border: rgba(255,255,255,0.08);
+      --input-bg: rgba(255,255,255,0.06); --input-border: rgba(255,255,255,0.12);
+      --ok: #22c55e; --ok-border: rgba(34,197,94,0.4); --err: #ef4444; --err-bg: rgba(239,68,68,0.12); --err-border: rgba(239,68,68,0.4);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .layout { max-width: 1240px; margin: 0 auto; padding: 24px 16px 48px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+    .topbar h1 { margin: 0; font-size: 1.4rem; color: var(--pink); letter-spacing: -0.02em; }
+    .topbar .sub { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+    .card h2 { margin: 0 0 6px; font-size: 1.05rem; }
+    .desc { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .helper { color: var(--muted); font-size: 13px; min-height: 18px; }
+    input, select, textarea { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 8px; padding: 8px 10px; font: inherit; }
+    select option { background: #15151c; }
+    textarea { width: 100%; resize: vertical; }
+    input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--pink); outline-offset: 1px; }
+    button { background: linear-gradient(90deg, var(--pink), var(--orange)); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+    button.secondary { background: var(--input-bg); border: 1px solid var(--input-border); font-weight: 500; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .row input[type="text"], .row input[type="password"] { min-width: 150px; }
+    .grow { flex: 1; min-width: 200px; }
+    .hidden { display: none !important; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .tile { border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; }
+    .tile .k { font-size: 12px; color: var(--muted); }
+    .tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .tile .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--card-border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    td.nowrap { white-space: nowrap; }
+    tr.click { cursor: pointer; }
+    tr.click:hover { background: rgba(255,255,255,0.04); }
+    tr.selected { background: rgba(255, 60, 172, 0.08); }
+    .sub-label { color: var(--muted); font-size: 12px; }
+    .preview { color: var(--muted); max-width: 380px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--card-border); color: var(--muted); white-space: nowrap; }
+    .badge.ok { color: var(--ok); border-color: var(--ok-border); }
+    .badge.warn { color: var(--orange); border-color: rgba(255,140,0,0.5); }
+    .badge.err { color: var(--err); border-color: var(--err-border); }
+    .pager { display: flex; gap: 10px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; font-size: 13px; margin-bottom: 14px; }
+    .meta span.k { color: var(--muted); }
+    .link { color: var(--pink); cursor: pointer; text-decoration: underline; background: none; border: 0; padding: 0; font: inherit; font-weight: 400; }
+    .error-box { border: 1px solid var(--err-border); background: var(--err-bg); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; white-space: pre-wrap; word-break: break-word; }
+    .issues { margin: 0 0 12px; padding-left: 18px; font-size: 13px; color: var(--orange); }
+    .section { font-size: 13px; font-weight: 600; margin: 16px 0 8px; }
+    .msg { border: 1px solid var(--card-border); border-radius: 8px; margin-bottom: 10px; }
+    .msg .role { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--card-border); display: flex; justify-content: space-between; }
+    .msg pre { margin: 0; padding: 10px; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-height: 420px; overflow: auto; }
+    .login { max-width: 460px; margin: 60px auto; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="topbar">
+      <div>
+        <h1>VIREACT</h1>
+        <div class="sub">AI response review · private</div>
+      </div>
+      <button type="button" class="secondary hidden" id="signout">Sign out</button>
+    </div>
+
+    <!-- Shown until a valid admin key is entered. Nothing else is loaded before that. -->
+    <div class="card login" id="login">
+      <h2>Sign in</h2>
+      <p class="desc">Enter the admin key (ADMIN_API_KEY). It stays in this tab only and is cleared when the tab closes or the server rejects it.</p>
+      <form id="login-form" autocomplete="off">
+        <div class="row">
+          <input type="password" id="login-key" class="grow" placeholder="Admin key" autocomplete="off" spellcheck="false" required>
+          <button type="submit">Sign in</button>
+        </div>
+        <div class="helper" id="login-msg"></div>
+      </form>
+    </div>
+
+    <div id="app" class="hidden">
+      <div class="card">
+        <h2>Overview</h2>
+        <p class="desc">Every OpenAI and Twelve Labs call the backend makes. "Quality gate" is the specificity check on analyzer and chat output (failed outputs get one correction retry). Cost shows only for models priced in AI_MODEL_PRICES; PostHog AI Observability has full cost.</p>
+        <div class="row">
+          <select id="o-hours" aria-label="Window">
+            <option value="24" selected>Last 24 hours</option>
+            <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
+            <option value="2160">Last 90 days</option>
+          </select>
+          <button type="button" id="o-load">Refresh</button>
+        </div>
+        <div class="helper" id="o-msg"></div>
+        <div class="tiles" id="tiles"></div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Feature</th><th>Call</th><th>Model</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">Avg in</th><th class="num">Avg out</th><th class="num">Avg latency</th><th class="num">Gate failed</th><th class="num">Rated</th><th class="num">Cost</th></tr></thead>
+            <tbody id="o-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Responses</h2>
+        <div class="row">
+          <select id="f-feature" aria-label="Feature"><option value="">All features</option></select>
+          <select id="f-label" aria-label="Call"><option value="">All calls</option></select>
+          <select id="f-model" aria-label="Model"><option value="">All models</option></select>
+          <select id="f-status" aria-label="Status">
+            <option value="">OK + errors</option><option value="ok">OK only</option><option value="error">Errors only</option>
+          </select>
+          <select id="f-validation" aria-label="Quality gate">
+            <option value="">Any quality gate</option><option value="failed">Gate failed</option><option value="passed">Gate passed</option><option value="none">Not checked</option>
+          </select>
+          <select id="f-rating" aria-label="Review">
+            <option value="">Any review</option><option value="unreviewed">Unreviewed</option><option value="good">Rated good</option><option value="bad">Rated bad</option>
+          </select>
+          <select id="f-hours" aria-label="Window">
+            <option value="">Any time</option><option value="1">Last hour</option><option value="24" selected>Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option>
+          </select>
+        </div>
+        <div class="row">
+          <input type="text" id="f-q" class="grow" placeholder="Search output text">
+          <input type="text" id="f-user" placeholder="User id">
+          <input type="text" id="f-video" placeholder="Video id">
+          <input type="text" id="f-trace" placeholder="Trace id">
+          <button type="button" id="f-load">Load</button>
+          <button type="button" class="secondary" id="f-clear">Clear</button>
+        </div>
+        <div class="helper" id="list-msg"></div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Time</th><th>Feature / call</th><th>Model</th><th class="num">Tokens in → out</th><th class="num">Latency</th><th class="num">Cost</th><th>Status</th><th>Output</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button type="button" class="secondary" id="prev">Prev</button>
+          <button type="button" class="secondary" id="next">Next</button>
+          <span id="page-info"></span>
+        </div>
+      </div>
+
+      <div class="card hidden" id="detail">
+        <h2 id="d-heading">Response</h2>
+        <div id="d-badges" class="row"></div>
+        <div class="meta" id="d-meta"></div>
+        <div class="error-box hidden" id="d-error"></div>
+        <div id="d-issues"></div>
+        <div class="section">Review</div>
+        <div class="row">
+          <button type="button" id="r-good">Good</button>
+          <button type="button" id="r-bad">Bad</button>
+          <button type="button" class="secondary" id="r-clear">Clear review</button>
+        </div>
+        <textarea id="r-note" rows="2" placeholder="Note (optional): what's wrong or right with this output"></textarea>
+        <div class="helper" id="r-msg"></div>
+        <div class="section">Output</div>
+        <div id="d-output"></div>
+        <div class="section">Input (<span id="d-input-count">0</span> messages)</div>
+        <div id="d-input"></div>
+        <div class="section">Other calls in this trace</div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Time</th><th>Call</th><th class="num">Attempt</th><th class="num">Tokens</th><th class="num">Latency</th><th>Status</th></tr></thead>
+            <tbody id="d-trace"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/admin/ai/app.js"></script>
+</body>
+</html>

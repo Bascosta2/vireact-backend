@@ -18,6 +18,7 @@ import { embeddingModel } from '../../config/ai-models.js';
 import { KnowledgeBase } from '../../model/knowledge-base.model.js';
 import { KNOWLEDGE_BASE_VECTOR_INDEX } from '../../config/index.js';
 import { KB_SPECIFICITY } from '../../constants.js';
+import { recordEmbedding } from '../../lib/ai-tracking.js';
 
 const EMBEDDING_MODEL = embeddingModel();
 
@@ -33,10 +34,12 @@ export const retrieveKnowledge = async ({ query, topics, limit = 10, excludeVagu
     if (!query || !String(query).trim()) return [];
 
     try {
+        const started = Date.now();
         const embeddingResponse = await openai.embeddings.create({
             model: EMBEDDING_MODEL,
             input: String(query),
         });
+        recordEmbedding({ model: EMBEDDING_MODEL, inputTokens: embeddingResponse?.usage?.prompt_tokens, latencyMs: Date.now() - started, label: 'rag_query_embedding' });
         const queryVector = embeddingResponse.data[0].embedding;
 
         // Over-fetch when filtering locally so the post-filter still returns `limit`.

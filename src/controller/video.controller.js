@@ -48,6 +48,7 @@ import {
 } from '../service/script-suggestions.service.js';
 import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
 import { TWELVELABS_USER_INDEX } from '../config/index.js';
+import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 import { buildFeedbackId, buildScriptRewriteId } from '../service/analyzer/feedback-schema.js';
 
 export const getPresignedUploadUrl = async (req, res) => {
@@ -390,7 +391,9 @@ export const processVideoAnalysis = async (req, res) => {
 
     // At most ANALYSIS_CONCURRENCY jobs run at once on this instance; the rest wait here still "queued"
     // (the claim below is atomic, so a sweeper re-queue of a waiting job can never run it twice).
-    setImmediate(() => void analysisGate.run(async () => {
+    // Every model call in this job is tracked as one AI trace for this user and video (lib/ai-tracking.js).
+    const aiContext = { feature: 'video_analysis', videoId, userId, distinctId: userId, traceId: newTraceId(`video-${videoId}`) };
+    setImmediate(() => void analysisGate.run(() => withAiContext(aiContext, async () => {
         let video;
         let stopHeartbeat = null;
         try {
@@ -808,7 +811,7 @@ export const processVideoAnalysis = async (req, res) => {
             if (stopHeartbeat) stopHeartbeat();
             trackJobEnd(videoId);
         }
-    }));
+    })));
 };
 
 export const uploadVideoToTwelveLabs = async (req, res, next) => {
@@ -957,7 +960,10 @@ export const createScriptSuggestions = async (req, res, next) => {
         scriptGenerationsInFlight.add(videoId);
         locked = true;
 
-        const { targetSeconds, options } = await generateScriptOptions(video);
+        const { targetSeconds, options } = await withAiContext(
+            { feature: 'scripts', videoId, userId: req.user._id, distinctId: req.user._id, traceId: newTraceId(`scripts-${videoId}`) },
+            () => generateScriptOptions(video)
+        );
         video.scriptSuggestions = {
             generatedAt: new Date(),
             generationCount: generationCount + 1,

@@ -33,6 +33,8 @@ import funnelRoutes from './route/funnel.route.js';
 import { adminRateLimit } from './middleware/adminAuth.js';
 import { verifyQStashAndParseBody } from './middleware/qstash-verify.js';
 import { processVideoAnalysis } from './controller/video.controller.js';
+import adminUiRoutes from './route/admin-ui.routes.js';
+import { stripSameOriginHeader } from './middleware/same-origin.js';
 
 const app = express();
 
@@ -47,6 +49,9 @@ app.use(helmet({
 
 // CORS allowed origins — single source of truth in cors-allowed-origins.js (must match errorHandler).
 const allowedOrigins = getAllowedCorsOrigins();
+
+// The private /admin/ai page calls this API from its own origin; that is not a cross-origin request.
+app.use(stripSameOriginHeader);
 
 app.use(cors({
     origin: (origin, callback) => {
@@ -254,6 +259,8 @@ app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/admin', adminRateLimit, adminRoutes);
+// Private AI response review page (data still needs ADMIN_API_KEY on every request).
+app.use('/admin', adminRateLimit, adminUiRoutes);
 
 // Safety net: errors from users' browsers. Public, small, and limited per IP so it cannot be used to flood.
 const clientErrorRateLimit = rateLimit({

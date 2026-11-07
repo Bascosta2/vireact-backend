@@ -263,6 +263,7 @@ export async function generateCreatorPsychologicalSummary(doc) {
     };
 
     const completionText = await requestChatCompletion({
+        label: 'creator_summary',
         role: 'structured',
         temperature: 0.3,
         maxTokens: 1500,
