@@ -7,6 +7,7 @@ import resend from "../lib/resend.js";
 import { OAUTH_PROVIDERS } from "../constants.js";
 import jwt from "jsonwebtoken";
 import { hashRefreshToken, refreshTokenMatches } from "../utils/refresh-token-hash.js";
+import { captureError } from "./ops-monitoring.service.js";
 
 /** Signed-in devices kept per user. The oldest falls off when an 11th device signs in. */
 export const MAX_REFRESH_SESSIONS = 10;
@@ -37,20 +38,42 @@ const assertValidPassword = (password) => {
     }
 };
 
+/**
+ * What happened when we tried to get a verification link to the user.
+ * - SENT: the email went out just now.
+ * - RECENT: one went out in the last minute (cooldown), so the user already has a link.
+ * - BAD_ADDRESS: the provider rejected this recipient address.
+ * - UNAVAILABLE: email is down for everyone (domain not verified, bad API key, provider outage).
+ */
+export const VERIFICATION_EMAIL = Object.freeze({
+    SENT: 'sent',
+    RECENT: 'recent',
+    BAD_ADDRESS: 'bad_address',
+    UNAVAILABLE: 'unavailable',
+});
+
+/** Resend's message for a malformed recipient; anything else is a sending problem on our side. */
+const RECIPIENT_REJECTED = /invalid `?to`? field/i;
+
 const sendEmail = async ({ to, subject, html }) => {
     try {
         const { error } = (await resend.emails.send({ from: RESEND_FROM_EMAIL, to, subject, html })) ?? {};
         if (error) throw new Error(error.message || 'Resend rejected the email');
-        return true;
+        return { ok: true };
     } catch (error) {
-        console.error(`[Auth] Could not send "${subject}" email: ${error.message}`);
-        return false;
+        const message = error?.message || String(error);
+        console.error(`[Auth] Could not send "${subject}" email: ${message}`);
+        const recipientRejected = RECIPIENT_REJECTED.test(message);
+        if (!recipientRejected) {
+            captureError(new Error(`Auth email "${subject}" could not be sent: ${message}`), { source: 'server', route: 'auth/email' });
+        }
+        return { ok: false, recipientRejected };
     }
 };
 
 const sendVerificationEmail = async (user, token) => {
     const verificationUrl = `${FRONTEND_URL}/verify-email?token=${token}`;
-    const sent = await sendEmail({
+    const { ok, recipientRejected } = await sendEmail({
         to: user.email,
         subject: 'Verify your Vireact email',
         html: `<div>
@@ -60,16 +83,20 @@ const sendVerificationEmail = async (user, token) => {
                 <p>The Vireact Team</p>
                </div>`,
     });
-    if (sent) {
+    if (ok) {
         await User.updateOne({ _id: user._id }, { $set: { verificationEmailSentAt: new Date() } });
+        return VERIFICATION_EMAIL.SENT;
     }
-    return sent;
+    return recipientRejected ? VERIFICATION_EMAIL.BAD_ADDRESS : VERIFICATION_EMAIL.UNAVAILABLE;
 };
 
-/** Issue a fresh verification token and email it, unless one went out in the last minute. */
+/**
+ * Issue a fresh verification token and email it, unless one went out in the last minute.
+ * verificationEmailSentAt is only stamped on a successful send, so RECENT always means a real link exists.
+ */
 const resendVerificationIfDue = async (user) => {
     const last = user.verificationEmailSentAt ? new Date(user.verificationEmailSentAt).getTime() : 0;
-    if (Date.now() - last < EMAIL_RESEND_COOLDOWN_MS) return false;
+    if (Date.now() - last < EMAIL_RESEND_COOLDOWN_MS) return VERIFICATION_EMAIL.RECENT;
     const token = crypto.randomBytes(32).toString("hex");
     await User.updateOne({ _id: user._id }, { $set: { emailVerificationToken: token } });
     return sendVerificationEmail(user, token);
@@ -177,7 +204,8 @@ export const loginAdminService = async (email, password) => {
  * - Existing verified account (or a Google account): 409 with what to do instead.
  * - Existing account that was never verified: treated as a fresh signup (new name/password, new email),
  *   so someone who lost the first verification email is never stuck.
- * The account is saved even if the verification email fails; the user can resend it.
+ * The account is saved even if the verification email fails.
+ * Returns { user, verificationEmail } where verificationEmail is a VERIFICATION_EMAIL value.
  */
 export const customSignupUserService = async (
     name,
@@ -204,8 +232,8 @@ export const customSignupUserService = async (
             existingUser.password = password;
             existingUser.emailVerificationToken = token;
             await existingUser.save();
-            await sendVerificationEmail(existingUser, token);
-            return existingUser;
+            const verificationEmail = await sendVerificationEmail(existingUser, token);
+            return { user: existingUser, verificationEmail };
         }
 
         const token = crypto.randomBytes(32).toString("hex");
@@ -220,8 +248,8 @@ export const customSignupUserService = async (
         });
 
         const savedUser = await user.save();
-        await sendVerificationEmail(savedUser, token);
-        return savedUser;
+        const verificationEmail = await sendVerificationEmail(savedUser, token);
+        return { user: savedUser, verificationEmail };
 
     } catch (error) {
         if (error instanceof ApiError) throw error;
@@ -316,12 +344,19 @@ export const loginUserService = async (email, password) => {
     // Correct password but the email was never verified. Only the account owner can get here, so it
     // is safe to say so, and a fresh link goes out (at most once a minute).
     if (!user.isEmailVerified) {
-        await resendVerificationIfDue(user);
-        throw new ApiError(
-            403,
-            `Verify your email to log in. We sent a new link to ${user.email}. Check your spam folder too.`,
-            { code: 'EMAIL_NOT_VERIFIED', email: user.email }
-        );
+        const outcome = await resendVerificationIfDue(user);
+        if (outcome === VERIFICATION_EMAIL.UNAVAILABLE) {
+            // Email is down for everyone, so no link can reach this user. Let them in rather than lock
+            // them out; the account stays unverified and is asked to verify again once email works.
+            console.warn(`[Auth] Login allowed without verification for user ${user._id}: verification email unavailable`);
+            return user;
+        }
+        const messages = {
+            [VERIFICATION_EMAIL.SENT]: `Verify your email to log in. We sent a new link to ${user.email}. Check your spam folder too.`,
+            [VERIFICATION_EMAIL.RECENT]: `Verify your email to log in. We sent a link to ${user.email} in the last minute. Check your spam folder too.`,
+            [VERIFICATION_EMAIL.BAD_ADDRESS]: `We can't send email to ${user.email}. Check the address for typos and sign up again with the right one.`,
+        };
+        throw new ApiError(403, messages[outcome], { code: 'EMAIL_NOT_VERIFIED', email: user.email });
     }
 
     if (NODE_ENV !== 'production') {

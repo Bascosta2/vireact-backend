@@ -8,7 +8,8 @@ import {
     refreshTokenService,
     forgotPasswordService,
     resetPasswordService,
-    revokeRefreshSession
+    revokeRefreshSession,
+    VERIFICATION_EMAIL
 } from "../service/auth.service.js";
 import jwt from "jsonwebtoken";
 import { REFRESH_TOKEN_SECRET } from "../config/index.js";
@@ -82,7 +83,7 @@ export const signupUser = async (req, res, next) => {
         }
 
         const attribution = sanitizeAttribution(req.body.attribution);
-        const user = await customSignupUserService(
+        const { user, verificationEmail } = await customSignupUserService(
             name,
             email,
             password,
@@ -96,11 +97,29 @@ export const signupUser = async (req, res, next) => {
         });
         await linkFunnelSafely(user._id, req.body.funnelSessionId);
 
+        const verificationEmailSent = verificationEmail === VERIFICATION_EMAIL.SENT;
+
+        // Email is down for everyone, so the user could never verify. Sign them in now, exactly as
+        // login would (see loginUserService); the account stays unverified.
+        if (verificationEmail === VERIFICATION_EMAIL.UNAVAILABLE) {
+            const { accessToken, refreshToken } = await generateAccessToken(user._id, User, "User");
+            return res.status(201)
+                .cookie("accessToken", accessToken, COOKIE_OPTIONS)
+                .cookie("refreshToken", refreshToken, { ...COOKIE_OPTIONS, maxAge: 30 * 24 * 60 * 60 * 1000 }) // 30 days
+                .json(
+                    ApiResponse.success(
+                        201,
+                        "Account created. You're signed in.",
+                        { user, accessToken, verificationEmailSent }
+                    )
+                );
+        }
+
         res.status(201).json(
             ApiResponse.success(
                 201,
                 "User Created Successfully",
-                { user }
+                { user, verificationEmailSent }
             )
         );
 

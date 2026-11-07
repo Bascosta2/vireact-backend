@@ -14,11 +14,14 @@ import {
     forgotPasswordService,
     resetPasswordService,
     MAX_REFRESH_SESSIONS,
+    VERIFICATION_EMAIL,
 } from '../src/service/auth.service.js';
 
 // Never send real email from tests: record instead.
 const sent = [];
+let sendError = null; // set to simulate a Resend failure
 resend.emails.send = async (message) => {
+    if (sendError) return { data: null, error: sendError };
     sent.push(message);
     return { data: { id: 'test' }, error: null };
 };
@@ -87,6 +90,36 @@ test('unverified user with the right password gets a clear 403 and a fresh link;
     assert.equal(sent.length, 1);
 });
 
+test('email down for everyone (domain not verified): signup reports it and login lets the user in', async () => {
+    sendError = { name: 'validation_error', message: 'The vireact.io domain is not verified. Please, add and verify your domain on https://resend.com/domains' };
+    try {
+        const { user, verificationEmail } = await customSignupUserService('Down', unique('down'), 'pw-123456', 'local');
+        assert.equal(verificationEmail, VERIFICATION_EMAIL.UNAVAILABLE);
+        const loggedIn = await loginUserService(user.email, 'pw-123456');
+        assert.equal(String(loggedIn._id), String(user._id), 'not locked out');
+        assert.equal((await User.findById(user._id)).isEmailVerified, false, 'still unverified');
+        await assert.rejects(loginUserService(user.email, 'wrong-password'), (e) => e.statusCode === 401, 'password still checked');
+    } finally {
+        sendError = null;
+    }
+});
+
+test('once email works again, an unverified user is asked to verify; a rejected address is told so', async () => {
+    const user = await makeUser({ isEmailVerified: false });
+    sent.length = 0;
+    await assert.rejects(loginUserService(user.email, 'pw-123456'), (e) => e.statusCode === 403 && /sent a new link/.test(e.message));
+    await assert.rejects(loginUserService(user.email, 'pw-123456'), (e) => e.statusCode === 403 && /in the last minute/.test(e.message));
+    assert.equal(sent.length, 1);
+
+    const bad = await makeUser({ isEmailVerified: false });
+    sendError = { name: 'validation_error', message: 'Invalid `to` field. The email address needs to follow the `email@example.com` format.' };
+    try {
+        await assert.rejects(loginUserService(bad.email, 'pw-123456'), (e) => e.statusCode === 403 && /can't send email/.test(e.message));
+    } finally {
+        sendError = null;
+    }
+});
+
 test('Google-only account trying a password gets told how to get in', async () => {
     const user = await User.create({ name: 'G', email: unique('google'), googleId: `g-${Date.now()}`, provider: 'google', isEmailVerified: true });
     await assert.rejects(loginUserService(user.email, 'anything'), (e) => e.statusCode === 409 && e.data?.code === 'USE_GOOGLE');
@@ -99,7 +132,8 @@ test('signup: duplicate verified email is 409 (not 500); unverified email restar
     const stuck = await makeUser({ isEmailVerified: false, emailVerificationToken: 'lost' });
     sent.length = 0;
     const again = await customSignupUserService('New Name', stuck.email, 'new-pass-1', 'local');
-    assert.equal(again.name, 'New Name');
+    assert.equal(again.user.name, 'New Name');
+    assert.equal(again.verificationEmail, VERIFICATION_EMAIL.SENT);
     assert.equal(sent.length, 1);
     const reloaded = await User.findById(stuck._id);
     assert.ok(await reloaded.comparePassword('new-pass-1'));
