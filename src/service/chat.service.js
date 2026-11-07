@@ -12,7 +12,7 @@ import { buildTranscriptBlock, transcriptToPlainText } from './transcript.servic
 import { retrieveKnowledge, formatKnowledgeContext } from './analyzer/retrieve-knowledge.js';
 import { SPECIFICITY_CONTRACT } from './analyzer/run-feedback-analyzer.js';
 import { cleanUserFacing, cleanUserText, retimeForDuration } from './analyzer/voice.js';
-import { calibrateViewBand } from './view-calibration.js';
+import { displayViewBand } from './view-prediction.service.js';
 import { runValidatedStructuredCompletion } from './analyzer/validated-completion.js';
 import {
     chatResponseJsonSchema,
@@ -251,13 +251,7 @@ function buildNumericScoresBlock(video) {
         if (score != null) parts.push(`${label}: ${score}/100`);
     });
     // Same ceiling the report shows, so chat never quotes an uncalibrated (inflated) band.
-    const personalised = video.viewPredictionMethod === 'followers' || video.viewPredictionMethod === 'dataset';
-    const views = personalised
-        ? { low: video.predictedViewsLow ?? null, expected: video.predictedViewsExpected ?? null, high: video.predictedViewsHigh ?? null }
-        : calibrateViewBand(
-            { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
-            video.viralityScore
-        );
+    const views = displayViewBand(video);
     const fmtViews = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
     if (views.low != null && views.high != null) {
         parts.push(`Predicted views: ${fmtViews(views.low)} - ${fmtViews(views.high)}`);

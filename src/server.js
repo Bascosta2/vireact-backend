@@ -12,7 +12,20 @@ import { connectDB, isConnected } from './db/index.js';
 import { markShuttingDown, runningJobIds, waitForRunningJobs } from './queue/analysis-runtime.js';
 import { sweepStuckAnalyses, handOffRunningJobs } from './service/analysis-recovery.service.js';
 import { cleanStaleUploads } from './middleware/fileUpload.js';
-import { initErrorTracking, sendDailySummary } from './service/ops-monitoring.service.js';
+import { initErrorTracking, sendDailySummary, captureError } from './service/ops-monitoring.service.js';
+
+// Safety net for errors no request handler caught. A rejected promise is logged and recorded, and the
+// server keeps running. An uncaught exception leaves the process in an unknown state: record it, then
+// exit so Railway restarts a clean instance (the sweeper re-queues any analysis that was running).
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process] Unhandled promise rejection:', reason);
+  captureError(reason instanceof Error ? reason : new Error(String(reason)), { source: 'process', route: 'unhandledRejection' });
+});
+process.on('uncaughtException', (error) => {
+  console.error('[Process] Uncaught exception:', error);
+  captureError(error, { source: 'process', route: 'uncaughtException' });
+  setTimeout(() => process.exit(1), 1500).unref?.();
+});
 import { maybeRunScheduledResearch } from './service/kb-research/runner.js';
 
 /** UTC hour for the daily summary (default 13:00 UTC, 8 or 9 am US Eastern). */

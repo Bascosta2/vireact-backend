@@ -8,8 +8,9 @@ const dbDebug = debug('app:database');
 // Connection options optimized for serverless environments
 const connectionOptions = {
   family: 4, // Use IPv4, skip trying IPv6
-  maxPoolSize: 10, // Reduced for serverless
-  minPoolSize: 1, // Reduced for serverless
+  // Long-running server (Railway): room for API traffic plus concurrent analysis jobs. Small on serverless.
+  maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE) || (IS_LAMBDA ? 10 : 40),
+  minPoolSize: IS_LAMBDA ? 1 : 2,
   // Serverless optimizations
   // Outside production, index/collection creation is explicit (scripts/ensure-indexes.js) unless MONGO_AUTO_INDEX=true.
   autoIndex: NODE_ENV === 'production' || MONGO_AUTO_INDEX,

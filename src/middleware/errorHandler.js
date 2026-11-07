@@ -18,7 +18,7 @@ export const errorHandler = (err, req, res, next) => {
     }
 
     if (err instanceof ApiError) {
-        if (err.statusCode >= 500) captureError(err, { route: `${req.method} ${req.originalUrl?.split('?')[0]}` });
+        if (err.statusCode >= 500) captureError(err, { route: `${req.method} ${req.originalUrl?.split('?')[0]}`, status: err.statusCode, userId: req.user?._id });
         res.status(err.statusCode).json(
             ApiResponse.error(err.statusCode, err.message, err.data)
         );
@@ -33,7 +33,7 @@ export const errorHandler = (err, req, res, next) => {
                 ApiResponse.error(400, err.message, null)
             );
         } else {
-            captureError(err, { route: `${req.method} ${req.originalUrl?.split('?')[0]}` });
+            captureError(err, { route: `${req.method} ${req.originalUrl?.split('?')[0]}`, status: 500, userId: req.user?._id });
             res.status(500).json(
                 ApiResponse.error(500, "Internal Server Error", null)
             );

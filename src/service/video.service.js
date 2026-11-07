@@ -320,6 +320,19 @@ export const confirmVideoUploadService = async (videoId, userId, fileSize) => {
     }
 };
 
+/** Fields the Home, Library and "analyzing" badge need. Keeps polling cheap as libraries grow. */
+export const VIDEO_SUMMARY_FIELDS = '_id filename thumbnailUrl uploadStatus analysisStatus selectedFeatures viralityScore isAnalysisReady createdAt updatedAt lastError';
+const MAX_SUMMARY_VIDEOS = 500;
+
+export const getUserVideoSummariesService = async (userId) => {
+    if (!userId) throw new ApiError(400, 'User ID is required');
+    return Video.find({ uploader_id: userId })
+        .select(VIDEO_SUMMARY_FIELDS)
+        .sort({ createdAt: -1 })
+        .limit(MAX_SUMMARY_VIDEOS)
+        .lean();
+};
+
 export const getUserVideosService = async (userId) => {
     try {
         if (!userId) {
@@ -554,8 +567,11 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             if (twelveLabsError instanceof ApiError && twelveLabsError.statusCode === 502) {
                 throw twelveLabsError;
             }
-            // If TwelveLabs upload fails, mark video as failed
+            // If TwelveLabs upload fails, mark video as failed (both statuses, so it never shows as "analyzing")
             video.uploadStatus = UPLOAD_STATUS.FAILED;
+            video.analysisStatus = ANALYSIS_STATUS.FAILED;
+            video.lastError = 'The upload did not finish. Please upload the video again.';
+            video.lastErrorAt = new Date();
             await video.save();
 
             void alertFailure({ stage: 'upload', videoId: String(video._id), userId: String(userId), error: twelveLabsError });
@@ -670,6 +686,9 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
                 throw ingestErr;
             }
             video.uploadStatus = UPLOAD_STATUS.FAILED;
+            video.analysisStatus = ANALYSIS_STATUS.FAILED;
+            video.lastError = 'The upload did not finish. Please upload the video again.';
+            video.lastErrorAt = new Date();
             await video.save();
             if (ingestErr instanceof ApiError) {
                 throw ingestErr;

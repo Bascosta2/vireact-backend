@@ -41,15 +41,15 @@ test('every analyzer and chat prompt carries the voice and calibration rules', (
 
 test('view band is capped by the overall score (a 43/100 video cannot be predicted at 75K)', () => {
     const band = calibrateViewBand({ low: 40000, expected: 75000, high: 110000 }, 43);
-    assert.deepEqual(band, { low: 30, expected: 200, high: 1200, capped: true });
+    assert.deepEqual(band, { low: 20, expected: 100, high: 400, capped: true });
 
-    const strong = calibrateViewBand({ low: 500, expected: 2000, high: 9000 }, 80);
-    assert.deepEqual(strong, { low: 500, expected: 2000, high: 9000, capped: false });
+    const strong = calibrateViewBand({ low: 250, expected: 1000, high: 4000 }, 80);
+    assert.deepEqual(strong, { low: 250, expected: 1000, high: 4000, capped: false });
 
     assert.deepEqual(calibrateViewBand({ low: null, expected: null, high: null }, 60), { low: null, expected: null, high: null, capped: false });
     // Missing expected is derived, unknown score gets a below-average ceiling, band stays ordered.
     const derived = calibrateViewBand({ low: 100, high: 300 }, null);
-    assert.equal(derived.expected, 200);
+    assert.equal(derived.expected, 180);
     assert.ok(derived.low <= derived.expected && derived.expected <= derived.high);
     assert.equal(viewCeilingFor(null).minScore, 45);
 });

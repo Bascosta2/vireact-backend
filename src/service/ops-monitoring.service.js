@@ -6,11 +6,14 @@
  *   Resend (already configured), throttled so an outage cannot flood the inbox.
  * - Daily summary: uploads, completions, failures and the most common errors for the last 24 hours,
  *   logged every day and emailed when OPS_ALERT_EMAIL is set. Also served at GET /api/v1/admin/analysis-stats.
+ * - Error log (error-log.service.js): every captured error is stored, grouped by kind; the first time a
+ *   new kind of error appears, the owner is emailed (OPS_ALERT_EMAIL). GET /api/v1/admin/errors.
  */
 import resend from '../lib/resend.js';
 import { RESEND_FROM_EMAIL } from '../config/index.js';
 import { Video } from '../model/video.model.js';
 import { ANALYSIS_STATUS, UPLOAD_STATUS } from '../constants.js';
+import { recordError, onNewError, getErrorReport } from './error-log.service.js';
 
 let sentry = null;
 
@@ -34,8 +37,24 @@ export const initErrorTracking = async () => {
     return Boolean(sentry);
 };
 
-/** Report an error to Sentry (no-op without SENTRY_DSN). Never throws. */
+const RECORD_SOURCES = new Set(['server', 'client', 'upload', 'analysis', 'recovery', 'process']);
+
+/**
+ * Report an error: stored in the error log (always) and sent to Sentry (when SENTRY_DSN is set).
+ * `context.source` (or `context.stage`) says where it came from; default "server". Never throws.
+ */
 export const captureError = (error, context = {}) => {
+    const err = error instanceof Error ? error : new Error(String(error));
+    const source = RECORD_SOURCES.has(context.source) ? context.source : RECORD_SOURCES.has(context.stage) ? context.stage : 'server';
+    void recordError({
+        source,
+        message: err.message || 'Unknown error',
+        stack: err.stack,
+        route: context.route,
+        status: context.status,
+        userId: context.userId,
+        videoId: context.videoId,
+    });
     if (!sentry) return;
     try {
         sentry.withScope((scope) => {
@@ -68,6 +87,26 @@ export const shouldSendAlert = (videoId, now = Date.now()) => {
     lastAlertByVideo.set(key, now);
     return true;
 };
+
+const alertNewKindOfError = async (event) => {
+    const to = process.env.OPS_ALERT_EMAIL?.trim();
+    if (!to || !shouldSendAlert(`new:${event.fingerprint}`)) return;
+    try {
+        await resend.emails.send({
+            from: RESEND_FROM_EMAIL,
+            to,
+            subject: `Vireact: new ${event.source} error`,
+            html: `<p>A kind of error not seen before just happened.</p>
+<p><b>Where:</b> ${escapeHtml(event.source)} ${escapeHtml(event.route || event.url || '')}</p>
+<p><b>Error:</b> ${escapeHtml(String(event.message).slice(0, 1000))}</p>
+<pre>${escapeHtml(String(event.stack || '').split('\n').slice(0, 8).join('\n'))}</pre>
+<p>All errors: GET /api/v1/admin/errors (x-admin-key). Time: ${new Date().toISOString()}</p>`,
+        });
+    } catch (sendError) {
+        console.warn(`[Monitoring] New-error email failed: ${sendError.message}`);
+    }
+};
+onNewError(alertNewKindOfError);
 
 /**
  * A user-visible failure: send to Sentry and (throttled) email the owner.
@@ -127,6 +166,8 @@ export const getAnalysisStats = async ({ since = new Date(Date.now() - 24 * 60 *
 export const sendDailySummary = async () => {
     try {
         const stats = await getAnalysisStats();
+        const errorReport = await getErrorReport({ limit: 5 }).catch(() => null);
+        if (errorReport) stats.errors = { total: errorReport.total, bySource: errorReport.bySource, top: errorReport.top.map((e) => ({ source: e.source, message: e.message, count: e.count, affectedUsers: e.affectedUsers })) };
         console.log(`[Monitoring] Last 24h: ${JSON.stringify(stats)}`);
         const to = process.env.OPS_ALERT_EMAIL?.trim();
         if (!to) return stats;
@@ -137,7 +178,7 @@ export const sendDailySummary = async () => {
             from: RESEND_FROM_EMAIL,
             to,
             subject: `Vireact daily: ${stats.completed} done, ${stats.failed} failed, ${stats.uploads} uploads`,
-            html: `<p>Last 24 hours</p><ul><li>Uploads: ${stats.uploads}</li><li>Completed: ${stats.completed}</li><li>Failed analyses: ${stats.failed}</li><li>Failed uploads: ${stats.uploadFailed}</li><li>Still in progress: ${stats.inProgress}</li></ul><p>Most common errors</p>${errors}`,
+            html: `<p>Last 24 hours</p><ul><li>Uploads: ${stats.uploads}</li><li>Completed: ${stats.completed}</li><li>Failed analyses: ${stats.failed}</li><li>Failed uploads: ${stats.uploadFailed}</li><li>Still in progress: ${stats.inProgress}</li></ul><p>Most common errors</p>${errors}${stats.errors ? `<p>Errors caught by the safety net: ${stats.errors.total} (${escapeHtml(JSON.stringify(stats.errors.bySource))})</p><ul>${stats.errors.top.map((e) => `<li>${e.count} x [${escapeHtml(e.source)}] ${escapeHtml(e.message)} (${e.affectedUsers} users)</li>`).join('')}</ul>` : ''}`,
         });
         return stats;
     } catch (error) {

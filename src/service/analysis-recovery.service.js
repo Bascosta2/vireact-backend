@@ -23,6 +23,8 @@ export const RECOVERY = Object.freeze({
     heartbeatEveryMs: 60 * 1000,
     staleHeartbeatMs: 10 * 60 * 1000,
     stuckQueuedMs: 15 * 60 * 1000,
+    /** A video still "pending" this long was never queued: the upload failed or the tab was closed. */
+    abandonedPendingMs: 2 * 60 * 60 * 1000,
     maxAttempts: 2,
     lookbackMs: 7 * 24 * 60 * 60 * 1000,
     batchSize: 50,
@@ -32,6 +34,7 @@ export const RECOVERY_MESSAGES = Object.freeze({
     interruptedTwice: 'Analysis was interrupted twice. Press Re-analyze to try again.',
     tooOld: 'This analysis stopped and is too old to resume. Press Re-analyze or upload the video again.',
     noAsset: 'This video never reached Twelve Labs. Please upload it again.',
+    uploadFailed: 'The upload did not finish. Please upload the video again.',
     queueFailed: 'Failed to queue analysis job. Please use Re-analyze.',
 });
 
@@ -84,6 +87,7 @@ export const requeueVideo = async (video, { countAttempt = true, delaySeconds = 
  * @returns {'requeue'|'fail-attempts'|'fail-old'|'fail-no-asset'}
  */
 export const recoveryActionFor = (video, now = new Date()) => {
+    if (video.uploadStatus === 'failed') return 'fail-upload';
     if (!video.twelveLabsAssetId && !video.twelveLabsVideoId) return 'fail-no-asset';
     const updated = video.updatedAt ? new Date(video.updatedAt).getTime() : 0;
     if (now.getTime() - updated > RECOVERY.lookbackMs) return 'fail-old';
@@ -102,6 +106,8 @@ export const stuckVideosFilter = (now = new Date()) => {
             { analysisStatus: ANALYSIS_STATUS.PROCESSING, analysisHeartbeatAt: null, updatedAt: { $lt: stuckSince } },
             // QStash never delivered (or every delivery hit a server that was shutting down).
             { analysisStatus: ANALYSIS_STATUS.QUEUED, updatedAt: { $lt: stuckSince } },
+            // Never queued: failed or abandoned uploads (otherwise they count as "analyzing" forever).
+            { analysisStatus: ANALYSIS_STATUS.PENDING, updatedAt: { $lt: new Date(now.getTime() - RECOVERY.abandonedPendingMs) } },
         ],
     };
 };
@@ -113,7 +119,7 @@ export const stuckVideosFilter = (now = new Date()) => {
 export const sweepStuckAnalyses = async ({ now = new Date(), skipIds = runningJobIds(), publish = publishVideoAnalysisJob } = {}) => {
     const skip = new Set(skipIds.map(String));
     const candidates = await Video.find(stuckVideosFilter(now))
-        .select('_id analysisStatus analysisAttempts updatedAt twelveLabsAssetId twelveLabsVideoId uploader_id')
+        .select('_id analysisStatus uploadStatus analysisAttempts updatedAt twelveLabsAssetId twelveLabsVideoId uploader_id')
         .sort({ updatedAt: 1 })
         .limit(RECOVERY.batchSize)
         .lean();
@@ -133,10 +139,12 @@ export const sweepStuckAnalyses = async ({ now = new Date(), skipIds = runningJo
         const message =
             action === 'fail-attempts' ? RECOVERY_MESSAGES.interruptedTwice
             : action === 'fail-old' ? RECOVERY_MESSAGES.tooOld
+            : action === 'fail-upload' ? RECOVERY_MESSAGES.uploadFailed
             : RECOVERY_MESSAGES.noAsset;
         if (await failIfUnchanged(video, message, now)) {
             summary.failed++;
-            void alertFailure({ stage: 'recovery', videoId: String(video._id), userId: video.uploader_id ? String(video.uploader_id) : undefined, error: new Error(message) });
+            // Abandoned uploads are routine (closed tab, failed upload already alerted); no alert for them.
+            if (video.analysisStatus !== ANALYSIS_STATUS.PENDING) void alertFailure({ stage: 'recovery', videoId: String(video._id), userId: video.uploader_id ? String(video.uploader_id) : undefined, error: new Error(message) });
         } else {
             summary.skipped++;
         }

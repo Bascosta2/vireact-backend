@@ -26,6 +26,7 @@ export const CALIBRATION_RULES = [
     '- Most videos from typical creators are average or weak. Scores of 25-55 are normal; 75+ means it would clearly outperform most posts in its niche. Do not round up.',
     '- A video with no spoken line and no on-screen text in the first 2 seconds cannot get a hook score above 40.',
     '- The reference notes over-represent viral outliers. Do not treat viral results as typical.',
+    '- Views: most posts get a few hundred to a few thousand views. Never suggest a video will pass 5,000 views unless it is clearly exceptional (overall 85+), and never promise viral reach.',
 ].join('\n');
 
 /** A phrase that names the private knowledge base (not just "the pattern"). */

@@ -26,10 +26,11 @@ import { FunnelSession } from '../src/model/funnel-session.model.js';
 import { RewriteUsage } from '../src/model/rewrite-usage.model.js';
 import { KbCandidate } from '../src/model/kb-candidate.model.js';
 import { KbResearchRun } from '../src/model/kb-research-run.model.js';
+import { ErrorEvent } from '../src/model/error-event.model.js';
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
-    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun,
+    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent,
 ];
 
 const apply = process.argv.includes('--apply');

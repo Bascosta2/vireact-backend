@@ -30,11 +30,14 @@ test('recovery decision: requeue, give up after two attempts, too old, or never 
     assert.equal(recoveryActionFor({ ...base, analysisAttempts: RECOVERY.maxAttempts }, now), 'fail-attempts');
     assert.equal(recoveryActionFor({ ...base, updatedAt: minutesAgo(8 * 24 * 60) }, now), 'fail-old');
     assert.equal(recoveryActionFor({ ...base, twelveLabsAssetId: null }, now), 'fail-no-asset');
+    assert.equal(recoveryActionFor({ ...base, uploadStatus: 'failed' }, now), 'fail-upload');
 });
 
 test('stuck filter covers stale heartbeats, pre-heartbeat jobs and undelivered queue messages', () => {
     const filter = stuckVideosFilter(now);
-    assert.equal(filter.$or.length, 3);
+    assert.equal(filter.$or.length, 4);
+    assert.equal(filter.$or[3].analysisStatus, ANALYSIS_STATUS.PENDING);
+    assert.deepEqual(filter.$or[3].updatedAt, { $lt: minutesAgo(120) });
     assert.equal(filter.$or[0].analysisStatus, ANALYSIS_STATUS.PROCESSING);
     assert.deepEqual(filter.$or[0].analysisHeartbeatAt, { $lt: minutesAgo(10) });
     assert.equal(filter.$or[2].analysisStatus, ANALYSIS_STATUS.QUEUED);

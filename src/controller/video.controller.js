@@ -2,6 +2,7 @@ import {
     // generatePresignedUploadUrlService,
     confirmVideoUploadService,
     getUserVideosService,
+    getUserVideoSummariesService,
     deleteVideoService,
     markAnalysisViewedService,
     uploadVideoToTwelveLabsService,
@@ -21,6 +22,11 @@ import { Chat } from '../model/chat.model.js';
 import { ANALYSIS_STATUS, allowedFeaturesForPlan, SUBSCRIPTION_PLANS } from '../constants.js';
 import { publishVideoAnalysisJob } from '../queue/video.queue.js';
 import { isShuttingDown, trackJobStart, trackJobEnd } from '../queue/analysis-runtime.js';
+import { createSemaphore } from '../utils/semaphore.js';
+
+/** Concurrent analyses per server instance (each runs ~6 parallel AI calls). */
+const analysisGate = createSemaphore(Number(process.env.ANALYSIS_CONCURRENCY) || 8);
+export const analysisQueueStats = () => analysisGate.stats();
 import { removeUploadedFile } from '../middleware/fileUpload.js';
 import { alertFailure } from '../service/ops-monitoring.service.js';
 import { startHeartbeat } from '../service/analysis-recovery.service.js';
@@ -81,7 +87,14 @@ export const getUserVideos = async (req, res, next) => {
     try {
         const userId = req.user._id;
 
-        const videos = await getUserVideosService(userId);
+        // ?view=summary: list fields only (badge, Home, Library). Default: full documents (chat page).
+        const summary = req.query?.view === 'summary';
+        const videos = summary
+            ? (await getUserVideoSummariesService(userId)).map(({ lastError, ...v }) => {
+                const errorSummary = getVideoStatusErrorSummary(v.analysisStatus, lastError);
+                return errorSummary ? { ...v, errorSummary } : v;
+            })
+            : await getUserVideosService(userId);
 
         res.status(200).json(
             ApiResponse.success(
@@ -375,11 +388,15 @@ export const processVideoAnalysis = async (req, res) => {
     res.status(200).json({ received: true, videoId });
     console.log('[QStash] Acknowledged to QStash, starting background analysis:', videoId);
 
-    setImmediate(async () => {
+    // At most ANALYSIS_CONCURRENCY jobs run at once on this instance; the rest wait here still "queued"
+    // (the claim below is atomic, so a sweeper re-queue of a waiting job can never run it twice).
+    setImmediate(() => void analysisGate.run(async () => {
         let video;
         let stopHeartbeat = null;
         try {
             console.log('[QStash] Background analysis started for:', videoId);
+            // Waited for a slot while a deploy began: leave it queued for the next instance (sweeper re-queues it).
+            if (isShuttingDown()) return;
             try {
                 video = await Video.findOneAndUpdate(
                     {
@@ -791,7 +808,7 @@ export const processVideoAnalysis = async (req, res) => {
             if (stopHeartbeat) stopHeartbeat();
             trackJobEnd(videoId);
         }
-    });
+    }));
 };
 
 export const uploadVideoToTwelveLabs = async (req, res, next) => {

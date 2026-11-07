@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import session from 'express-session';
@@ -26,6 +27,7 @@ import profileRoutes from './route/profile.route.js';
 import subscriptionRoutes from './route/subscription.route.js';
 import subscribeRoutes from './route/subscribe.route.js';
 import adminRoutes from './route/admin.routes.js';
+import { postClientError } from './controller/client-error.controller.js';
 import libraryRoutes from './route/library.route.js';
 import funnelRoutes from './route/funnel.route.js';
 import { adminRateLimit } from './middleware/adminAuth.js';
@@ -91,6 +93,9 @@ const publicSignupRateLimit = rateLimit({
     legacyHeaders: false,
     message: { error: 'Too many sign-ups from this network, please try again later' },
 });
+
+// Gzip JSON responses over 1 KB (full analyses are large); cuts transfer time on phones.
+app.use(compression({ threshold: 1024 }));
 
 // Logging
 app.use(morgan('dev'));
@@ -249,6 +254,16 @@ app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/admin', adminRateLimit, adminRoutes);
+
+// Safety net: errors from users' browsers. Public, small, and limited per IP so it cannot be used to flood.
+const clientErrorRateLimit = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => res.status(204).end(),
+});
+app.post('/api/v1/client-errors', clientErrorRateLimit, postClientError);
 app.use('/api/v1/library', libraryRoutes);
 app.use('/api/v1/funnel', funnelRoutes);
 

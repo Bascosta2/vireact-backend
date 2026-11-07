@@ -1,5 +1,5 @@
 import { allowedFeaturesForPlan } from '../constants.js';
-import { calibrateViewBand } from './view-calibration.js';
+import { displayViewBand } from './view-prediction.service.js';
 import {
     severityToLegacy,
     legacyToSeverity,
@@ -175,13 +175,7 @@ export function buildVideoAnalysisDTO(video, userPlan) {
 
     // Follower- and dataset-based bands are stored final. Score-based and older reports (stored before the
     // view ceiling existed) are capped on read.
-    const personalised = video.viewPredictionMethod === 'followers' || video.viewPredictionMethod === 'dataset';
-    const views = personalised
-        ? { low: video.predictedViewsLow ?? null, expected: video.predictedViewsExpected ?? null, high: video.predictedViewsHigh ?? null }
-        : calibrateViewBand(
-            { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
-            video.viralityScore
-        );
+    const views = displayViewBand(video);
 
     const dto = {
         viralityScore: video.viralityScore ?? 0,
