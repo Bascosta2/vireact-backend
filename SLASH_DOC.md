@@ -118,6 +118,25 @@ If a proposed feature or code change pulls toward any of the above, stop and rec
 - **Creator Videos tab**: `POST /api/v1/admin/creator-videos/upload` (multipart: `videoFile`, platform, actualViews, creatorHandle, subscriberCount, creatorSize, viralCategory, optional analytics fields). No niche field. Max file size 500MB; MP4 / MOV / WEBM. After Twelve Labs analyze + analyzers, the pipeline stores `VideoPerformanceDataset` (no niche) and one **KnowledgeBase** document with `metadata.source: 'admin_creator_ingest'`, `metadata.topic: 'general'`, and embedding of a **psychological/structural** summary (hook mechanics, pacing, audio, captions, emotion, performance vs creator size) — not topic niche. RAG retrieval in the six analyzers uses **vector similarity** on embeddings with a topic filter that includes **`general`** alongside the feature topic so these profiles surface cross-niche.
 - **Auth probe**: the panel calls `GET /api/v1/admin/ping` with header `x-admin-key` (same as ingest routes). A 200 means backend is up and admin auth matches; 401 means key mismatch or missing `ADMIN_API_KEY` on the server.
 
+### Autonomous research ingest (no human step)
+
+Three stages, all automatic. The agents never hold database or admin keys.
+
+1. **Research agent** (Claude cloud routine, daily 04:45 New York): searches and reads sources, writes candidates to the private repo `Bascosta2/vireact-research` under `inbox/<date>/*.jsonl`.
+2. **Review agent** (Claude cloud routine, daily 06:05; Sundays also re-audits items older than 30 days): re-opens every source, scores 0–100, writes approved items to `approved/<date>/*.jsonl` (with a `review` object) and outdated ones to `retire/<date>.jsonl`.
+3. **Backend** (`src/service/research-ingest/`, QStash `POST /api/v1/research/run` daily 06:45 New York, `CRON_TZ=America/New_York 45 6 * * *`): reads the repo with a read-only token and has the final say.
+   - **Hard gates** (`gates.js`, agents can't override): schema (`src/schemas/kb-candidate.schema.json`, backend copy), `review.verdict === "approve"`, score ≥ `RESEARCH_MIN_SCORE`, tier 1/2 or tier 3 corroborated by a tier-1/2 source, https evidence, tier 2 needs 2+ publishers, confidence ≥ 0.7, metrics from a source ≤ 24 months old unless evergreen, sanitizer (HTML/markdown/control chars stripped; instruction-like text or base64 blobs rejected).
+   - **Dedupe**: same id, same first URL + title, or embedding cosine ≥ 0.92 against the knowledge base or the batch.
+   - **Caps**: `RESEARCH_DAILY_CAP` per UTC day (highest review score first); research ≤ `RESEARCH_MAX_SHARE` of all `knowledgebases` docs. Items over a cap stay `imported` and go in on a later run.
+   - **Ingest**: `knowledgebases` docs with `metadata.origin: "research"`, `source`/`author` "Vireact Research", `researchBatch`, `researchId`, `researchType`, `sourceUrls`, `topics`, `platforms`, `niches`, `reviewScore`. Embedded text is `title — insight — Rule: … — Example: …`; citations stay in metadata.
+   - **Health check** (`retrieval-eval.js`): 30 fixed queries before/after each batch. The whole batch is rolled back if research takes > 5 of a top 10, the owner's core content (the "Viral Creator" PDF chunks and `manual_note` seeds) drops out of the top 10 for > 3 queries where it appeared, or vector search errors/returns nothing. Snapshots are stored in `research_eval_runs`.
+   - **Retire**: `retire/*.jsonl` ids are removed (research docs only).
+   - **Retrieval cap**: `retrieveKnowledge` keeps at most `RESEARCH_RETRIEVAL_CAP` (default 4) research docs per result list, backfilling with the next non-research results. Without research docs, results are unchanged.
+- **Rule**: nothing in this pipeline may modify or delete a knowledge-base doc without `metadata.origin: "research"` (every delete filter includes it).
+- **Records**: `research_candidates` (every line pulled, with status and reason), `research_eval_runs` (one per run). PostHog event `research_batch_processed`. Read-only stats: `GET /api/v1/admin/research/stats` and the "Research knowledge" card on `/admin/ai`.
+- **Scripts** (dry run by default, `--apply` to write): `scripts/research/pull-and-ingest.js`, `retrieval-eval.js`, `remove-batch.js --batch YYYY-MM-DD | --all-research`, `create-schedule.js`.
+- **Off switch**: `RESEARCH_INGEST_ENABLED=false` (the default) disables the webhook and `--apply`. To remove everything the pipeline added: `node scripts/research/remove-batch.js --all-research --apply`.
+
 ### Domain Entities (keep stable — update this doc if shape changes)
 ```ts
 interface Video {

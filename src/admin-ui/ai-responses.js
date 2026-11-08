@@ -37,7 +37,7 @@
     $('#login').classList.remove('hidden');
     $('#login-msg').textContent = message || '';
     // Drop anything already rendered.
-    ['#tiles', '#o-rows', '#rows', '#d-meta', '#d-output', '#d-input', '#d-trace', '#d-issues'].forEach(function (s) { $(s).innerHTML = ''; });
+    ['#tiles', '#o-rows', '#rs-tiles', '#rs-rows', '#rows', '#d-meta', '#d-output', '#d-input', '#d-trace', '#d-issues'].forEach(function (s) { $(s).innerHTML = ''; });
     $('#detail').classList.add('hidden');
   }
 
@@ -268,8 +268,41 @@
     }).catch(function (e) { $('#r-msg').textContent = 'Could not reach the server: ' + e.message; });
   }
 
+  // ---- Research knowledge (read-only) ----
+  function loadResearch() {
+    $('#rs-msg').textContent = 'Loading…';
+    return api('/research/stats').then(function (out) {
+      if (!out.ok) { $('#rs-msg').textContent = 'Could not load research stats: ' + errText(out); return; }
+      var d = out.data, c = d.candidates || {}, kb = d.knowledgeBase || {}, lim = d.limits || {};
+      $('#rs-msg').textContent = d.enabled ? '' : 'Ingest is OFF (RESEARCH_INGEST_ENABLED is not "true"). Agents keep staging; nothing is ingested.';
+      var tiles = [
+        ['Research docs', int(kb.researchDocs), pct(kb.researchDocs, kb.totalDocs) + ' of ' + int(kb.totalDocs) + ' (max ' + Math.round((lim.maxShare || 0) * 100) + '%)'],
+        ['Ingested (live)', int(c.ingested || 0), 'retrieval cap ' + esc(lim.retrievalCap) + ' per query'],
+        ['Waiting', int(c.imported || 0), 'daily cap ' + int(lim.dailyCap)],
+        ['Rejected', int((c.rejected || 0) + (c.invalid || 0)), int(c.invalid || 0) + ' invalid · min score ' + int(lim.minScore)],
+        ['Duplicates', int(c.duplicate || 0), ''],
+        ['Rolled back / retired', int(c.rolled_back || 0) + ' / ' + int(c.retired || 0), '']
+      ];
+      $('#rs-tiles').innerHTML = tiles.map(function (x) {
+        return '<div class="tile"><div class="k">' + esc(x[0]) + '</div><div class="v">' + esc(x[1]) + '</div><div class="s">' + esc(x[2]) + '</div></div>';
+      }).join('');
+      var runs = d.recentRuns || [];
+      if (!runs.length && d.enabled) $('#rs-msg').textContent = 'No ingest runs yet.';
+      $('#rs-rows').innerHTML = runs.map(function (r) {
+        var s = r.summary || {}, ev = r.evalResult || {};
+        var status = r.status === 'completed' ? '<span class="badge ok">completed</span>' : r.status === 'rolled_back' ? '<span class="badge warn">rolled back</span>' : r.status === 'failed' ? '<span class="badge err">failed</span>' : esc(r.status);
+        var health = ev.passed === true ? 'passed' : ev.passed === false ? (ev.reasons || []).join('; ') : '–';
+        return '<tr title="' + esc(r.error || '') + '"><td class="nowrap">' + esc(when(r.startedAt)) + '</td><td>' + status + '</td><td>' + esc((r.batches || []).join(', ') || '–') + '</td>' +
+          '<td class="num">' + int(s.pulled) + '</td><td class="num">' + int(s.ingested) + '</td><td class="num">' + int(s.waiting) + '</td>' +
+          '<td class="num">' + int((s.rejected || 0) + (s.invalid || 0)) + '</td><td class="num">' + int(s.duplicates) + '</td>' +
+          '<td class="num">' + int(s.rolledBack) + '</td><td class="num">' + int(s.retired) + '</td><td>' + esc(health) + '</td></tr>';
+      }).join('');
+    }).catch(function (e) { $('#rs-msg').textContent = 'Could not reach the server: ' + e.message; });
+  }
+
   function start() {
     showApp();
+    loadResearch();
     return loadOverview().then(function () { if (key) return loadList(0); });
   }
 
@@ -288,6 +321,7 @@
   });
   $('#signout').addEventListener('click', function () { showLogin('Signed out.'); });
   $('#o-load').addEventListener('click', loadOverview);
+  $('#rs-load').addEventListener('click', loadResearch);
   $('#o-hours').addEventListener('change', loadOverview);
   $('#f-load').addEventListener('click', function () { loadList(0); });
   $('#f-clear').addEventListener('click', function () { clearFilters(); loadList(0); });

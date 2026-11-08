@@ -23,6 +23,37 @@ import { recordEmbedding } from '../../lib/ai-tracking.js';
 const EMBEDDING_MODEL = embeddingModel();
 
 /**
+ * Max research docs (metadata.origin "research") allowed in one result list, from
+ * RESEARCH_RETRIEVAL_CAP (default 4). null = no cap (unset to "off" or a negative number).
+ */
+export const researchRetrievalCap = (env = process.env) => {
+    const raw = env.RESEARCH_RETRIEVAL_CAP;
+    if (raw === undefined || raw === '') return 4;
+    if (String(raw).toLowerCase() === 'off') return null;
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
+/**
+ * Keep the ranked order, but allow at most `cap` research docs; the next-best non-research docs
+ * fill the freed slots. With no research docs (or no cap) this is exactly `docs.slice(0, limit)`.
+ */
+export const applyResearchCap = (docs, limit, cap) => {
+    if (cap === null || cap === undefined) return docs.slice(0, limit);
+    const out = [];
+    let research = 0;
+    for (const doc of docs) {
+        if (out.length >= limit) break;
+        if (doc?.metadata?.origin === 'research') {
+            if (research >= cap) continue;
+            research++;
+        }
+        out.push(doc);
+    }
+    return out;
+};
+
+/**
  * @param {object} params
  * @param {string} params.query Text to embed for similarity search
  * @param {string[]} [params.topics] `metadata.topic` values to allow (omit for unfiltered)
@@ -43,7 +74,9 @@ export const retrieveKnowledge = async ({ query, topics, limit = 10, excludeVagu
         const queryVector = embeddingResponse.data[0].embedding;
 
         // Over-fetch when filtering locally so the post-filter still returns `limit`.
-        const fetchLimit = excludeVague ? limit * 2 : limit;
+        // (The research cap backfills from the same over-fetched list, so the query itself is unchanged.)
+        const cap = researchRetrievalCap();
+        const fetchLimit = excludeVague || cap !== null ? limit * 2 : limit;
 
         const vectorSearch = {
             index: KNOWLEDGE_BASE_VECTOR_INDEX,
@@ -62,7 +95,7 @@ export const retrieveKnowledge = async ({ query, topics, limit = 10, excludeVagu
             ? docs.filter((doc) => doc?.metadata?.specificity !== KB_SPECIFICITY.VAGUE)
             : docs;
 
-        return filtered.slice(0, limit);
+        return applyResearchCap(filtered, limit, cap);
     } catch (error) {
         console.error('[RAG] Knowledge retrieval failed:', error.message);
         return [];

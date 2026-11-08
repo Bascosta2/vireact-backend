@@ -30,6 +30,7 @@ import {
     getAiResponseAdmin,
     reviewAiResponseAdmin,
 } from '../controller/ai-response.controller.js';
+import { getResearchStatsAdmin } from '../controller/research-ingest.controller.js';
 import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 
 const adminRoutes = Router();
@@ -154,5 +155,8 @@ adminRoutes.get('/ai-responses', listAiResponsesAdmin);
 adminRoutes.get('/ai-responses/stats', getAiResponseStatsAdmin);
 adminRoutes.get('/ai-responses/:id', getAiResponseAdmin);
 adminRoutes.patch('/ai-responses/:id/review', reviewAiResponseAdmin);
+
+// Autonomous research ingest: read-only stats (no approval actions; the pipeline has no human step).
+adminRoutes.get('/research/stats', getResearchStatsAdmin);
 
 export default adminRoutes;

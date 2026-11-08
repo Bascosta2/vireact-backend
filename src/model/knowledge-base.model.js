@@ -91,6 +91,19 @@ const KnowledgeBaseSchema = new mongoose.Schema({
     chunkIndex: { type: Number },
     totalChunks: { type: Number },
     ingestedAt: { type: Date },
+    /**
+     * Autonomous research ingest (src/service/research-ingest). Only docs with origin "research"
+     * may ever be removed by that pipeline; every other doc is left alone. Additive fields.
+     */
+    origin: { type: String },
+    researchBatch: { type: String },
+    researchId: { type: String },
+    researchType: { type: String },
+    sourceUrls: { type: [String], default: undefined },
+    topics: { type: [String], default: undefined },
+    platforms: { type: [String], default: undefined },
+    niches: { type: [String], default: undefined },
+    reviewScore: { type: Number },
   },
 });
 

@@ -24,6 +24,7 @@
   "description": "",
   "devDependencies": {
     "@upstash/qstash-cli": "^2.37.18",
+    "mongodb-memory-server-core": "^10.1.4",
     "nodemon": "^3.1.10"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "@sentry/node": "11.8.0",
     "@upstash/qstash": "^2.8.4",
     "@upstash/redis": "^1.35.7",
+    "ajv": "^8.17.1",
     "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",
     "compression": "^1.8.1",

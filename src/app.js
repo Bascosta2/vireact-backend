@@ -35,6 +35,7 @@ import { verifyQStashAndParseBody } from './middleware/qstash-verify.js';
 import { processVideoAnalysis } from './controller/video.controller.js';
 import adminUiRoutes from './route/admin-ui.routes.js';
 import { stripSameOriginHeader } from './middleware/same-origin.js';
+import { runResearchIngestWebhook } from './controller/research-ingest.controller.js';
 
 const app = express();
 
@@ -129,6 +130,14 @@ app.post(
     express.raw({ type: 'application/json' }),
     verifyQStashAndParseBody,
     processVideoAnalysis
+);
+
+// QStash daily research ingest (signed; RESEARCH_INGEST_ENABLED gates it)
+app.post(
+    '/api/v1/research/run',
+    express.raw({ type: '*/*' }),
+    verifyQStashAndParseBody,
+    runResearchIngestWebhook
 );
 
 // Body parsers (applied after webhook route)

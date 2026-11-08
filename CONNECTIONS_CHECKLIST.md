@@ -32,6 +32,11 @@ Use this checklist when deploying or verifying backend and frontend after update
 - **Backend** (Railway runtime):
   - `FRONTEND_URL` = `https://vireact.io` — used for CORS, Stripe success/cancel URLs, redirects
   - `BACKEND_URL` = public Railway API origin, **no trailing slash** — **required** for QStash (`publishVideoAnalysisJob` builds `{BACKEND_URL}/api/v1/videos/analyze`)
+  - **Autonomous research ingest** (see SLASH_DOC "Autonomous research ingest"):
+    - `RESEARCH_REPO_TOKEN` = GitHub fine-grained token, repo `Bascosta2/vireact-research` only, Contents **read-only**
+    - `RESEARCH_INGEST_ENABLED` = `true` to turn it on (default off: webhook answers 503, scripts won't `--apply`)
+    - Optional: `RESEARCH_MIN_SCORE` (75), `RESEARCH_DAILY_CAP` (30), `RESEARCH_MAX_SHARE` (0.35), `RESEARCH_RETRIEVAL_CAP` (4, or `off`)
+    - QStash schedule `vireact-research-ingest`: `POST {BACKEND_URL}/api/v1/research/run`, cron `CRON_TZ=America/New_York 45 6 * * *` (06:45 New York all year; 11:45 UTC in winter, 10:45 UTC in summer). Create it with `node scripts/research/create-schedule.js --apply` (needs `QSTASH_TOKEN`, `BACKEND_URL`); verified with the existing `QSTASH_*_SIGNING_KEY`s.
 
 ### API routes (backend)
 
@@ -39,6 +44,8 @@ Use this checklist when deploying or verifying backend and frontend after update
 - `/api/v1/videos` – video upload (file/URL), status, feedback, delete, mark-viewed
 - `/api/v1/videos/:videoId/status` – **GET** video status (upload + analysis) for progress; when `analysisStatus` is `failed`, includes sanitized **`errorSummary`** (no raw provider errors)
 - `/api/v1/videos/analyze` – **POST** QStash webhook (raw body + signature); not for browser calls
+- `/api/v1/research/run` – **POST** QStash daily research ingest (raw body + signature); off unless `RESEARCH_INGEST_ENABLED=true`
+- `/api/v1/admin/research/stats` – **GET** research ingest stats (`x-admin-key`), read-only
 - `/api/v1/chat` – chat
 - `/api/v1/profile` – profile
 - `/api/v1/subscription` – subscription; Stripe webhook is **`POST /api/v1/subscription/webhook`** (registered in `app.js` before `express.json()`)

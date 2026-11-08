@@ -114,6 +114,20 @@
       </div>
 
       <div class="card">
+        <h2>Research knowledge</h2>
+        <p class="desc">The autonomous research pipeline: cloud agents stage and review sources in the vireact-research repo, then the backend gates, dedupes, caps and ingests them into the knowledge base, with an automatic rollback if retrieval gets worse. Read-only.</p>
+        <div class="row"><button type="button" id="rs-load">Refresh</button></div>
+        <div class="helper" id="rs-msg"></div>
+        <div class="tiles" id="rs-tiles"></div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Run</th><th>Status</th><th>Batches</th><th class="num">Pulled</th><th class="num">Ingested</th><th class="num">Waiting</th><th class="num">Rejected</th><th class="num">Duplicates</th><th class="num">Rolled back</th><th class="num">Retired</th><th>Health check</th></tr></thead>
+            <tbody id="rs-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Responses</h2>
         <div class="row">
           <select id="f-feature" aria-label="Feature"><option value="">All features</option></select>
