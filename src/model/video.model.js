@@ -71,6 +71,42 @@ const videoSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
+    /** When and where the creator posted it (Analytics tab). */
+    postedAt: {
+        type: Date,
+        default: null
+    },
+    postUrl: {
+        type: String,
+        default: null,
+        maxlength: 500
+    },
+    /**
+     * Real results over time (24h, 7d, 30d...). actualViews / actualViewsReportedAt always mirror the
+     * newest snapshot (see service/performance.service.js), so older prediction code keeps working.
+     */
+    performanceSnapshots: {
+        type: [{
+            capturedAt: { type: Date, required: true },
+            views: { type: Number, required: true, min: 0 },
+            likes: { type: Number, default: null, min: 0 },
+            comments: { type: Number, default: null, min: 0 },
+            shares: { type: Number, default: null, min: 0 },
+            saves: { type: Number, default: null, min: 0 },
+            source: { type: String, enum: ['manual', 'tiktok', 'instagram', 'youtube'], default: 'manual' }
+        }],
+        default: []
+    },
+    /** Cached AI tags used by the content strategy (filled lazily, see content-strategy.service.js). */
+    contentProfile: {
+        type: new mongoose.Schema({
+            topic: String,
+            format: String,
+            hookType: String,
+            profiledAt: Date
+        }, { _id: false }),
+        default: undefined
+    },
     /** Automatic recovery attempts after a job was interrupted (see analysis-recovery.service.js). */
     analysisAttempts: {
         type: Number,
@@ -315,6 +351,7 @@ const videoSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 videoSchema.index({ uploader_id: 1, createdAt: -1 });
+videoSchema.index({ uploader_id: 1, postedAt: -1 });
 // Stuck-analysis sweeper (every 5 minutes) and ops stats filter on status, then age.
 videoSchema.index({ analysisStatus: 1, updatedAt: 1 });
 

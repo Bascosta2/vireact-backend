@@ -141,6 +141,15 @@ export const PLAN_LIMITS = {
   }
 };
 
+// AI content strategies (Analytics tab) per billing period. Free users see a locked preview.
+// Failed generations are not counted. null = unlimited (not used today; every tier has a cap).
+export const STRATEGY_LIMITS = {
+  free: 0,
+  premium: 3,
+  pro: 10,
+  enterprise: 30
+};
+
 // Lifetime free-trial video allowance per user account. Enforced via
 // assertLifetimeFreeTrialAvailable in subscription.service.js. Independent of
 // PLAN_LIMITS[FREE].videosPerMonth (which is the per-period cap). Counter is

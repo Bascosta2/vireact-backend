@@ -321,7 +321,7 @@ export const confirmVideoUploadService = async (videoId, userId, fileSize) => {
 };
 
 /** Fields the Home, Library and "analyzing" badge need. Keeps polling cheap as libraries grow. */
-export const VIDEO_SUMMARY_FIELDS = '_id filename thumbnailUrl uploadStatus analysisStatus selectedFeatures viralityScore isAnalysisReady createdAt updatedAt lastError';
+export const VIDEO_SUMMARY_FIELDS = '_id filename thumbnailUrl uploadStatus analysisStatus selectedFeatures viralityScore isAnalysisReady createdAt updatedAt lastError actualViews';
 const MAX_SUMMARY_VIDEOS = 500;
 
 export const getUserVideoSummariesService = async (userId) => {

@@ -29,10 +29,11 @@ import { KbResearchRun } from '../src/model/kb-research-run.model.js';
 import { ErrorEvent } from '../src/model/error-event.model.js';
 import { ResearchCandidate } from '../src/model/research-candidate.model.js';
 import { ResearchEvalRun } from '../src/model/research-eval-run.model.js';
+import { ContentStrategy } from '../src/model/content-strategy.model.js';
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
-    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun,
+    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy,
 ];
 
 const apply = process.argv.includes('--apply');

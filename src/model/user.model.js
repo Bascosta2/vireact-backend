@@ -145,6 +145,21 @@ const userSchema = new mongoose.Schema({
             linkedAt: Date
         }, { _id: false }),
         default: undefined
+    },
+    // Analytics tab: what the creator posts and how often. Falls back to onboarding.answers when unset
+    // (see service/creator-profile.service.js).
+    creatorProfile: {
+        type: new mongoose.Schema({
+            niche: String,
+            platforms: [String],
+            followers: Number,
+            goal: String,
+            postsPerWeek: Number,
+            preferredDays: [Number],
+            timezone: String,
+            updatedAt: Date
+        }, { _id: false }),
+        default: undefined
     }
 }, { timestamps: true });
 

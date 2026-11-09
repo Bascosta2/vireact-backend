@@ -49,6 +49,8 @@ import {
 import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
 import { TWELVELABS_USER_INDEX } from '../config/index.js';
 import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
+import { addSnapshot, deleteSnapshot, setPostDetails, getPerformance } from '../service/performance.service.js';
+import { captureServerEvent } from '../lib/analytics.js';
 import { buildFeedbackId, buildScriptRewriteId } from '../service/analyzer/feedback-schema.js';
 
 export const getPresignedUploadUrl = async (req, res) => {
@@ -988,34 +990,55 @@ export const createScriptSuggestions = async (req, res, next) => {
 
 // ─── Real results ──────────────────────────────────────────────────────────
 
-/** The creator reports how many views the video actually got. Feeds future predictions. */
+/**
+ * The creator reports how many views the video actually got. Kept for older clients: it now appends
+ * a performance snapshot (service/performance.service.js), which also keeps actualViews in sync.
+ */
 export const reportActualViews = async (req, res, next) => {
     try {
-        const { videoId } = req.params;
-        const views = normalizeFollowers(req.body?.views);
-        if (views == null) {
-            throw new ApiError(400, 'Enter the number of views as a whole number.');
-        }
-        const update = { actualViews: views, actualViewsReportedAt: new Date() };
-        const platform = normalizePlatform(req.body?.platform);
-        if (platform) update.creatorPlatform = platform;
-        const followers = normalizeFollowers(req.body?.followers);
-        if (followers != null) update.creatorFollowers = followers;
+        const result = await addSnapshot(req.user._id, req.params.videoId, {
+            views: req.body?.views,
+            platform: req.body?.platform,
+            followers: req.body?.followers,
+        });
+        res.status(200).json(ApiResponse.success(200, 'Thanks, your result was saved', result));
+    } catch (error) {
+        next(error);
+    }
+};
 
-        const video = await Video.findOneAndUpdate(
-            { _id: videoId, uploader_id: req.user._id },
-            { $set: update },
-            { new: true }
-        ).select('actualViews actualViewsReportedAt creatorPlatform creatorFollowers');
-        if (!video) {
-            throw new ApiError(404, 'Video not found');
-        }
-        res.status(200).json(ApiResponse.success(200, 'Thanks, your result was saved', {
-            actualViews: video.actualViews,
-            actualViewsReportedAt: video.actualViewsReportedAt,
-            creatorPlatform: video.creatorPlatform,
-            creatorFollowers: video.creatorFollowers,
-        }));
+/** Analytics tab: post date / URL / platform for a video. */
+export const updateVideoPost = async (req, res, next) => {
+    try {
+        const result = await setPostDetails(req.user._id, req.params.videoId, req.body ?? {});
+        res.status(200).json(ApiResponse.success(200, 'Post details saved', result));
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const getVideoPerformance = async (req, res, next) => {
+    try {
+        res.status(200).json(ApiResponse.success(200, 'Performance retrieved', await getPerformance(req.user._id, req.params.videoId)));
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const createPerformanceSnapshot = async (req, res, next) => {
+    try {
+        const result = await addSnapshot(req.user._id, req.params.videoId, req.body ?? {});
+        captureServerEvent(String(req.user._id), 'results_logged', { videoId: req.params.videoId, snapshots: result.snapshots.length });
+        res.status(201).json(ApiResponse.success(201, 'Result saved', result));
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const removePerformanceSnapshot = async (req, res, next) => {
+    try {
+        const result = await deleteSnapshot(req.user._id, req.params.videoId, req.params.snapshotId);
+        res.status(200).json(ApiResponse.success(200, 'Entry removed', result));
     } catch (error) {
         next(error);
     }
