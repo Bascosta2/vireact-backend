@@ -23,6 +23,7 @@ import authRoutes from './route/auth.route.js';
 import earlyAccessRoutes from './route/early-access.route.js';
 import videoRoutes from './route/video.route.js';
 import analyticsRoutes from './route/analytics.route.js';
+import editorRoutes from './route/editor.route.js';
 import chatRoutes from './route/chat.route.js';
 import profileRoutes from './route/profile.route.js';
 import subscriptionRoutes from './route/subscription.route.js';
@@ -37,6 +38,7 @@ import { processVideoAnalysis } from './controller/video.controller.js';
 import adminUiRoutes from './route/admin-ui.routes.js';
 import { stripSameOriginHeader } from './middleware/same-origin.js';
 import { runResearchIngestWebhook } from './controller/research-ingest.controller.js';
+import { runEditJobWebhook } from './controller/editor.controller.js';
 
 const app = express();
 
@@ -131,6 +133,14 @@ app.post(
     express.raw({ type: 'application/json' }),
     verifyQStashAndParseBody,
     processVideoAnalysis
+);
+
+// QStash editor job (Editor tab): raw body for signature verification
+app.post(
+    '/api/v1/editor/jobs/run',
+    express.raw({ type: 'application/json' }),
+    verifyQStashAndParseBody,
+    runEditJobWebhook
 );
 
 // QStash daily research ingest (signed; RESEARCH_INGEST_ENABLED gates it)
@@ -266,6 +276,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/early-access', publicSignupRateLimit, earlyAccessRoutes);
 app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/editor', editorRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);

@@ -10,6 +10,8 @@ import fs from 'node:fs';
 const read = (name) => fs.readFileSync(new URL(`../admin-ui/${name}`, import.meta.url), 'utf8');
 const PAGE_HTML = read('ai-responses.html');
 const PAGE_JS = read('ai-responses.js');
+const EDITOR_HTML = read('editor.html');
+const EDITOR_JS = read('editor.js');
 
 export const ADMIN_UI_CSP = [
     "default-src 'none'",
@@ -40,6 +42,17 @@ adminUiRoutes.get('/ai', (req, res) => {
 adminUiRoutes.get('/ai/app.js', (req, res) => {
     privateHeaders(res);
     res.type('application/javascript').send(PAGE_JS);
+});
+
+// Editor training data: viral examples and the licensed sound library.
+adminUiRoutes.get('/editor', (req, res) => {
+    privateHeaders(res);
+    res.type('html').send(EDITOR_HTML);
+});
+
+adminUiRoutes.get('/editor/app.js', (req, res) => {
+    privateHeaders(res);
+    res.type('application/javascript').send(EDITOR_JS);
 });
 
 export default adminUiRoutes;

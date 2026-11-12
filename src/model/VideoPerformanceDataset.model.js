@@ -60,6 +60,42 @@ const videoPerformanceDatasetSchema = new mongoose.Schema({
     analyzedAt: { type: Date },
     /** Set when creator file ingest completes successfully */
     uploadedAt: { type: Date },
+
+    // Editor tab: what this viral example teaches about editing (computed at ingest from the file).
+    niche: { type: String },
+    followers: { type: Number },
+    likes: { type: Number },
+    comments: { type: Number },
+    shares: { type: Number },
+    saves: { type: Number },
+    editProfile: {
+        type: new mongoose.Schema({
+            avgShotSec: Number,
+            cutsPerMin: Number,
+            speechWpm: Number,
+            pauseRatio: Number,
+            durationSec: Number,
+            aspect: String,
+            captionStyle: String,
+            captionDensity: String,
+            zoomsPerMin: Number,
+            textOverlayUse: String,
+            hookPattern: String,
+            hookFirst2s: String,
+            musicPresence: String,
+            sfxUse: String,
+            pacingNotes: String,
+            summary: String,
+            profiledAt: Date,
+        }, { _id: false }),
+        default: undefined,
+    },
+    editProfileStatus: { type: String, enum: ['none', 'pending', 'ready', 'failed'], default: 'none' },
+    /** Private storage key of the uploaded file, kept so the profile can be rebuilt. */
+    editorSourceKey: { type: String },
+    editProfileError: { type: String },
+    /** Embedding of editProfile.summary + niche, ranked in memory (the dataset is small). */
+    editEmbedding: { type: [Number], default: undefined, select: false },
 }, { timestamps: true });
 
 export const VideoPerformanceDataset = mongoose.model(

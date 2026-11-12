@@ -11,6 +11,7 @@ import { PORT, NODE_ENV, FRONTEND_URL, BACKEND_URL, DB_URL, JWT_SECRET, ACCESS_T
 import { connectDB, isConnected } from './db/index.js';
 import { markShuttingDown, runningJobIds, waitForRunningJobs } from './queue/analysis-runtime.js';
 import { sweepStuckAnalyses, handOffRunningJobs } from './service/analysis-recovery.service.js';
+import { sweepStuckEdits } from './service/editor/edit-job.service.js';
 import { cleanStaleUploads } from './middleware/fileUpload.js';
 import { initErrorTracking, sendDailySummary, captureError } from './service/ops-monitoring.service.js';
 
@@ -54,6 +55,11 @@ const runSweep = async () => {
     await sweepStuckAnalyses();
   } catch (error) {
     console.error('[Recovery] Sweep failed:', error.message);
+  }
+  try {
+    await sweepStuckEdits();
+  } catch (error) {
+    console.error('[Editor] Sweep failed:', error.message);
   }
 };
 import { isServerAnalyticsEnabled, shutdownAnalytics } from './lib/analytics.js';

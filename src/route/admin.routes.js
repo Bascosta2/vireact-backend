@@ -8,7 +8,8 @@ import { analysisQueueStats } from '../controller/video.controller.js';
 import { Video } from '../model/video.model.js';
 import { ANALYSIS_STATUS } from '../constants.js';
 import { RECOVERY } from '../service/analysis-recovery.service.js';
-import { uploadAdminVideo, uploadAdminCreatorVideo, uploadAdminKnowledge } from '../middleware/adminUpload.js';
+import { uploadAdminVideo, uploadAdminCreatorVideo, uploadAdminKnowledge, uploadAdminExample, uploadAdminSound } from '../middleware/adminUpload.js';
+import { listExamples, createExample, reprofileExample, updateExample, deleteExample, listSounds, createSound, updateSound } from '../controller/admin-editor.controller.js';
 import { postPairedVideo, postCreatorVideoUpload, postKnowledge } from '../controller/admin.controller.js';
 import {
     listLibraryItemsAdmin,
@@ -158,5 +159,16 @@ adminRoutes.patch('/ai-responses/:id/review', reviewAiResponseAdmin);
 
 // Autonomous research ingest: read-only stats (no approval actions; the pipeline has no human step).
 adminRoutes.get('/research/stats', getResearchStatsAdmin);
+
+// Editor tab training data (/admin/editor page)
+const withUpload = (mw) => (req, res, next) => mw(req, res, (err) => (err ? next(err) : next()));
+adminRoutes.get('/editor/examples', listExamples);
+adminRoutes.post('/editor/examples', withUpload(uploadAdminExample), createExample);
+adminRoutes.post('/editor/examples/:id/reprofile', reprofileExample);
+adminRoutes.patch('/editor/examples/:id', updateExample);
+adminRoutes.delete('/editor/examples/:id', deleteExample);
+adminRoutes.get('/editor/sounds', listSounds);
+adminRoutes.post('/editor/sounds', withUpload(uploadAdminSound), createSound);
+adminRoutes.patch('/editor/sounds/:id', updateSound);
 
 export default adminRoutes;

@@ -15,7 +15,7 @@ const KnowledgeBaseSchema = new mongoose.Schema({
     topic: {
       type: String,
       required: true,
-      enum: ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor', 'general'],
+      enum: ['hook', 'caption', 'pacing', 'audio', 'advanced_analytics', 'views_predictor', 'general', 'editing'],
       index: true,
     },
     layer: {

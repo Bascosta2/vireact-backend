@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Vireact Editor Data</title>
+  <style>
+    :root {
+      --bg: #0a0a0f; --text: #ffffff; --muted: #8a8a94; --pink: #FF3CAC; --orange: #FF8C00;
+      --card-bg: rgba(255,255,255,0.04); --card-border: rgba(255,255,255,0.08);
+      --input-bg: rgba(255,255,255,0.06); --input-border: rgba(255,255,255,0.12);
+      --ok: #22c55e; --ok-border: rgba(34,197,94,0.4); --err: #ef4444; --err-bg: rgba(239,68,68,0.12); --err-border: rgba(239,68,68,0.4);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .layout { max-width: 1240px; margin: 0 auto; padding: 24px 16px 48px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+    .topbar h1 { margin: 0; font-size: 1.4rem; color: var(--pink); letter-spacing: -0.02em; }
+    .topbar .sub { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+    .card h2 { margin: 0 0 6px; font-size: 1.05rem; }
+    .desc { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .helper { color: var(--muted); font-size: 13px; min-height: 18px; }
+    input, select, textarea { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; }
+    select option { background: #15151c; }
+    input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--pink); outline-offset: 1px; }
+    button { background: linear-gradient(90deg, var(--pink), var(--orange)); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+    button.secondary { background: var(--input-bg); border: 1px solid var(--input-border); font-weight: 500; }
+    button.small { padding: 4px 10px; font-size: 12px; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 12px; margin-bottom: 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); }
+    label > input, label > select { margin-top: 4px; }
+    .span2 { grid-column: span 2; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .hidden { display: none !important; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+    .tabs button { background: var(--input-bg); border: 1px solid var(--input-border); font-weight: 500; }
+    .tabs button[aria-selected="true"] { background: linear-gradient(90deg, var(--pink), var(--orange)); border-color: transparent; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .tile { border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; }
+    .tile .k { font-size: 12px; color: var(--muted); }
+    .tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--card-border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--card-border); color: var(--muted); white-space: nowrap; }
+    .badge.ok { color: var(--ok); border-color: var(--ok-border); }
+    .badge.warn { color: var(--orange); border-color: rgba(255,140,0,0.5); }
+    .badge.err { color: var(--err); border-color: var(--err-border); }
+    .summary { color: var(--muted); max-width: 460px; }
+    .error-box { border: 1px solid var(--err-border); background: var(--err-bg); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+    progress { width: 220px; accent-color: var(--pink); }
+    .login { max-width: 460px; margin: 60px auto; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="topbar">
+      <div>
+        <h1>VIREACT</h1>
+        <div class="sub">Editor training data · private</div>
+      </div>
+      <button type="button" class="secondary hidden" id="signout">Sign out</button>
+    </div>
+
+    <form class="card login" id="login">
+      <h2>Admin key</h2>
+      <p class="desc">Enter ADMIN_API_KEY. It stays in this tab only.</p>
+      <input type="password" id="key" autocomplete="off" aria-label="Admin key" required>
+      <div class="row" style="margin-top:12px"><button type="submit">Sign in</button><span class="helper" id="login-msg"></span></div>
+    </form>
+
+    <div id="app" class="hidden">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-examples" aria-selected="true">Viral examples</button>
+        <button type="button" role="tab" id="tab-sounds" aria-selected="false">Sound library</button>
+      </div>
+
+      <section id="panel-examples">
+        <div class="error-box hidden" id="ex-config"></div>
+        <form class="card" id="ex-form">
+          <h2>Add a viral example</h2>
+          <p class="desc">Upload a video that performed well, with its real numbers. Vireact measures its editing (shot length, cut rate, speaking pace), Claude describes its hook, captions and pacing, and the editor uses it when planning edits for similar creators.</p>
+          <div class="grid">
+            <label class="span2">Video file (MP4, MOV, WEBM, up to 300 MB)<input type="file" id="ex-file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" required></label>
+            <label>Platform<select id="ex-platform" required><option value="">Pick one</option><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="youtube">YouTube</option><option value="facebook">Facebook</option></select></label>
+            <label>Niche<select id="ex-niche"><option value="">Unknown</option><option value="education">Education</option><option value="business_finance">Business & finance</option><option value="entertainment_comedy">Entertainment & comedy</option><option value="lifestyle_vlog">Lifestyle & vlog</option><option value="gaming">Gaming</option><option value="fitness_health">Fitness & health</option><option value="beauty_fashion">Beauty & fashion</option><option value="food">Food</option><option value="tech">Tech</option><option value="other">Other</option></select></label>
+            <label>Views<input type="text" inputmode="numeric" id="ex-views" required placeholder="e.g. 1250000"></label>
+            <label>Creator followers<input type="text" inputmode="numeric" id="ex-followers"></label>
+            <label>Likes<input type="text" inputmode="numeric" id="ex-likes"></label>
+            <label>Comments<input type="text" inputmode="numeric" id="ex-comments"></label>
+            <label>Shares<input type="text" inputmode="numeric" id="ex-shares"></label>
+            <label>Saves<input type="text" inputmode="numeric" id="ex-saves"></label>
+            <label>Avg. retention %<input type="text" inputmode="decimal" id="ex-retention"></label>
+            <label>Posted on<input type="date" id="ex-posted"></label>
+            <label>Creator handle<input type="text" id="ex-handle" maxlength="80"></label>
+          </div>
+          <div class="row"><button type="submit" id="ex-submit">Upload and profile</button><progress id="ex-progress" class="hidden" max="100" value="0"></progress><span class="helper" id="ex-msg"></span></div>
+        </form>
+
+        <div class="card">
+          <h2>Examples</h2>
+          <div class="tiles" id="ex-tiles"></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Video</th><th>Platform · niche</th><th class="num">Views</th><th class="num">Shares</th><th>Profile</th><th>What the editor learns</th><th></th></tr></thead>
+            <tbody id="ex-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section id="panel-sounds" class="hidden">
+        <div class="error-box hidden" id="snd-config"></div>
+        <form class="card" id="snd-form">
+          <h2>Add a sound</h2>
+          <p class="desc">Only add audio you have the rights to use in videos you export for users. Record the license source for every file.</p>
+          <div class="grid">
+            <label class="span2">Audio file (MP3, M4A, WAV, OGG, up to 30 MB)<input type="file" id="snd-file" accept="audio/*" required></label>
+            <label>Type<select id="snd-kind"><option value="music">Music</option><option value="sfx">Sound effect</option></select></label>
+            <label>Title<input type="text" id="snd-title" required maxlength="120"></label>
+            <label class="music-only">Mood<select id="snd-mood"></select></label>
+            <label class="music-only">Energy (1-5)<input type="text" inputmode="numeric" id="snd-energy"></label>
+            <label class="music-only">BPM<input type="text" inputmode="numeric" id="snd-bpm"></label>
+            <label class="music-only">Genre<input type="text" id="snd-genre" maxlength="60"></label>
+            <label class="sfx-only hidden">Effect<select id="snd-sfx"></select></label>
+            <label class="span2">License source (required)<input type="text" id="snd-license" required maxlength="200" placeholder="e.g. Pixabay Content License"></label>
+            <label class="span2">Attribution (if the license asks for it)<input type="text" id="snd-attr" maxlength="300"></label>
+          </div>
+          <div class="row"><button type="submit" id="snd-submit">Add sound</button><span class="helper" id="snd-msg"></span></div>
+        </form>
+        <div class="card">
+          <h2>Library</h2>
+          <div class="scroll"><table>
+            <thead><tr><th>Title</th><th>Id</th><th>Type</th><th>Details</th><th>License</th><th>Status</th><th></th></tr></thead>
+            <tbody id="snd-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+    </div>
+  </div>
+  <script src="/admin/editor/app.js"></script>
+</body>
+</html>

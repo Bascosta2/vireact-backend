@@ -296,6 +296,13 @@ export const recordEmbedding = ({ model, inputTokens, latencyMs, label = 'embedd
     }
 };
 
+/** Map an Anthropic Messages usage object to our fields (input counts include cache reads/writes). */
+export const anthropicUsage = (usage) => ({
+    inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0) + (usage?.cache_creation_input_tokens ?? 0),
+    outputTokens: usage?.output_tokens,
+    cachedInputTokens: usage?.cache_read_input_tokens ?? 0,
+});
+
 /** Map an OpenAI Chat Completions / Responses usage object to our fields. */
 export const openAiUsage = (usage) => ({
     inputTokens: usage?.prompt_tokens ?? usage?.input_tokens,
