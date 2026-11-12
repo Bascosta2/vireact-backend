@@ -160,9 +160,7 @@ const userSchema = new mongoose.Schema({
             updatedAt: Date
         }, { _id: false }),
         default: undefined
-    },
-    // Editor tab: when this account used its one free AI edit (null = still available).
-    editorTrialUsedAt: { type: Date, default: null }
+    }
 }, { timestamps: true });
 
 // Schema-level serialization guard. Strips fields that must never reach a

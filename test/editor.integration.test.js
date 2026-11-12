@@ -149,11 +149,13 @@ after(async () => {
     fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('free user: one free edit end to end (upload, prepare, Claude plan, ready, charged as trial), then locked', { timeout: 120_000 }, async () => {
+test('free user: one AI edit per month end to end (upload, prepare, Claude plan, ready, charged), then locked until next month', { timeout: 120_000 }, async () => {
     const user = await newUser('free', 'free');
     const usage0 = await editorUsage(user._id);
-    assert.equal(usage0.trialAvailable, true);
+    assert.equal(usage0.limit, 1);
+    assert.equal(usage0.remaining, 1);
     assert.equal(usage0.canStart, true);
+    assert.equal(usage0.locked, false);
 
     const id = await queuedProject(user);
     assert.equal(published.at(-1).projectId, id);
@@ -167,7 +169,7 @@ test('free user: one free edit end to end (upload, prepare, Claude plan, ready, 
     const doc = await EditProject.findById(id).lean();
     assert.equal(doc.status, EDIT_STATUS.READY);
     assert.equal(doc.inFlight, false);
-    assert.equal(doc.billing.kind, 'trial');
+    assert.equal(doc.billing.kind, 'plan');
     assert.ok(doc.media.frameSheets.length >= 1);
     assert.ok(doc.source.proxyKey && objects.has(doc.source.proxyKey));
     assert.ok(Math.abs(doc.source.durationSec - 12) < 0.3);
@@ -184,11 +186,18 @@ test('free user: one free edit end to end (upload, prepare, Claude plan, ready, 
     assert.match(blocks[0].text, /\[4\] 1\.40-1\.90 fastest/);
     assert.match(blocks[0].text, /CUT CANDIDATES/);
 
-    const user2 = await User.findById(user._id).lean();
-    assert.ok(user2.editorTrialUsedAt);
+    const usage1 = await editorUsage(user._id);
+    assert.equal(usage1.remaining, 0);
+    assert.equal(usage1.locked, true);
+    const now = new Date();
+    assert.equal(new Date(usage1.resetsOn).getTime(), Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     const locked = await call(createEditProject, { user, body: { fileName: 'c.mp4', contentType: 'video/mp4', sizeBytes: 1000 } });
     assert.equal(locked.error?.statusCode, 403);
     assert.equal(locked.error?.data?.code, 'UPGRADE_REQUIRED');
+    // Next month the free edit is back.
+    const nextMonth = await editorUsage(user._id, { now: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 2)) });
+    assert.equal(nextMonth.remaining, 1);
+    assert.equal(nextMonth.canStart, true);
 
     // Detail: preview props are ready; another user can't see it.
     const detail = await call(getEditProject, { user, params: { id } });
@@ -222,13 +231,27 @@ test('free user: one free edit end to end (upload, prepare, Claude plan, ready, 
     assert.equal(afterRegen.status, EDIT_STATUS.READY);
     assert.equal(afterRegen.revisions.length, 1);
     assert.deepEqual(afterRegen.edits, {}, 'review changes reset with the new plan');
-    assert.equal(afterRegen.billing.kind, 'trial', 'not charged again');
+    assert.equal(afterRegen.billing.kind, 'plan', 'not charged again');
+    assert.equal((await editorUsage(user._id)).used, 1, 'a redo does not use another edit');
+});
+
+test('edits charged under the old lifetime free edit still count toward this month', async () => {
+    const user = await newUser('legacy', 'free');
+    await EditProject.collection.insertOne({
+        userId: user._id,
+        title: 'old',
+        status: EDIT_STATUS.READY,
+        inFlight: false,
+        billing: { kind: 'trial', countedAt: new Date() },
+        createdAt: new Date(),
+    });
+    const usage = await editorUsage(user._id);
+    assert.equal(usage.used, 1);
+    assert.equal(usage.canStart, false);
 });
 
 test('premium: a failed plan frees the slot and is not charged; usage counts only ready edits', { timeout: 120_000 }, async () => {
     const user = await newUser('premium', 'premium');
-    // Use the free edit first so the next one would be a plan edit.
-    await User.updateOne({ _id: user._id }, { $set: { editorTrialUsedAt: new Date() } });
     const id = await queuedProject(user);
     const failing = { ...jobDeps, plan: async () => { throw new Error('model unavailable'); } };
     const result = await runEditJob(id, failing);

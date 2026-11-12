@@ -150,11 +150,11 @@ export const STRATEGY_LIMITS = {
   enterprise: 30
 };
 
-// AI video edits (Editor tab) per billing period, on top of one lifetime free edit per account
-// (user.editorTrialUsedAt). Counted only when an edit plan is produced; failures never count.
-// Placeholder numbers: the owner sets the final caps.
+// AI video edits (Editor tab): Free per calendar month, paid plans per billing period. Counted only
+// when an edit plan is produced; failures never count. Free is owner-set (2026-11-12); the paid
+// caps are still placeholders for the owner to confirm.
 export const EDITOR_LIMITS = {
-  free: 0,
+  free: 1,
   premium: 5,
   pro: 20,
   enterprise: 60
