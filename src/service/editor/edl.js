@@ -27,7 +27,16 @@ export const LIMITS = Object.freeze({ graphics: 40, sfx: 80, effects: 30, zooms:
 const str = { type: 'string' };
 const num = { type: 'number' };
 const bool = { type: 'boolean' };
-const enumOf = (values) => ({ type: 'string', enum: values });
+/**
+ * Claude's structured outputs compile this schema into a grammar with a size limit ("The compiled
+ * grammar is too large" fails every request). Measured against the API on 2026-11-13, so keep it lean:
+ * - allowed values live in descriptions, not `enum` (validateEdl maps anything else to a default);
+ * - no arrays nested inside arrays (list items are one "a | b | c" string);
+ * - transitions + look share one `style` object, sound effects + shake/flash share one `beats` list.
+ * The schema below fits with room for about one more small array; test any addition against the API
+ * before shipping it.
+ */
+const enumOf = (values) => ({ type: 'string', description: `One of: ${values.join(', ')}` });
 const obj = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const arr = (items) => ({ type: 'array', items });
 
@@ -38,24 +47,30 @@ export const EDL_SCHEMA = obj({
     acceptedCandidateIds: arr(str),
     captions: obj({ preset: enumOf(CAPTION_PRESETS), emphasisWordIdx: arr({ type: 'integer' }) }),
     hookOverlay: obj({ enabled: bool, text: str, durationSec: num }),
-    zooms: arr(obj({ at: num, duration: num, scale: num, focusX: num, focusY: num, reason: str })),
-    // Animated on-screen graphics. Unused fields: "" / [] / 0.5.
+    zooms: arr(obj({ at: num, duration: num, scale: num, focusX: num, focusY: num })),
+    // Animated on-screen graphics. Unused fields: "" or 0.5. `items` (list only): "First | Second | Third".
     graphics: arr(obj({
         type: enumOf(GRAPHIC_TYPES),
         start: num,
         end: num,
         text: str,
         subtext: str,
-        items: arr(str),
+        items: { type: 'string', description: 'list items separated by " | "' },
         focusX: num,
         focusY: num,
     })),
-    transitions: obj({ style: enumOf(TRANSITION_STYLES), jumpCutZoom: bool }),
-    effects: arr(obj({ type: enumOf(EFFECT_TYPES), at: num })),
-    look: obj({ grade: enumOf(GRADES), accent: enumOf(ACCENTS), progressBar: bool, motion: bool }),
+    style: obj({
+        transition: enumOf(TRANSITION_STYLES),
+        jumpCutZoom: bool,
+        grade: enumOf(GRADES),
+        accent: enumOf(ACCENTS),
+        progressBar: bool,
+        motion: bool,
+    }),
     framing: obj({ mode: enumOf(['fill', 'fit_blur']), focusX: num }),
     music: obj({ trackId: str, volume: num, reason: str }),
-    sfx: arr(obj({ type: enumOf(SFX_TYPES), at: num })),
+    // Timed beats: a sound effect type or a visual effect (shake, flash).
+    beats: arr(obj({ type: enumOf([...SFX_TYPES, ...EFFECT_TYPES]), at: num })),
     changes: arr(obj({ kind: enumOf(CHANGE_KINDS), label: str, why: str, evidence: enumOf(EVIDENCE) })),
     expectedEffect: str,
 });
@@ -77,7 +92,8 @@ export function normalizeGraphic(g) {
     const type = pick(g?.type, GRAPHIC_TYPES, 'pill');
     const [lo, hi] = GRAPHIC_DURATION[type];
     const start = r3(g?.start);
-    const items = (Array.isArray(g?.items) ? g.items : []).map((x) => clip(x, 40)).filter(Boolean).slice(0, LIMITS.listItems);
+    const rawItems = Array.isArray(g?.items) ? g.items : String(g?.items ?? '').split('|');
+    const items = rawItems.map((x) => clip(x, 40)).filter(Boolean).slice(0, LIMITS.listItems);
     // A list needs time to reveal every item.
     const minDur = type === 'list' ? Math.max(lo, 0.6 + items.length * 0.45) : lo;
     return {
@@ -140,6 +156,13 @@ export function validateEdl(edl, ctx) {
     if (musicId && !trackIds.has(musicId)) issues.push(`music.trackId "${musicId}" is not in the sound library; use one of the listed ids or ""`);
 
     const graphicsIn = (edl.graphics ?? []).map(normalizeGraphic);
+    const beats = Array.isArray(edl.beats) ? edl.beats : [];
+    const sfxIn = [...(edl.sfx ?? []), ...beats.filter((b) => SFX_TYPES.includes(b?.type))];
+    const effectsIn = [...(edl.effects ?? []), ...beats.filter((b) => EFFECT_TYPES.includes(b?.type))];
+    const style = edl.style ?? {};
+    const transitionStyle = style.transition ?? edl.transitions?.style;
+    const jumpCutZoom = style.jumpCutZoom ?? edl.transitions?.jumpCutZoom;
+    const look = { ...(edl.look ?? {}), ...Object.fromEntries(['grade', 'accent', 'progressBar', 'motion'].filter((k) => k in style).map((k) => [k, style[k]])) };
     const texts = [
         edl.summary, edl.hookStrategy, edl.expectedEffect, edl.hookOverlay?.text,
         ...(edl.changes ?? []).flatMap((c) => [c.label, c.why]),
@@ -154,7 +177,7 @@ export function validateEdl(edl, ctx) {
     const plan = {
         summary: clip(edl.summary, 600),
         hookStrategy: clip(edl.hookStrategy, 400),
-        segments: kept.map((s) => ({ id: s.id, start: s.start, end: s.end, role: s.role, reason: clip(s.reason, 200) })),
+        segments: kept.map((s) => ({ id: s.id, start: s.start, end: s.end, role: pick(s.role, SEGMENT_ROLES, 'body'), reason: clip(s.reason, 200) })),
         acceptedCandidateIds: accepted,
         captions: { preset: pick(edl.captions?.preset, CAPTION_PRESETS, 'bold_pop'), emphasisWordIdx: [...new Set(emphasis)] },
         hookOverlay: {
@@ -167,20 +190,20 @@ export function validateEdl(edl, ctx) {
             .slice(0, LIMITS.zooms)
             .map((z) => ({ at: r3(z.at), duration: r3(clamp(z.duration, 0.3, 4)), scale: r3(clamp(z.scale, 1.0, 1.35)), focusX: r3(clamp(z.focusX, 0, 1)), focusY: r3(clamp(z.focusY, 0, 1)), reason: clip(z.reason, 160) })),
         graphics: graphicsIn.filter((g) => graphicHasContent(g) && inSegments(g.start, kept)).slice(0, LIMITS.graphics),
-        transitions: { style: pick(edl.transitions?.style, TRANSITION_STYLES, 'punch'), jumpCutZoom: edl.transitions?.jumpCutZoom !== false },
-        effects: (edl.effects ?? []).filter((e) => EFFECT_TYPES.includes(e.type) && inSegments(e.at, kept)).slice(0, LIMITS.effects).map((e) => ({ type: e.type, at: r3(e.at) })),
+        transitions: { style: pick(transitionStyle, TRANSITION_STYLES, 'punch'), jumpCutZoom: jumpCutZoom !== false },
+        effects: effectsIn.filter((e) => EFFECT_TYPES.includes(e.type) && inSegments(e.at, kept)).slice(0, LIMITS.effects).map((e) => ({ type: e.type, at: r3(e.at) })),
         look: {
-            grade: pick(edl.look?.grade, GRADES, 'vivid'),
-            accent: pick(edl.look?.accent, ACCENTS, 'yellow'),
-            progressBar: edl.look?.progressBar !== false,
-            motion: edl.look?.motion !== false,
+            grade: pick(look.grade, GRADES, 'vivid'),
+            accent: pick(look.accent, ACCENTS, 'yellow'),
+            progressBar: look.progressBar !== false,
+            motion: look.motion !== false,
         },
         // Legacy field; new plans put text in `graphics`.
         textOverlays: [],
         framing: { mode: edl.framing?.mode === 'fit_blur' ? 'fit_blur' : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)) },
         music: { trackId: musicId || null, volume: r3(clamp(edl.music?.volume ?? 0.15, 0, 0.6)), reason: clip(edl.music?.reason, 200) },
-        sfx: (edl.sfx ?? []).filter((s) => SFX_TYPES.includes(s.type) && inSegments(s.at, kept)).slice(0, LIMITS.sfx).map((s) => ({ type: s.type, at: r3(s.at) })),
-        changes: (edl.changes ?? []).slice(0, 24).map((c) => ({ kind: c.kind, label: clip(c.label, 120), why: clip(c.why, 300), evidence: c.evidence })),
+        sfx: sfxIn.filter((s) => SFX_TYPES.includes(s.type) && inSegments(s.at, kept)).slice(0, LIMITS.sfx).map((s) => ({ type: s.type, at: r3(s.at) })),
+        changes: (edl.changes ?? []).slice(0, 24).map((c) => ({ kind: pick(c.kind, CHANGE_KINDS, 'cut'), label: clip(c.label, 120), why: clip(c.why, 300), evidence: pick(c.evidence, EVIDENCE, 'footage') })),
         expectedEffect: clip(edl.expectedEffect, 400),
     };
     return { ok: true, issues: [], plan };

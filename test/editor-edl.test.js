@@ -248,3 +248,37 @@ test('graphics at the top of the screen never overlap', () => {
     const top = props.graphics.filter((g) => ['pill', 'headline', 'counter', 'list'].includes(g.type)).sort((a, b) => a.startFrame - b.startFrame);
     for (let k = 1; k < top.length; k += 1) assert.ok(top[k - 1].startFrame + top[k - 1].durationFrames <= top[k].startFrame, `${top[k - 1].type} ends before ${top[k].type}`);
 });
+
+test('EDL schema stays within Claude\'s grammar limit: no enums, no arrays inside arrays', () => {
+    // "The compiled grammar is too large" failed every plan on 2026-11-13; see the note in edl.js.
+    const walk = (s, insideArray = false) => {
+        assert.equal(s.enum, undefined, 'allowed values belong in the description');
+        if (s.type === 'array') {
+            assert.equal(insideArray, false, 'array nested inside an array');
+            walk(s.items, true);
+        }
+        if (s.type === 'object') Object.values(s.properties).forEach((p) => walk(p, insideArray));
+    };
+    walk(EDL_SCHEMA);
+    assert.ok(JSON.stringify(EDL_SCHEMA).length < 4000, 'schema grew; test the grammar against the API before shipping');
+});
+
+test('validateEdl reads the compact style, beats and "a | b" list items', () => {
+    const plan0 = rich();
+    delete plan0.transitions;
+    delete plan0.look;
+    delete plan0.effects;
+    plan0.sfx = [];
+    plan0.style = { transition: 'glitch', jumpCutZoom: false, grade: 'cool', accent: 'blue', progressBar: false, motion: true };
+    plan0.beats = [{ type: 'riser', at: 6.0 }, { type: 'shake', at: 6.62 }, { type: 'made_up', at: 6.7 }];
+    plan0.graphics[1].items = 'Film | Cut |  | Post';
+    plan0.changes = [{ kind: 'sparkles', label: 'x', why: 'y', evidence: 'vibes' }];
+    const { ok, plan, issues } = validateEdl(plan0, ctx);
+    assert.equal(ok, true, issues.join('; '));
+    assert.deepEqual(plan.transitions, { style: 'glitch', jumpCutZoom: false });
+    assert.deepEqual(plan.look, { grade: 'cool', accent: 'blue', progressBar: false, motion: true });
+    assert.deepEqual(plan.sfx.map((s) => s.type), ['riser']);
+    assert.deepEqual(plan.effects.map((e) => e.type), ['shake']);
+    assert.deepEqual(plan.graphics.find((g) => g.type === 'list').items, ['Film', 'Cut', 'Post']);
+    assert.deepEqual([plan.changes[0].kind, plan.changes[0].evidence], ['cut', 'footage'], 'unknown values fall back');
+});

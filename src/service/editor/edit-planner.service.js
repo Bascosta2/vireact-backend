@@ -4,7 +4,7 @@ import { storage } from '../../lib/storage.js';
 import { VOICE_RULES } from '../analyzer/voice.js';
 import { formatKnowledgeContext, retrieveKnowledge } from '../analyzer/retrieve-knowledge.js';
 import { SoundAsset } from '../../model/sound-asset.model.js';
-import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, GRADES, GRAPHIC_TYPES, TRANSITION_STYLES, validateEdl } from './edl.js';
+import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, EFFECT_TYPES, GRADES, GRAPHIC_TYPES, SFX_TYPES, TRANSITION_STYLES, validateEdl } from './edl.js';
 import { selectExemplars } from './exemplars.js';
 
 /**
@@ -68,9 +68,10 @@ export const SYSTEM_PROMPT = [
     '- Something visibly changes at least every 2 seconds: a cut, a punch-in zoom, a graphic, a transition or an effect.',
     '- Graphics: about one every 3 to 5 seconds of the finished edit, more in the first 5 seconds.',
     '- Punch-in zooms (scale 1.1 to 1.3): every 2 to 4 seconds on emphasis words, alternating with graphics.',
-    '- Sound: transitions and graphics get their sounds automatically. Add your own `sfx` for the beats only you can hear in the script: a riser 1 to 1.5 s before a reveal, bass_drop or boom on the reveal or punchline, ding or sparkle on money, numbers and wins, glitch on a mistake or a twist, notify on a tip, click or typing on lists and screens.',
+    '- Sound: transitions and graphics get their sounds automatically. Add your own sounds as `beats` for the moments only you can hear in the script: a riser 1 to 1.5 s before a reveal, bass_drop or boom on the reveal or punchline, ding or sparkle on money, numbers and wins, glitch on a mistake or a twist, notify on a tip, click or typing on lists and screens.',
+    `- \`beats\` are timed moments: a sound (${SFX_TYPES.join(', ')}) or a visual effect (${EFFECT_TYPES.join(', ')}) at a source time.`,
     '',
-    'GRAPHICS (type, start, end, text, subtext, items, focusX, focusY; unused fields are "" / [] / 0.5)',
+    'GRAPHICS (type, start, end, text, subtext, items, focusX, focusY; unused fields are "" or 0.5; items is one string with list items separated by " | ")',
     `- Types: ${GRAPHIC_TYPES.join(', ')}.`,
     '- slam: 1 to 3 punchy words that slam onto the screen on the key word of a line (e.g. "10X FASTER", "STOP"). Pair big ones with an effect shake.',
     '- pill: a short label (2 to 5 words) that pops in at the top: topic, step name, "WAIT FOR IT", "MISTAKE #1".',
@@ -88,9 +89,9 @@ export const SYSTEM_PROMPT = [
     '',
     'HOOK, TRANSITIONS, EFFECTS AND LOOK',
     '- Hook overlay: at most 7 words, concrete to this video and matching the footage. Usually enabled: it adds stakes or curiosity the first spoken line does not.',
-    `- Transitions (${TRANSITION_STYLES.join(', ')}) play at every jump between segments: punch for talking heads, whip for energetic or travel content, glitch for tech, gaming or twists, flash for dramatic reveals, none only for slow or serious topics. jumpCutZoom true alternates a slight zoom between pause cuts inside a segment (keep it true for talking heads).`,
-    '- Effects: shake on slams, punchlines and impacts; flash on reveals and before-after moments.',
-    `- Look: grade (${GRADES.join(', ')}); vivid suits most videos, warm for lifestyle, cool for tech, punchy_bw only for dramatic content. Accent (${ACCENTS.join(', ')}) colors graphics and emphasis words; pick one that fits the mood and stands out against the footage. progressBar true for edits over 15 seconds. motion true adds a slow push-in so no shot is ever static.`,
+    `- style.transition (${TRANSITION_STYLES.join(', ')}) plays at every jump between segments: punch for talking heads, whip for energetic or travel content, glitch for tech, gaming or twists, flash for dramatic reveals, none only for slow or serious topics. style.jumpCutZoom true alternates a slight zoom between pause cuts inside a segment (keep it true for talking heads).`,
+    '- Effects (as beats): shake on slams, punchlines and impacts; flash on reveals and before-after moments.',
+    `- style.grade (${GRADES.join(', ')}): vivid suits most videos, warm for lifestyle, cool for tech, punchy_bw only for dramatic content. style.accent (${ACCENTS.join(', ')}) colors graphics and emphasis words; pick one that fits the mood and stands out against the footage. style.progressBar true for edits over 15 seconds. style.motion true adds a slow push-in so no shot is ever static.`,
     '- Framing: output is 9:16. fill (crop) when the subject stays near one horizontal position, with focusX on the subject; fit_blur for landscape footage where cropping would lose the action.',
     '- Music: a track id from the library that fits the mood, or "" when the video already has music, the audio is loud and continuous, or nothing fits. Volume 0.08 to 0.2.',
     '',
