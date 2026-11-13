@@ -208,3 +208,30 @@ export function validateEdl(edl, ctx) {
     };
     return { ok: true, issues: [], plan };
 }
+
+/**
+ * A validated plan in the shape EDL_SCHEMA asks Claude for (style, beats, "a | b" items), so a
+ * regeneration shows Claude its previous plan in the same format it must answer in. Works for plans
+ * saved before graphics existed.
+ */
+export function toSchemaShape(plan) {
+    const transitions = plan.transitions ?? { style: 'punch', jumpCutZoom: true };
+    const look = plan.look ?? { grade: 'vivid', accent: 'yellow', progressBar: true, motion: true };
+    const graphics = plan.graphics ?? (plan.textOverlays ?? []).map((o) => normalizeGraphic({ type: 'pill', start: o.start, end: o.end, text: o.text }));
+    return {
+        summary: plan.summary,
+        hookStrategy: plan.hookStrategy,
+        segments: plan.segments,
+        acceptedCandidateIds: plan.acceptedCandidateIds,
+        captions: plan.captions,
+        hookOverlay: plan.hookOverlay,
+        zooms: (plan.zooms ?? []).map(({ at, duration, scale, focusX, focusY }) => ({ at, duration, scale, focusX, focusY })),
+        graphics: graphics.map((g) => ({ ...g, items: (g.items ?? []).join(' | ') })),
+        style: { transition: transitions.style, jumpCutZoom: transitions.jumpCutZoom, ...look },
+        framing: plan.framing,
+        music: { ...plan.music, trackId: plan.music?.trackId ?? '' },
+        beats: [...(plan.sfx ?? []), ...(plan.effects ?? [])].sort((a, b) => a.at - b.at),
+        changes: plan.changes,
+        expectedEffect: plan.expectedEffect,
+    };
+}

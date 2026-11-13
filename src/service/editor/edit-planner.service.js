@@ -4,7 +4,7 @@ import { storage } from '../../lib/storage.js';
 import { VOICE_RULES } from '../analyzer/voice.js';
 import { formatKnowledgeContext, retrieveKnowledge } from '../analyzer/retrieve-knowledge.js';
 import { SoundAsset } from '../../model/sound-asset.model.js';
-import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, EFFECT_TYPES, GRADES, GRAPHIC_TYPES, SFX_TYPES, TRANSITION_STYLES, validateEdl } from './edl.js';
+import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, EFFECT_TYPES, GRADES, GRAPHIC_TYPES, SFX_TYPES, TRANSITION_STYLES, toSchemaShape, validateEdl } from './edl.js';
 import { selectExemplars } from './exemplars.js';
 
 /**
@@ -234,7 +234,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
     });
     const messages = [{ role: 'user', content }];
     if (revision?.previousPlan) {
-        messages.push({ role: 'assistant', content: JSON.stringify(revision.previousPlan) });
+        messages.push({ role: 'assistant', content: JSON.stringify(toSchemaShape(revision.previousPlan)) });
         messages.push({ role: 'user', content: `The creator reviewed that edit and asks: "${String(revision.note ?? '').slice(0, 500)}". Return a revised full plan that follows their request and every rule above.` });
     }
 

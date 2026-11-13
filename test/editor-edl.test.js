@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EDL_SCHEMA, validateEdl } from '../src/service/editor/edl.js';
+import * as edlModule from '../src/service/editor/edl.js';
+const { EDL_SCHEMA, validateEdl } = edlModule;
 import { buildRenderProps, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 
@@ -281,4 +282,19 @@ test('validateEdl reads the compact style, beats and "a | b" list items', () => 
     assert.deepEqual(plan.effects.map((e) => e.type), ['shake']);
     assert.deepEqual(plan.graphics.find((g) => g.type === 'list').items, ['Film', 'Cut', 'Post']);
     assert.deepEqual([plan.changes[0].kind, plan.changes[0].evidence], ['cut', 'footage'], 'unknown values fall back');
+});
+
+test('a saved plan converts back to the schema shape and validates to the same plan', () => {
+    const { plan } = validateEdl(rich(), ctx);
+    const { toSchemaShape } = edlModule;
+    const shaped = toSchemaShape(plan);
+    const keys = Object.keys(EDL_SCHEMA.properties).sort();
+    assert.deepEqual(Object.keys(shaped).sort(), keys, 'every schema field, nothing else');
+    const again = validateEdl(shaped, ctx);
+    assert.equal(again.ok, true, again.issues.join('; '));
+    for (const k of ['graphics', 'transitions', 'look', 'effects', 'sfx', 'segments', 'captions']) assert.deepEqual(again.plan[k], plan[k], k);
+    // Plans saved before graphics existed convert too.
+    const legacy = { ...plan, textOverlays: [{ start: 2, end: 3, text: 'Step 1', position: 'top' }] };
+    for (const k of ['graphics', 'transitions', 'look', 'effects']) delete legacy[k];
+    assert.equal(toSchemaShape(legacy).graphics[0].text, 'Step 1');
 });
