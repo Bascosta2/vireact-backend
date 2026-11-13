@@ -143,3 +143,108 @@ test('buildRenderProps applies the creator review changes', () => {
     assert.equal(props.music, null);
     assert.deepEqual(props.sfx, []);
 });
+
+const rich = () => ({
+    ...good(),
+    segments: [
+        { id: 's1', start: 5.9, end: 7.0, role: 'hook', reason: 'strongest line' },
+        { id: 's2', start: 1.25, end: 4.5, role: 'body', reason: 'setup' },
+    ],
+    // The pause between "want" and "to" (2.85-3.75) is cut, so s2 plays as two pieces.
+    acceptedCandidateIds: cutCandidates.filter((c) => c.kind === 'silence' && c.start > 2.8 && c.end < 3.8).map((c) => c.id),
+    graphics: [
+        { type: 'slam', start: 6.6, end: 6.8, text: 'THIS TRICK', subtext: '', items: [], focusX: 0.5, focusY: 0.5 },
+        { type: 'list', start: 2.0, end: 2.5, text: 'Steps', subtext: '', items: ['Film', 'Cut', 'Post', ''], focusX: 0.5, focusY: 0.5 },
+        { type: 'counter', start: 3.9, end: 6.0, text: '$10,000', subtext: 'in a month', items: [], focusX: 0.5, focusY: 0.5 },
+        { type: 'pill', start: 9.0, end: 10, text: 'cut moment', subtext: '', items: [], focusX: 0.5, focusY: 0.5 },
+        { type: 'callout', start: 2.1, end: 3, text: '', subtext: '', items: [], focusX: 0.4, focusY: 0.3 },
+    ],
+    transitions: { style: 'whip', jumpCutZoom: true },
+    effects: [{ type: 'shake', at: 6.62 }, { type: 'flash', at: 11 }],
+    look: { grade: 'warm', accent: 'pink', progressBar: true, motion: true },
+    sfx: [{ type: 'riser', at: 6.0 }],
+});
+
+test('validateEdl keeps graphics with content on kept moments and gives lists time to reveal', () => {
+    const { ok, plan, issues } = validateEdl(rich(), ctx);
+    assert.equal(ok, true, issues.join('; '));
+    assert.deepEqual(plan.graphics.map((g) => g.type), ['slam', 'list', 'counter'], 'cut-moment pill and empty callout dropped');
+    const list = plan.graphics.find((g) => g.type === 'list');
+    assert.deepEqual(list.items, ['Film', 'Cut', 'Post']);
+    assert.ok(list.end - list.start >= 0.6 + 3 * 0.45 - 1e-9, 'list lasts long enough for every item');
+    assert.ok(plan.graphics[0].end - plan.graphics[0].start >= 0.6 - 1e-9, 'slam has a minimum on-screen time');
+    assert.deepEqual(plan.effects.map((e) => e.type), ['shake']);
+    assert.deepEqual(plan.look, { grade: 'warm', accent: 'pink', progressBar: true, motion: true });
+    assert.equal(plan.transitions.style, 'whip');
+
+    const promise = rich();
+    promise.graphics[0].text = 'GUARANTEED';
+    assert.match(validateEdl(promise, ctx).issues.join(), /promises/);
+});
+
+test('buildRenderProps: transitions at segment jumps, jump-cut zooms inside a segment, sound on every beat', () => {
+    const { plan } = validateEdl(rich(), ctx);
+    const media = { words, silences: [], durationSec, cutCandidates };
+    const props = buildRenderProps(plan, {}, media);
+
+    // s1 then s2: one jump between segments gets the planned transition.
+    assert.equal(props.transitions.length, 1);
+    assert.equal(props.transitions[0].type, 'whip');
+    assert.equal(props.transitions[0].frame, props.timeline.find((p) => p.segId === 's2').outStartFrame);
+    // Pause cuts inside s2 alternate a slight zoom.
+    const s2 = props.timeline.filter((p) => p.segId === 's2');
+    assert.ok(s2.length >= 2, 'filler cuts split s2');
+    assert.deepEqual(s2.slice(0, 2).map((p) => p.baseScale), [1, 1.08]);
+
+    assert.equal(props.look.accent, '#FF4FA3');
+    assert.deepEqual(props.graphics.map((g) => g.type).sort(), ['counter', 'list', 'slam']);
+
+    const types = props.sfx.map((s) => s.type);
+    assert.ok(types.includes('whoosh'), 'whip transition has a whoosh');
+    assert.ok(types.includes('boom'), 'slam has a boom');
+    assert.ok(types.includes('typing') && types.includes('ding'), 'counter types then dings');
+    assert.ok(types.includes('riser') || types.includes('bass_drop'), 'Claude\'s own sounds are kept');
+    for (let k = 1; k < props.sfx.length; k += 1) assert.ok(props.sfx[k].frame - props.sfx[k - 1].frame >= 5, 'sounds never pile up');
+    assert.ok(props.sfx.every((s) => s.volume > 0 && s.volume <= 1));
+});
+
+test('buildRenderProps upgrades plans saved before graphics existed', () => {
+    const { plan } = validateEdl(good(), ctx);
+    const legacy = { ...plan, textOverlays: [{ start: 2.0, end: 3.0, text: 'Step 1', position: 'top' }] };
+    delete legacy.graphics;
+    delete legacy.transitions;
+    delete legacy.effects;
+    delete legacy.look;
+    const props = buildRenderProps(legacy, {}, { words, silences: [], durationSec, cutCandidates });
+    assert.deepEqual(props.graphics.map((g) => [g.type, g.text]), [['pill', 'Step 1']]);
+    assert.equal(props.transitions[0]?.type, 'punch');
+    assert.equal(props.look.grade, 'vivid');
+});
+
+test('review toggles switch off transitions, effects and graphics with their sounds', () => {
+    const { plan } = validateEdl(rich(), ctx);
+    const media = { words, silences: [], durationSec, cutCandidates };
+    const edits = sanitizeEdits({ transitionsOff: true, effectsOff: true, overlaysOff: true });
+    assert.deepEqual(edits, { overlaysOff: true, transitionsOff: true, effectsOff: true });
+    const props = buildRenderProps(plan, edits, media);
+    assert.deepEqual(props.transitions, []);
+    assert.deepEqual(props.effects, []);
+    assert.deepEqual(props.graphics, []);
+    assert.ok(props.timeline.every((p) => p.baseScale === 1));
+    assert.ok(!props.sfx.some((s) => ['whoosh', 'boom', 'typing'].includes(s.type)), 'no sounds for switched-off layers');
+});
+
+test('the hook card makes room for graphics at the top of the screen', () => {
+    const { plan } = validateEdl({ ...rich(), hookOverlay: { enabled: true, text: 'Watch this', durationSec: 3 } }, ctx);
+    const props = buildRenderProps(plan, {}, { words, silences: [], durationSec, cutCandidates });
+    const top = props.graphics.filter((g) => ['pill', 'headline', 'counter', 'list'].includes(g.type));
+    assert.ok(props.hook.durationFrames >= 30, 'the hook shows for at least a second');
+    for (const g of top) assert.ok(g.startFrame >= props.hook.durationFrames, `${g.type} starts after the hook card`);
+});
+
+test('graphics at the top of the screen never overlap', () => {
+    const { plan } = validateEdl(rich(), ctx);
+    const props = buildRenderProps(plan, {}, { words, silences: [], durationSec, cutCandidates });
+    const top = props.graphics.filter((g) => ['pill', 'headline', 'counter', 'list'].includes(g.type)).sort((a, b) => a.startFrame - b.startFrame);
+    for (let k = 1; k < top.length; k += 1) assert.ok(top[k - 1].startFrame + top[k - 1].durationFrames <= top[k].startFrame, `${top[k - 1].type} ends before ${top[k].type}`);
+});

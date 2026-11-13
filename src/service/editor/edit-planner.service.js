@@ -4,7 +4,7 @@ import { storage } from '../../lib/storage.js';
 import { VOICE_RULES } from '../analyzer/voice.js';
 import { formatKnowledgeContext, retrieveKnowledge } from '../analyzer/retrieve-knowledge.js';
 import { SoundAsset } from '../../model/sound-asset.model.js';
-import { CAPTION_PRESETS, EDL_SCHEMA, SFX_TYPES, validateEdl } from './edl.js';
+import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, GRADES, GRAPHIC_TYPES, TRANSITION_STYLES, validateEdl } from './edl.js';
 import { selectExemplars } from './exemplars.js';
 
 /**
@@ -14,30 +14,89 @@ import { selectExemplars } from './exemplars.js';
  * server validates it (one retry with the issues), then snaps every cut to word boundaries later.
  */
 
-const KNOWLEDGE_TOPICS = ['hook', 'pacing', 'caption', 'audio', 'editing', 'general'];
+/**
+ * The knowledge base is searched once per part of the edit, each with its own topics, so the plan
+ * draws on every area (hooks, pacing, captions, audio, retention drivers, performance signals)
+ * instead of whatever one combined query happens to match.
+ */
+export const KNOWLEDGE_ASPECTS = [
+    { label: 'HOOK AND FIRST SECONDS', topics: ['hook'], query: 'hook first 2 seconds pattern interrupt opening line on-screen hook text', limit: 5 },
+    { label: 'PACING, CUTS AND VISUAL CHANGE', topics: ['pacing', 'editing', 'general'], query: 'pacing cut rate jump cuts zoom punch-ins visual change every few seconds retention dips', limit: 5 },
+    { label: 'CAPTIONS AND ON-SCREEN TEXT', topics: ['caption'], query: 'captions on-screen text emphasis words text overlays readability keywords', limit: 4 },
+    { label: 'SOUND DESIGN AND MUSIC', topics: ['audio'], query: 'sound effects sound design music energy audio levels transitions whoosh', limit: 4 },
+    { label: 'RETENTION DRIVERS AND EMOTIONAL TRIGGERS', topics: ['advanced_analytics'], query: 'retention drivers emotional triggers curiosity payoff loops weakest moment rewatch', limit: 5 },
+    { label: 'WHAT PREDICTS VIEWS', topics: ['views_predictor'], query: 'signals that predict views shares watch time completion rate', limit: 3 },
+];
+
+/** Run every aspect query, drop chunks an earlier aspect already used, and label each block. */
+export async function retrieveEditingKnowledge({ niche, gist }, retrieve) {
+    const results = await Promise.all(KNOWLEDGE_ASPECTS.map((a) => Promise.resolve(retrieve({
+        query: `${niche || 'short-form'} video: ${a.query}. ${gist}`.slice(0, 1000),
+        topics: a.topics,
+        limit: a.limit,
+    })).catch(() => [])));
+    const seen = new Set();
+    const blocks = [];
+    let total = 0;
+    KNOWLEDGE_ASPECTS.forEach((a, k) => {
+        const fresh = (results[k] ?? []).filter((d) => {
+            const key = String(d?._id ?? d?.content ?? '').slice(0, 200);
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        total += fresh.length;
+        if (fresh.length) blocks.push(`${a.label}\n${formatKnowledgeContext(fresh)}`);
+    });
+    return { text: blocks.length ? blocks.join('\n\n') : 'No reference notes matched. Use your editing judgment.', count: total };
+}
 
 /** Stable across users and requests, so it is served from the prompt cache. */
 export const SYSTEM_PROMPT = [
-    'You are the senior short-form video editor at Vireact. You plan edits for TikTok, Instagram Reels and YouTube Shorts that give a creator\'s own footage its best chance to hold viewers and get shared.',
+    'You are the senior short-form video editor at Vireact. You plan high-retention edits for TikTok, Instagram Reels and YouTube Shorts in the style of the top creators: fast, dense, animated, with sound design on every beat. The goal is that a viewer never has a reason to swipe.',
     '',
     'HARD RULES',
-    '- Use only the creator\'s footage. Never add, invent or request clips, b-roll, stock footage, images or generated visuals. You may cut, reorder, caption, zoom, frame, add text, add music and add sound effects from the provided library.',
-    '- All times are in SOURCE seconds (the uploaded video). The server snaps your cut points to word boundaries, so you do not need frame accuracy.',
-    '- `segments` is the ordered list of source ranges to keep, in the order they should play. Everything not covered is removed. Each moment can be used at most once (no overlapping ranges). Ids are short and unique (s1, s2, ...).',
-    '- You may move the strongest moment to the start as the hook, but the edit must still make sense to a first-time viewer. Do not reorder in ways that break cause and effect.',
-    '- Accept cut candidates (ids like c3) to remove pauses, filler words, retakes and dead air inside the parts you keep. Leave a candidate out when the pause is a deliberate beat or the word carries meaning.',
+    "- Use only the creator's footage. Never add, invent or request clips, b-roll, stock footage, images or generated visuals. You may cut, reorder, caption, zoom, frame, animate text and graphics, add transitions, effects, music and sound effects.",
+    '- All times are in SOURCE seconds (the uploaded video). The server snaps cut points to word boundaries.',
+    '- `segments` is the ordered list of source ranges to keep, in play order. Everything not covered is removed. No overlapping ranges. Ids are short and unique (s1, s2, ...).',
+    '- You may move the strongest moment to the start as the hook, but the edit must still make sense to a first-time viewer.',
+    '- Accept cut candidates (ids like c3) to remove pauses, filler words, retakes and dead air. Keep a pause only when it is a deliberate beat.',
+    '- Graphics, effects and sound effects are placed at SOURCE times inside kept segments; anything on a removed moment is dropped.',
     '- The finished edit must be at least 3 seconds long.',
     '',
-    'CRAFT',
-    '- First 2 seconds: show the payoff, the stakes or a question the video answers. Cut every lead-in, greeting and setup that does not earn its place.',
-    '- Pacing: aim for the shot length and cut rate of the strongest viral examples in this niche when they are provided. Remove dead air, keep breaths short.',
-    `- Captions: pick a preset (${CAPTION_PRESETS.join(', ')}). Bold_pop for high-energy talking, clean for calm or informational, karaoke for fast speech or music-driven videos. Choose emphasis words by index: numbers, key nouns and the payoff words, roughly one in six words at most.`,
-    '- Hook overlay: at most 7 words, concrete to this video, matches what the footage actually shows. Enable it only when it adds something the first spoken line does not.',
-    '- Zooms: punch-ins of 1.08 to 1.25 on emphasis moments, never more than one every 3 seconds. Use the frames to place focusX/focusY (0-1) on the face or subject.',
-    '- Framing: output is 9:16. Use fill (crop) when the subject stays near one horizontal position, with focusX on the subject. Use fit_blur for landscape footage where cropping would lose the action.',
-    '- Text overlays: only for steps, numbers or labels that help the viewer follow. Short.',
-    `- Music: pick a track id from the library that fits the mood and energy, or "" when the video already has music, the audio is loud and continuous, or nothing fits. Volume 0.08 to 0.2 so speech stays clear. Sound effects (${SFX_TYPES.join(', ')}): sparing, on reveals and transitions, at most one every 4 seconds.`,
-    '- Ground decisions in the reference notes and viral examples when they apply. In `changes`, set evidence to knowledge, viral_example or footage for the main reason behind each change.',
+    'DENSITY TARGETS (the server enforces spacing, so plan generously)',
+    '- Something visibly changes at least every 2 seconds: a cut, a punch-in zoom, a graphic, a transition or an effect.',
+    '- Graphics: about one every 3 to 5 seconds of the finished edit, more in the first 5 seconds.',
+    '- Punch-in zooms (scale 1.1 to 1.3): every 2 to 4 seconds on emphasis words, alternating with graphics.',
+    '- Sound: transitions and graphics get their sounds automatically. Add your own `sfx` for the beats only you can hear in the script: a riser 1 to 1.5 s before a reveal, bass_drop or boom on the reveal or punchline, ding or sparkle on money, numbers and wins, glitch on a mistake or a twist, notify on a tip, click or typing on lists and screens.',
+    '',
+    'GRAPHICS (type, start, end, text, subtext, items, focusX, focusY; unused fields are "" / [] / 0.5)',
+    `- Types: ${GRAPHIC_TYPES.join(', ')}.`,
+    '- slam: 1 to 3 punchy words that slam onto the screen on the key word of a line (e.g. "10X FASTER", "STOP"). Pair big ones with an effect shake.',
+    '- pill: a short label (2 to 5 words) that pops in at the top: topic, step name, "WAIT FOR IT", "MISTAKE #1".',
+    '- headline: a 3 to 8 word title card with an optional subtext, for the topic or a section change.',
+    '- lower_third: name or credential (text) with a role or context (subtext), early, when the speaker introduces themselves or a source.',
+    '- counter: a number counting up (text like "$10,000", "87%", "3x", "1.2M") with subtext saying what it measures. Use it for every important number spoken.',
+    '- list: a title (text) and 2 to 6 short items revealed one by one, for steps, tips and options. Make it last long enough to read.',
+    '- callout: a ring and label pointing at something in the frame; focusX/focusY is the point (read it from the frames), text is the label.',
+    '- cta: the closing ask ("Follow for part 2", "Save this"), in the last 2 to 4 seconds when the video ends with a takeaway or is part of a series.',
+    '- Every graphic must say something worth reading. Never repeat the caption word for word; distill it.',
+    '',
+    'CAPTIONS',
+    `- Presets: ${CAPTION_PRESETS.join(', ')}. bold_pop for high-energy talking (default), highlight for educational or tips content (active word in a colored box), impact for short punchy lines and fast speech (one big word at a time), clean for calm or serious topics, karaoke for music-driven videos.`,
+    '- Emphasis words by index: numbers, key nouns, payoff words and contrasts, about one in five words.',
+    '',
+    'HOOK, TRANSITIONS, EFFECTS AND LOOK',
+    '- Hook overlay: at most 7 words, concrete to this video and matching the footage. Usually enabled: it adds stakes or curiosity the first spoken line does not.',
+    `- Transitions (${TRANSITION_STYLES.join(', ')}) play at every jump between segments: punch for talking heads, whip for energetic or travel content, glitch for tech, gaming or twists, flash for dramatic reveals, none only for slow or serious topics. jumpCutZoom true alternates a slight zoom between pause cuts inside a segment (keep it true for talking heads).`,
+    '- Effects: shake on slams, punchlines and impacts; flash on reveals and before-after moments.',
+    `- Look: grade (${GRADES.join(', ')}); vivid suits most videos, warm for lifestyle, cool for tech, punchy_bw only for dramatic content. Accent (${ACCENTS.join(', ')}) colors graphics and emphasis words; pick one that fits the mood and stands out against the footage. progressBar true for edits over 15 seconds. motion true adds a slow push-in so no shot is ever static.`,
+    '- Framing: output is 9:16. fill (crop) when the subject stays near one horizontal position, with focusX on the subject; fit_blur for landscape footage where cropping would lose the action.',
+    '- Music: a track id from the library that fits the mood, or "" when the video already has music, the audio is loud and continuous, or nothing fits. Volume 0.08 to 0.2.',
+    '',
+    'GROUNDING',
+    "- The REFERENCE NOTES are Vireact's knowledge base, grouped by part of the edit. Apply every note that fits this video: hook patterns, cut rates, caption and text rules, sound design, retention drivers and emotional triggers. The VIRAL EXAMPLES show what worked for real creators; match their pacing and graphics density when provided.",
+    '- In `changes`, list the main decisions (including graphics, transitions, sound and look) and set evidence to knowledge, viral_example or footage for the reason behind each.',
     '- Never promise results. `expectedEffect` says what the viewer will experience differently, not view counts.',
     '',
     'WRITING (summary, hookStrategy, changes, expectedEffect, reasons)',
@@ -109,7 +168,7 @@ export function buildPlannerContent({ project, profile, knowledgeText, exemplarT
         'CUT CANDIDATES (accept by id)',
         formatCandidates(media.cutCandidates),
         '',
-        'REFERENCE NOTES',
+        'REFERENCE NOTES (Vireact knowledge base, by part of the edit)',
         knowledgeText,
         '',
         'VIRAL EXAMPLES (real videos and their real results)',
@@ -158,7 +217,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
     const platform = profile?.platforms?.[0] || null;
 
     const [knowledge, { exemplars, benchmarks }, tracks, sheets] = await Promise.all([
-        retrieve({ query: `${niche || 'short-form'} video editing: hook, pacing, captions, cuts. ${gist}`.slice(0, 1000), topics: KNOWLEDGE_TOPICS, limit: 8 }),
+        retrieveEditingKnowledge({ niche, gist }, retrieve),
         pickExemplars({ description: `${niche || ''} ${platform || ''} video. ${gist}`.trim(), platform, niche }),
         tracksLoader(),
         sheetsLoader(media.frameSheets),
@@ -167,7 +226,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
     const content = buildPlannerContent({
         project,
         profile,
-        knowledgeText: formatKnowledgeContext(knowledge, 'No reference notes matched. Use your editing judgment.'),
+        knowledgeText: knowledge.text,
         exemplarText: formatExemplars(exemplars, benchmarks),
         trackText: formatTracks(tracks),
         sheets,
@@ -208,5 +267,5 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
             throw err;
         }
     }
-    return { plan: result.plan, generationId, exemplarCount: exemplars.length };
+    return { plan: result.plan, generationId, exemplarCount: exemplars.length, knowledgeCount: knowledge.count };
 }

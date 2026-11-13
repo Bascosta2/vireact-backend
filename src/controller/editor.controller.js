@@ -47,6 +47,13 @@ const assertConfigured = () => {
 
 const sign = (key, opts) => (key ? storage.presignDownload(key, { expiresIn: SIGNED_TTL, ...opts }) : null);
 
+/**
+ * Built-in sound effects ship with the web app (public/sfx/<type>.mp3), so every edit has sound even
+ * when nothing has been uploaded to the sound library. Uploaded effects of the same type win.
+ * The www host is used directly: the bare domain redirects, and renders should not depend on that.
+ */
+export const builtInSfxUrl = (type, base = process.env.PUBLIC_ASSETS_URL || 'https://www.vireact.io') => `${String(base).replace(/\/+$/, '')}/sfx/${type}.mp3`;
+
 /** Signed URLs for the music track and sound effects a set of props uses. */
 async function soundUrls(props) {
     const slugs = new Set();
@@ -59,7 +66,7 @@ async function soundUrls(props) {
     const sfx = {};
     for (const type of sfxTypes) {
         const a = assets.find((x) => x.kind === 'sfx' && x.sfxType === type);
-        if (a) sfx[type] = await sign(a.key);
+        sfx[type] = a ? await sign(a.key) : builtInSfxUrl(type);
     }
     return {
         musicUrl: music ? await sign(music.key) : null,
@@ -113,6 +120,8 @@ async function toDetail(p) {
     };
     if (p.status === EDIT_STATUS.READY && p.plan) {
         const props = buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p));
+        // Counts with every layer switched on, so a toggle stays visible after it is turned off.
+        const full = buildRenderProps(p.plan, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false }, mediaFor(p));
         detail.plan = {
             summary: p.plan.summary,
             hookStrategy: p.plan.hookStrategy,
@@ -124,8 +133,12 @@ async function toDetail(p) {
             zooms: p.plan.zooms.map((z, index) => ({ index, at: z.at, scale: z.scale, reason: z.reason })),
             music: p.plan.music,
             framing: p.plan.framing,
-            sfxCount: p.plan.sfx.length,
-            overlayCount: p.plan.textOverlays.length,
+            sfxCount: full.sfx.length,
+            overlayCount: full.graphics.length,
+            transitionCount: full.transitions.length,
+            effectCount: full.effects.length,
+            graphics: full.graphics.map((g) => ({ type: g.type, text: g.text || g.items.join(', ') })),
+            look: full.look,
         };
         detail.props = { ...props, ...(await soundUrls(props)) };
         detail.proxyUrl = await sign(p.source?.proxyKey);
