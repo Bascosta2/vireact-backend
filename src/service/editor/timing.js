@@ -125,13 +125,42 @@ export function srcToOut(t, timeline) {
 
 const pieceAt = (t, timeline) => timeline.find((p) => t >= p.srcStart && t < p.srcEnd) || null;
 
+const pageChars = (page) => page.reduce((n, w) => n + w.text.length, 0) + page.length - 1;
+
 /**
- * Word-level captions on the output timeline, grouped into short pages (2-4 words) that break on
- * punctuation, long pauses and cuts.
+ * Split a run of words that belong together into pages of 2-3 words that each fit on one line.
+ * Of all the ways to split the run it picks the one with the fewest single-word pages, then the
+ * fewest pages, then the most even widths (4 words → 2 + 2, 7 → 3 + 2 + 2). A word is left on
+ * its own only when it cannot share a line with either neighbour.
+ */
+function splitRun(run, maxWords, maxChars) {
+    const n = run.length;
+    if (n <= 1) return [run];
+    const ALONE = 10; // a single-word page costs more than any number of extra pages it could save
+    // best[i]: the cheapest way to split words i..n-1, and the size of its first page.
+    const best = new Array(n + 1).fill(null);
+    best[n] = { cost: 0, size: 0 };
+    for (let i = n - 1; i >= 0; i -= 1) {
+        // Larger pages are tried first, so ties go to the split that starts with the fuller page.
+        for (let size = Math.min(maxWords, n - i); size >= 1; size -= 1) {
+            const chars = pageChars(run.slice(i, i + size));
+            if (size > 1 && chars > maxChars) continue;
+            const cost = best[i + size].cost + 1 + (size === 1 ? ALONE : 0) + chars * chars * 0.001;
+            if (!best[i] || cost < best[i].cost - 1e-9) best[i] = { cost, size };
+        }
+    }
+    const pages = [];
+    for (let i = 0; i < n; i += best[i].size) pages.push(run.slice(i, i + best[i].size));
+    return pages;
+}
+
+/**
+ * Word-level captions on the output timeline, grouped into short pages (2-3 words, one line) that
+ * break on sentence ends, long pauses and cuts.
  * @param {Array<{w:string,start:number,end:number}>} words
  * @param {{emphasis?:Set<number>, textOverrides?:Record<string,string>, maxWords?:number, maxChars?:number}} opts
  */
-export function captionPages(words, timeline, { emphasis = new Set(), textOverrides = {}, maxWords = 4, maxChars = 24, maxGap = 0.6 } = {}) {
+export function captionPages(words, timeline, { emphasis = new Set(), textOverrides = {}, maxWords = 3, maxChars = 16, maxGap = 0.6 } = {}) {
     const placed = [];
     words.forEach((w, i) => {
         const mid = (w.start + w.end) / 2;
@@ -152,23 +181,21 @@ export function captionPages(words, timeline, { emphasis = new Set(), textOverri
     });
     placed.sort((a, b) => a.start - b.start);
 
-    const pages = [];
-    let cur = null;
+    // Runs: words with no pause, cut or sentence end between them.
+    const runs = [];
     for (const w of placed) {
-        const prev = cur?.words[cur.words.length - 1];
-        const chars = cur ? cur.words.reduce((n, x) => n + x.text.length + 1, 0) + w.text.length : 0;
-        const breakHere = !cur
-            || cur.words.length >= maxWords
-            || chars > maxChars
+        const run = runs[runs.length - 1];
+        const prev = run?.[run.length - 1];
+        const breakHere = !prev
             || w.start - prev.end > maxGap
-            || prev.pieceId !== w.pieceId && w.start - prev.end > 0.05
-            || /[.!?,;:]$/.test(prev.text);
-        if (breakHere) {
-            cur = { words: [] };
-            pages.push(cur);
-        }
-        cur.words.push(w);
+            || (prev.pieceId !== w.pieceId && w.start - prev.end > 0.05)
+            || /[.!?]$/.test(prev.text)
+            // A comma ends the page unless that would leave one word on its own.
+            || (/[,;:]$/.test(prev.text) && run.length >= 2);
+        if (breakHere) runs.push([w]);
+        else run.push(w);
     }
+    const pages = runs.flatMap((run) => splitRun(run, maxWords, maxChars)).map((pageWords) => ({ words: pageWords }));
     return pages.map((p, k) => {
         const start = p.words[0].start;
         const lastEnd = p.words[p.words.length - 1].end;

@@ -120,7 +120,7 @@ test('buildRenderProps applies the creator review changes', () => {
     const edits = sanitizeEdits({
         keepOriginalOrder: true,
         restoredCandidates: plan.acceptedCandidateIds,
-        captionPreset: 'karaoke',
+        captionPreset: 'clean',
         captionText: { 5: 'SHOW', 999: 'x' },
         hookOverlayOff: true,
         zoomsOff: true,
@@ -137,7 +137,7 @@ test('buildRenderProps applies the creator review changes', () => {
     const withoutHook = buildRenderProps(plan, sanitizeEdits({ disabledSegments: ['s1'] }), media);
     assert.ok(withoutHook.durationInFrames < base.durationInFrames, 'removing a segment shortens the edit');
     assert.equal(withoutHook.timeline[0].segId, 's2');
-    assert.equal(props.captions.preset, 'karaoke');
+    assert.equal(props.captions.preset, 'clean');
     assert.ok(props.captions.pages.flatMap((p) => p.words).some((w) => w.text === 'SHOW'));
     assert.equal(props.hook, null);
     assert.deepEqual(props.zooms, []);
@@ -203,7 +203,7 @@ test('buildRenderProps: transitions at segment jumps, jump-cut zooms inside a se
     const types = props.sfx.map((s) => s.type);
     assert.ok(types.includes('whoosh'), 'whip transition has a whoosh');
     assert.ok(types.includes('boom'), 'slam has a boom');
-    assert.ok(types.includes('typing') && types.includes('ding'), 'counter types then dings');
+    assert.ok(types.includes('typing') && types.includes('ding'), 'the counter types and the list ends on a ding');
     assert.ok(types.includes('riser') || types.includes('bass_drop'), 'Claude\'s own sounds are kept');
     for (let k = 1; k < props.sfx.length; k += 1) assert.ok(props.sfx[k].frame - props.sfx[k - 1].frame >= 5, 'sounds never pile up');
     assert.ok(props.sfx.every((s) => s.volume > 0 && s.volume <= 1));
@@ -297,4 +297,146 @@ test('a saved plan converts back to the schema shape and validates to the same p
     const legacy = { ...plan, textOverlays: [{ start: 2, end: 3, text: 'Step 1', position: 'top' }] };
     for (const k of ['graphics', 'transitions', 'look', 'effects']) delete legacy[k];
     assert.equal(toSchemaShape(legacy).graphics[0].text, 'Step 1');
+});
+
+test('captions: 2-3 words per page, and the removed karaoke look falls back to bold_pop', () => {
+    const { plan } = validateEdl({ ...good(), captions: { preset: 'karaoke', emphasisWordIdx: [] } }, ctx);
+    assert.equal(plan.captions.preset, 'bold_pop');
+    assert.deepEqual(sanitizeEdits({ captionPreset: 'karaoke' }), { captionPreset: 'bold_pop' });
+    assert.deepEqual(sanitizeEdits({ captionPreset: 'made_up' }), {});
+    assert.ok(!edlModule.CAPTION_PRESETS.includes('karaoke'));
+
+    const media = { words, silences: [], durationSec, cutCandidates };
+    // A plan saved while karaoke existed still plays.
+    const saved = buildRenderProps({ ...plan, captions: { preset: 'karaoke', emphasisWordIdx: [] } }, {}, media);
+    assert.equal(saved.captions.preset, 'bold_pop');
+    for (const preset of edlModule.CAPTION_PRESETS) {
+        const props = buildRenderProps(plan, { captionPreset: preset }, media);
+        const max = preset === 'impact' ? 2 : 3;
+        assert.ok(props.captions.pages.every((p) => p.words.length >= 1 && p.words.length <= max), `${preset}: at most ${max} words per page`);
+    }
+});
+
+const illustrated = () => ({
+    ...rich(),
+    graphics: [
+        { type: 'visual', start: 2.3, end: 2.5, text: 'YOUR BRAIN', subtext: '', items: 'brain', focusX: 0.5, focusY: 0.5 },
+        { type: 'visual', start: 3.9, end: 9, text: '', subtext: '', items: 'Light Bulb', focusX: 0.5, focusY: 0.5 },
+        { type: 'visual', start: 6.4, end: 8, text: 'money', subtext: '', items: '', focusX: 0.5, focusY: 0.5 },
+        { type: 'visual', start: 4.1, end: 6, text: 'A dragon', subtext: '', items: 'dragon', focusX: 0.5, focusY: 0.5 },
+    ],
+});
+
+test('illustrations: known names are kept with their sound, anything we cannot draw is dropped', () => {
+    const { ok, plan, issues } = validateEdl(illustrated(), ctx);
+    assert.equal(ok, true, issues.join('; '));
+    assert.deepEqual(plan.graphics.map((g) => [g.type, g.visual, g.text]), [['visual', 'brain', 'YOUR BRAIN'], ['visual', 'money', '']], 'unknown names dropped; a name typed as the label still counts');
+    assert.ok(plan.graphics[0].end - plan.graphics[0].start >= 1.4 - 1e-9, 'an illustration stays long enough to read');
+    assert.deepEqual(plan.graphics[0].items, []);
+
+    const props = buildRenderProps(plan, {}, { words, silences: [], durationSec, cutCandidates });
+    const shown = props.graphics.filter((g) => g.type === 'visual');
+    assert.deepEqual(shown.map((g) => g.visual).sort(), ['brain', 'money']);
+    const types = props.sfx.map((s) => s.type);
+    assert.ok(types.includes(edlModule.VISUALS.brain.sfx) || types.includes(edlModule.VISUALS.money.sfx), 'an illustration brings its own sound');
+
+    // Regenerations show Claude the plan in the schema format: the name goes back into `items`.
+    const shaped = edlModule.toSchemaShape(plan);
+    assert.deepEqual(shaped.graphics.map((g) => [g.items, 'visual' in g]), [['brain', false], ['money', false]]);
+    assert.deepEqual(validateEdl(shaped, ctx).plan.graphics, plan.graphics);
+});
+
+test('every illustration and automatic sound is a sound that exists', async () => {
+    const { SFX_FOR_GRAPHIC, SFX_FOR_TRANSITION, SFX_FOR_EFFECT, SFX_VOLUME } = await import('../src/service/editor/compose.js');
+    const known = new Set(edlModule.SFX_TYPES);
+    assert.equal(known.size, edlModule.SFX_TYPES.length, 'no sound listed twice');
+    assert.ok(known.size >= 40, 'a wide sound palette');
+    for (const [name, v] of Object.entries(edlModule.VISUALS)) assert.ok(known.has(v.sfx), `${name} uses a known sound`);
+    for (const pools of [SFX_FOR_GRAPHIC, SFX_FOR_TRANSITION, SFX_FOR_EFFECT]) {
+        for (const [key, pool] of Object.entries(pools)) assert.ok(pool.length > 0 && pool.every((s) => known.has(s)), `${key} uses known sounds`);
+    }
+    assert.deepEqual(Object.keys(SFX_VOLUME).sort(), [...known].sort(), 'every sound has a volume');
+    assert.ok(!edlModule.SFX_TYPES.some((s) => edlModule.EFFECT_TYPES.includes(s)), 'a beat name is either a sound or an effect');
+});
+
+test('a counter types up, then lands on a till for money and a bright tone for other numbers', () => {
+    const counterSounds = (text) => {
+        const { plan } = validateEdl({ ...rich(), graphics: [{ type: 'counter', start: 2.0, end: 4.4, text, subtext: '', items: '', focusX: 0.5, focusY: 0.5 }], sfx: [], effects: [], hookOverlay: { enabled: false, text: '', durationSec: 2 }, zooms: [] }, ctx);
+        return buildRenderProps(plan, { transitionsOff: true }, { words, silences: [], durationSec, cutCandidates }).sfx.map((s) => s.type);
+    };
+    assert.deepEqual(counterSounds('$10,000'), ['typing', 'cash']);
+    assert.deepEqual(counterSounds('87%'), ['typing', 'ding']);
+});
+
+test('repeated graphics rotate through different sounds', () => {
+    const pills = [2.0, 2.6, 3.9, 6.1].map((start, k) => ({ type: 'pill', start, end: start + 0.5, text: `Step ${k + 1}`, subtext: '', items: '', focusX: 0.5, focusY: 0.5 }));
+    const { plan } = validateEdl({ ...rich(), graphics: pills, sfx: [], effects: [], hookOverlay: { enabled: false, text: '', durationSec: 2 }, zooms: [] }, ctx);
+    const props = buildRenderProps(plan, { transitionsOff: true }, { words, silences: [], durationSec, cutCandidates });
+    const types = props.sfx.map((s) => s.type);
+    assert.ok(new Set(types).size >= Math.min(3, types.length), `pills do not all sound the same (${types.join(', ')})`);
+    for (let k = 1; k < types.length; k += 1) assert.notEqual(types[k], types[k - 1], 'never the same sound twice in a row');
+});
+
+test('the lower third and the call to action share the strip under the captions and take turns', () => {
+    const low = [
+        { type: 'lower_third', start: 2.0, end: 6.0, text: 'Alex Rivera', subtext: 'Sleep researcher', items: '', focusX: 0.5, focusY: 0.5 },
+        { type: 'cta', start: 4.0, end: 6.5, text: 'Follow for part 2', subtext: '', items: '', focusX: 0.5, focusY: 0.5 },
+    ];
+    const { ok, plan, issues } = validateEdl({ ...rich(), graphics: low, sfx: [], effects: [], hookOverlay: { enabled: false, text: '', durationSec: 2 }, zooms: [] }, ctx);
+    assert.equal(ok, true, issues.join('; '));
+    const props = buildRenderProps(plan, { transitionsOff: true }, { words, silences: [], durationSec, cutCandidates });
+    const lower = props.graphics.find((g) => g.type === 'lower_third');
+    const cta = props.graphics.find((g) => g.type === 'cta');
+    assert.ok(lower && cta, 'both are shown');
+    assert.ok(lower.startFrame + lower.durationFrames <= cta.startFrame, 'the lower third is gone when the call to action arrives');
+});
+
+test('an illustration that would only flash is left out, and a slam moves under the captions when the top is taken', () => {
+    const none = { sfx: [], effects: [], hookOverlay: { enabled: false, text: '', durationSec: 2 }, zooms: [] };
+    const media = { words, silences: [], durationSec, cutCandidates };
+    const gfx = (type, start, end, extra = {}) => ({ type, start, end, text: '', subtext: '', items: '', focusX: 0.5, focusY: 0.5, ...extra });
+    const shown = (graphics, extra = {}) => {
+        const { ok, plan, issues } = validateEdl({ ...rich(), ...none, ...extra, graphics }, ctx);
+        assert.equal(ok, true, issues.join('; '));
+        return buildRenderProps(plan, { transitionsOff: true }, media).graphics;
+    };
+
+    // The pill arrives half a second after the brain: the brain is dropped, the pill is untouched.
+    const crowded = shown([gfx('visual', 2.0, 4.0, { items: 'brain' }), gfx('pill', 2.5, 4.0, { text: 'Step one' })]);
+    assert.deepEqual(crowded.map((g) => g.type), ['pill']);
+    // With room, the illustration plays and hands over to the pill.
+    const spaced = shown([gfx('visual', 2.0, 4.4, { items: 'brain' }), gfx('pill', 3.9, 4.4, { text: 'Step one' })]);
+    assert.deepEqual(spaced.map((g) => g.type).sort(), ['pill', 'visual']);
+    const brain = spaced.find((g) => g.type === 'visual');
+    assert.ok(brain.durationFrames >= 27, 'an illustration that is shown stays for about a second or more');
+    assert.ok(brain.startFrame + brain.durationFrames <= spaced.find((g) => g.type === 'pill').startFrame);
+
+    // A slam on its own stays at the top; with an illustration on screen it moves under the captions.
+    assert.equal(shown([gfx('slam', 2.0, 2.8, { text: 'STOP' })])[0].low, undefined);
+    const withBrain = shown([gfx('visual', 2.0, 4.4, { items: 'brain' }), gfx('slam', 2.1, 2.9, { text: 'LYING' })]);
+    assert.equal(withBrain.find((g) => g.type === 'slam').low, true);
+    assert.equal(withBrain.find((g) => g.type === 'visual').low, undefined);
+    // Both places taken: the slam is left out instead of covering something.
+    const full = shown([gfx('visual', 2.0, 4.4, { items: 'brain' }), gfx('lower_third', 2.0, 4.4, { text: 'Alex Rivera' }), gfx('slam', 2.1, 2.9, { text: 'LYING' })]);
+    assert.deepEqual(full.map((g) => g.type).sort(), ['lower_third', 'visual']);
+});
+
+test('the same sound does not play twice in a row: it switches to another from its pool, or the automatic one gives way', async () => {
+    const { arrangeSfx } = await import('../src/service/editor/compose.js');
+    const types = (events) => arrangeSfx(events.map((e) => ({ priority: 2, volume: 0.5, ...e })), 900).map((s) => s.type);
+    // A pool gives the repeat something else to play, and avoids the sound that comes next too.
+    assert.deepEqual(types([{ type: 'swish', frame: 10 }, { type: 'swish', frame: 60, pool: ['swish', 'whip', 'swoosh'] }, { type: 'whip', frame: 120 }]), ['swish', 'swoosh', 'whip']);
+    // No pool: the automatic repeat close behind is dropped, whichever of the two it is.
+    assert.deepEqual(types([{ type: 'cash', frame: 10, priority: 3 }, { type: 'cash', frame: 40 }]), ['cash']);
+    assert.deepEqual(types([{ type: 'cash', frame: 10 }, { type: 'cash', frame: 40, priority: 3 }]), ['cash']);
+    // Far apart, or both chosen by the planner, or the items of one list: left alone.
+    assert.deepEqual(types([{ type: 'cash', frame: 10 }, { type: 'cash', frame: 200 }]), ['cash', 'cash']);
+    assert.deepEqual(types([{ type: 'boom', frame: 10, priority: 3 }, { type: 'boom', frame: 40, priority: 3 }]), ['boom', 'boom']);
+    assert.deepEqual(types([{ type: 'tap', frame: 10, series: true }, { type: 'tap', frame: 24, series: true }, { type: 'ding', frame: 38, series: true }]), ['tap', 'tap', 'ding']);
+
+    // In a full edit: money said out loud (the planner's own cash) and a money counter right after it.
+    const { plan } = validateEdl({ ...rich(), graphics: [{ type: 'counter', start: 2.0, end: 4.4, text: '$10,000', subtext: '', items: '', focusX: 0.5, focusY: 0.5 }], sfx: [{ type: 'cash', at: 2.3 }], effects: [], hookOverlay: { enabled: false, text: '', durationSec: 2 }, zooms: [] }, ctx);
+    const played = buildRenderProps(plan, { transitionsOff: true }, { words, silences: [], durationSec, cutCandidates }).sfx.map((s) => s.type);
+    for (let k = 1; k < played.length; k += 1) assert.notEqual(played[k], played[k - 1], `no repeat in ${played.join(', ')}`);
+    assert.ok(played.includes('coin'), `the counter lands on the coin when the till has just played (${played.join(', ')})`);
 });

@@ -107,8 +107,30 @@ test('captionPages: pages follow output order, break on punctuation, apply empha
     assert.ok(text.join(' ').includes('SHOW'));
     assert.equal(pages.at(-1).words.at(-1).text, 'trick.');
     assert.equal(pages.at(-1).words.at(-1).emphasis, true);
-    assert.ok(pages.every((p) => p.words.length <= 4));
+    assert.ok(pages.every((p) => p.words.length <= 3));
     for (let i = 1; i < pages.length; i += 1) assert.ok(pages[i].start >= pages[i - 1].start);
+});
+
+test('captionPages: 2-3 words per page on one line, never a stranded single word inside a sentence', () => {
+    const say = (text) => text.split(' ').map((w, i) => ({ w, start: i * 0.3, end: i * 0.3 + 0.25 }));
+    const pagesOf = (text, opts) => {
+        const spoken = say(text);
+        const { timeline } = buildTimeline([{ id: 'a', segId: 'a', start: 0, end: spoken.at(-1).end + 0.1 }]);
+        return captionPages(spoken, timeline, opts).map((p) => p.words.map((w) => w.text).join(' '));
+    };
+    assert.deepEqual(pagesOf('one two three four'), ['one two', 'three four'], '4 words split 2 + 2, not 3 + 1');
+    assert.deepEqual(pagesOf('a b c d e f g'), ['a b c', 'd e', 'f g'], '7 words split 3 + 2 + 2');
+    assert.deepEqual(pagesOf('Stop. Do this now'), ['Stop.', 'Do this now'], 'a sentence end starts a new page');
+    assert.deepEqual(pagesOf('So, here is why'), ['So, here', 'is why'], 'a comma does not strand the first word');
+    assert.deepEqual(pagesOf('first of all, we start'), ['first of all,', 'we start'], 'a comma ends the page after two or more words');
+    assert.deepEqual(pagesOf('extraordinary opportunities everywhere'), ['extraordinary', 'opportunities', 'everywhere'], 'words too wide for one line get their own page');
+    assert.deepEqual(pagesOf('one two three four', { maxWords: 2, maxChars: 14 }), ['one two', 'three four']);
+    // "Most people think" is too wide for one line: the split moves a word along instead of stranding "think".
+    assert.deepEqual(pagesOf('Most people think five hours is enough,'), ['Most people', 'think five hours', 'is enough,']);
+    assert.deepEqual(pagesOf('I really love productivity hacks'), ['I really love', 'productivity', 'hacks'], 'a word stands alone only when it fits beside neither neighbour');
+    const long = pagesOf('your brain is lying to you about sleep and most people think five hours is enough but after one week your focus drops by forty percent');
+    assert.ok(long.every((p) => p.split(' ').length >= 2 && p.split(' ').length <= 3 && p.length <= 16), `no single-word pages in ordinary speech (${long.join(' / ')})`);
+    assert.ok(pagesOf('the quick brown fox jumps over the lazy dog and keeps running far away').every((p) => p.split(' ').length <= 3 && p.length <= 16));
 });
 
 test('mapRange clips to the piece and returns null for cut starts', () => {
