@@ -16,7 +16,7 @@ import { planEdit } from '../src/service/editor/edit-planner.service.js';
 import { editorUsage } from '../src/service/editor/editor-access.service.js';
 import {
     createEditProject, confirmEditUpload, getEditProject, updateEdits, regenerateEdit,
-    startEditRender, getEditRender, deleteEditProject, getEditorUsage,
+    startEditRender, getEditRender, deleteEditProject, getEditorUsage, requireEditorAccess,
 } from '../src/controller/editor.controller.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vireact-editor-int-'));
@@ -122,6 +122,9 @@ before(async () => {
         saved[k] = process.env[k];
         process.env[k] = `test-${k.toLowerCase()}`;
     }
+    for (const k of ['EDITOR_ENABLED', 'EDITOR_BETA_EMAILS']) saved[k] = process.env[k];
+    process.env.EDITOR_ENABLED = 'true';
+    delete process.env.EDITOR_BETA_EMAILS;
     await connectTestDb();
     await EditProject.createIndexes();
     setStorageForTests(fakeStorage);
@@ -323,4 +326,40 @@ test('export renders on Lambda, reports progress and returns a download link; de
     assert.ok(gone.billing.countedAt, 'billing history kept so deleting does not refund an edit');
     assert.ok(deletedPrefixes.some((p) => p.includes(`/sources/${user._id}/${id}/`)));
     assert.equal((await call(getEditProject, { user, params: { id } })).error?.statusCode, 404);
+});
+
+test('private beta: with EDITOR_ENABLED off only allowlisted emails get the editor', async () => {
+    const outsider = await newUser('outsider', 'pro');
+    const tester = await newUser('tester', 'free');
+    const gate = (user) => new Promise((resolve) => requireEditorAccess({ user }, {}, (err) => resolve(err ?? null)));
+    try {
+        process.env.EDITOR_ENABLED = 'false';
+        process.env.EDITOR_BETA_EMAILS = ` someone@example.invalid, ${tester.email.toUpperCase()} `;
+
+        const blocked = await gate(outsider);
+        assert.equal(blocked.statusCode, 404);
+        assert.equal(blocked.data.code, 'EDITOR_UNAVAILABLE');
+        const hidden = await call(getEditorUsage, { user: outsider });
+        assert.equal(hidden.error, null);
+        assert.equal(hidden.data.available, false);
+        assert.equal(hidden.data.renderAvailable, false);
+        assert.equal(hidden.data.canStart, false);
+
+        assert.equal(await gate(tester), null);
+        const shown = await call(getEditorUsage, { user: tester });
+        assert.equal(shown.data.available, true);
+        assert.equal(shown.data.limit, 1);
+
+        // No allowlist at all: nobody gets in, including requests without a user.
+        delete process.env.EDITOR_BETA_EMAILS;
+        assert.equal((await gate(tester)).statusCode, 404);
+        assert.equal((await gate(null)).statusCode, 404);
+
+        process.env.EDITOR_ENABLED = 'true';
+        assert.equal(await gate(outsider), null);
+        assert.equal((await call(getEditorUsage, { user: outsider })).data.available, true);
+    } finally {
+        process.env.EDITOR_ENABLED = 'true';
+        delete process.env.EDITOR_BETA_EMAILS;
+    }
 });

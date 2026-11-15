@@ -16,6 +16,7 @@ import { isRenderConfigured, renderProgress, startRender } from '../service/edit
 import { uploadVideoUrlToTwelveLabsService } from '../service/video.service.js';
 import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
+import { hasEditorAccess } from '../config/flags.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
@@ -150,8 +151,16 @@ async function toDetail(p) {
     return detail;
 }
 
+/** Private beta gate (config/flags.js): accounts without access see the editor as not existing. */
+export const requireEditorAccess = (req, res, next) =>
+    next(hasEditorAccess(req.user) ? undefined : new ApiError(404, 'Not found', { code: 'EDITOR_UNAVAILABLE' }));
+
 export const getEditorUsage = async (req, res, next) => {
     try {
+        // The web app reads `available` to decide whether to show the Editor tab at all.
+        if (!hasEditorAccess(req.user)) {
+            return ok(res, 'Editor usage', { plan: null, limit: 0, used: 0, remaining: 0, resetsOn: null, canStart: false, locked: false, available: false, renderAvailable: false, maxUploadBytes: MAX_UPLOAD_BYTES, maxDurationSec: 180 });
+        }
         const usage = await editorUsage(req.user._id);
         ok(res, 'Editor usage', { ...usage, available: isStorageConfigured() && isClaudeConfigured(), renderAvailable: isRenderConfigured(), maxUploadBytes: MAX_UPLOAD_BYTES, maxDurationSec: 180 });
     } catch (error) {

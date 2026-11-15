@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import {
+    requireEditorAccess,
     getEditorUsage,
     createEditProject,
     confirmEditUpload,
@@ -19,7 +20,9 @@ const editorRoutes = Router();
 
 editorRoutes.use(authenticateToken);
 
+// Usage stays open to every signed-in user: it is how the web app learns the editor is hidden.
 editorRoutes.get('/usage', getEditorUsage);
+editorRoutes.use(requireEditorAccess);
 editorRoutes.get('/projects', listEditProjects);
 editorRoutes.post('/projects', createEditProject);
 editorRoutes.get('/projects/:id', getEditProject);

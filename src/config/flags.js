@@ -10,7 +10,20 @@ export const isLibraryEnabled = () => isOn('LIBRARY_ENABLED');
 export const isFunnelV2Enabled = () => isOn('FUNNEL_V2_ENABLED');
 export const isLifecycleEmailsEnabled = () => isOn('LIFECYCLE_EMAILS_ENABLED');
 
-export const ACCESS_MODELS = Object.freeze({ LEGACY_FREE: 'legacy_free', CARD_TRIAL: 'card_trial' });
+/**
+ * Editor tab private beta. Off (default): only accounts listed in EDITOR_BETA_EMAILS (comma-separated)
+ * can use the editor; everyone else gets no tab and a 404 from the API. EDITOR_ENABLED=true opens it to all.
+ */
+export const isEditorEnabled = () => isOn('EDITOR_ENABLED');
+
+export const hasEditorAccess = (user) => {
+    if (isEditorEnabled()) return true;
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!email) return false;
+    return String(process.env.EDITOR_BETA_EMAILS || '').split(',').some((e) => e.trim().toLowerCase() === email);
+};
+
+export const ACCESS_MODELS =Object.freeze({ LEGACY_FREE: 'legacy_free', CARD_TRIAL: 'card_trial' });
 
 /** legacy_free (default, current behavior) or card_trial. Unknown values fall back to legacy_free. */
 export const getNewUserAccessModel = () => {
