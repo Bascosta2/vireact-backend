@@ -5,7 +5,9 @@ import {
     previewPlanChange as previewPlanChangeService,
     changePlan as changePlanService,
     cancelSubscription as cancelSubscriptionService,
-    handleStripeWebhook
+    handleStripeWebhook,
+    effectiveLimits,
+    trialInfo
 } from '../service/subscription.service.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -28,7 +30,10 @@ export const getSubscription = async (req, res, next) => {
         const subscription = await getOrCreateSubscription(userId);
         const userDoc = await User.findById(userId).select('lifetimeFreeVideosUsed').lean();
         const limits = {
-            ...PLAN_LIMITS[subscription.plan],
+            ...effectiveLimits(subscription),
+            // The plan's own caps, for "after your trial" copy.
+            planVideosPerMonth: PLAN_LIMITS[subscription.plan]?.videosPerMonth ?? null,
+            planChatMessagesPerMonth: PLAN_LIMITS[subscription.plan]?.chatMessagesPerMonth ?? null,
             lifetimeFreeVideosUsed: userDoc?.lifetimeFreeVideosUsed ?? 0,
             lifetimeFreeVideoLimit: LIFETIME_FREE_VIDEO_LIMIT
         };
@@ -39,7 +44,8 @@ export const getSubscription = async (req, res, next) => {
                 'Subscription fetched successfully',
                 {
                     subscription,
-                    limits
+                    limits,
+                    trial: trialInfo(subscription)
                 }
             )
         );
@@ -53,14 +59,14 @@ export const createCheckoutSession = async (req, res, next) => {
     try {
         const userId = req.user._id;
         const userEmail = req.user.email;
-        const { plan } = req.body;
+        const { plan, trial } = req.body;
 
         if (!plan) {
             throw new ApiError(400, 'Plan is required');
         }
 
-        const { url, sessionId } = await createCheckoutSessionService(userId, userEmail, plan);
-        captureServerEvent(userId, 'checkout_started', { plan, source: 'server' });
+        const { url, sessionId } = await createCheckoutSessionService(userId, userEmail, plan, { trial: trial === true });
+        captureServerEvent(userId, 'checkout_started', { plan, trial: trial === true, source: 'server' });
 
         res.status(200).json(
             ApiResponse.success(

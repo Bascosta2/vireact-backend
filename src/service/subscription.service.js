@@ -4,8 +4,43 @@ import { StripeWebhookEvent } from '../model/stripe-webhook-event.model.js';
 import { User } from '../model/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS, STRIPE_CHECKOUT_PLANS, STRIPE_PRICE_ID_TO_PLAN, LIFETIME_FREE_VIDEO_LIMIT } from '../constants.js';
-import stripe from '../lib/stripe.js';
+import defaultStripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
+import { isTrialBillingEnabled, getTrialConfig } from '../config/flags.js';
+
+let stripe = defaultStripe;
+/** Tests swap in a fake Stripe client; null restores the real one. */
+export const setStripeForTests = (client) => {
+    stripe = client ?? defaultStripe;
+};
+
+const minCap = (planCap, trialCap) => (planCap === null ? trialCap : Math.min(planCap, trialCap));
+
+/**
+ * The caps that apply to a subscription right now. While trialing, the trial caps apply
+ * (TRIAL_VIDEO_LIMIT / TRIAL_CHAT_MESSAGE_LIMIT) unless the plan's own cap is lower.
+ */
+export const effectiveLimits = (subscription) => {
+    const plan = PLAN_LIMITS[subscription?.plan] ?? PLAN_LIMITS[SUBSCRIPTION_PLANS.FREE];
+    if (subscription?.status !== SUBSCRIPTION_STATUS.TRIAL) return { ...plan };
+    const trial = getTrialConfig();
+    return {
+        videosPerMonth: minCap(plan.videosPerMonth, trial.videoLimit),
+        chatMessagesPerMonth: minCap(plan.chatMessagesPerMonth, trial.chatMessageLimit),
+    };
+};
+
+/** Free trial state for the web app: who can start one, and when a running one ends. */
+export const trialInfo = (subscription) => {
+    const { days, videoLimit, chatMessageLimit } = getTrialConfig();
+    const active = subscription?.status === SUBSCRIPTION_STATUS.TRIAL;
+    const eligible = isTrialBillingEnabled()
+        && Boolean(stripe)
+        && subscription?.plan === SUBSCRIPTION_PLANS.FREE
+        && !subscription?.trialUsedAt
+        && !subscription?.stripeSubscriptionId;
+    return { eligible, days, active, endsAt: active ? subscription.trialEndsAt ?? subscription.currentPeriodEnd ?? null : null, videoLimit, chatMessageLimit };
+};
 
 /**
  * Stripe deprecated subscription-level current_period_start/end in API 2025-03-31.
@@ -90,7 +125,8 @@ export const claimVideoMonthlySlot = async (userId) => {
     if (!subscription) {
         throw new ApiError(500, 'Subscription not found');
     }
-    const limits = PLAN_LIMITS[subscription.plan];
+    const limits = effectiveLimits(subscription);
+    const trialing = subscription.status === SUBSCRIPTION_STATUS.TRIAL;
 
     // Unlimited tier (Enterprise): bypass the cap CAS and atomically bump
     // usage so per-period telemetry remains accurate. Cannot fall through to
@@ -117,7 +153,10 @@ export const claimVideoMonthlySlot = async (userId) => {
     if (!updated) {
         throw new ApiError(
             403,
-            `Video limit reached. You've used ${subscription.usage.videosUsed}/${limits.videosPerMonth} videos this month. Upgrade your plan for more videos.`
+            trialing
+                ? `Trial limit reached. Your free trial includes ${limits.videosPerMonth} video analyses. The full plan allowance starts when the trial ends.`
+                : `Video limit reached. You've used ${subscription.usage.videosUsed}/${limits.videosPerMonth} videos this month. Upgrade your plan for more videos.`,
+            { code: 'VIDEO_LIMIT', trial: trialInfo(subscription) }
         );
     }
     console.log(`[Subscription] Claimed video slot for user ${userId}: ${updated.usage.videosUsed}/${limits.videosPerMonth}`);
@@ -187,7 +226,8 @@ export const assertLifetimeFreeTrialAvailable = async (userId) => {
     if (used >= LIFETIME_FREE_VIDEO_LIMIT) {
         throw new ApiError(
             403,
-            'Free trial limit reached. Upgrade to continue analyzing videos.'
+            'Free trial limit reached. Upgrade to continue analyzing videos.',
+            { code: 'VIDEO_LIMIT', trial: trialInfo(subscription) }
         );
     }
 };
@@ -203,7 +243,7 @@ export const claimChatMessageSlot = async (userId) => {
     if (!subscription) {
         throw new ApiError(500, 'Subscription not found');
     }
-    const limits = PLAN_LIMITS[subscription.plan];
+    const limits = effectiveLimits(subscription);
 
     // Unlimited tier (Enterprise): see claimVideoMonthlySlot for rationale.
     if (limits.chatMessagesPerMonth === null) {
@@ -227,7 +267,8 @@ export const claimChatMessageSlot = async (userId) => {
     if (!updated) {
         throw new ApiError(
             403,
-            `Chat message limit reached. You've used ${subscription.usage.chatMessagesUsed}/${limits.chatMessagesPerMonth} messages this month. Upgrade your plan for more messages.`
+            `Chat message limit reached. You've used ${subscription.usage.chatMessagesUsed}/${limits.chatMessagesPerMonth} messages this month. Upgrade your plan for more messages.`,
+            { code: 'CHAT_LIMIT', trial: trialInfo(subscription) }
         );
     }
     console.log(`[Subscription] Claimed chat slot for user ${userId}: ${updated.usage.chatMessagesUsed}/${limits.chatMessagesPerMonth}`);
@@ -246,7 +287,11 @@ export const releaseChatMessageSlot = async (userId) => {
 
 
 // Create Stripe checkout session
-export const createCheckoutSession = async (userId, userEmail, plan) => {
+/**
+ * `trial: true` starts the plan with a free trial (card collected, first charge when the trial ends).
+ * Only for accounts that have never had a trial or a paid plan; otherwise 400 TRIAL_UNAVAILABLE.
+ */
+export const createCheckoutSession = async (userId, userEmail, plan, { trial = false } = {}) => {
     if (!stripe) {
         throw new ApiError(500, 'Stripe is not configured');
     }
@@ -278,6 +323,12 @@ export const createCheckoutSession = async (userId, userEmail, plan) => {
         await subscription.save();
     }
 
+    const withTrial = Boolean(trial);
+    if (withTrial && !trialInfo(subscription).eligible) {
+        throw new ApiError(400, 'The free trial is not available on this account. You can still subscribe to a plan.', { code: 'TRIAL_UNAVAILABLE' });
+    }
+    const trialDays = getTrialConfig().days;
+
     // Create checkout session
     const session = await stripe.checkout.sessions.create({
         customer: customerId,
@@ -289,15 +340,25 @@ export const createCheckoutSession = async (userId, userEmail, plan) => {
                 quantity: 1
             }
         ],
-        success_url: `${FRONTEND_URL}/subscription-usage?success=true`,
-        cancel_url: `${FRONTEND_URL}/subscription-plans?cancelled=true`,
+        ...(withTrial && {
+            // Card is always collected; if it is missing when the trial ends the subscription is cancelled.
+            payment_method_collection: 'always',
+            subscription_data: {
+                trial_period_days: trialDays,
+                trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+                metadata: { userId: userId.toString(), plan, trial: 'true' }
+            }
+        }),
+        success_url: `${FRONTEND_URL}/subscription-usage?success=true${withTrial ? '&trial=1' : ''}`,
+        cancel_url: withTrial ? `${FRONTEND_URL}/trial?cancelled=true` : `${FRONTEND_URL}/subscription-plans?cancelled=true`,
         metadata: {
             userId: userId.toString(),
-            plan: plan
+            plan: plan,
+            ...(withTrial && { trial: 'true' })
         }
     });
 
-    return { url: session.url, sessionId: session.id };
+    return { url: session.url, sessionId: session.id, trial: withTrial, trialDays: withTrial ? trialDays : null };
 };
 
 // Create Stripe Customer Portal session for billing management
@@ -545,12 +606,17 @@ async function handleCheckoutCompleted(session) {
     const now = new Date();
     const [, periodEnd] = extractSubscriptionPeriod(stripeSubscription);
     const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
+    const trialing = stripeSubscription.status === 'trialing';
+    const status = trialing ? SUBSCRIPTION_STATUS.TRIAL : SUBSCRIPTION_STATUS.ACTIVE;
+    const trialEndsAt = trialing && stripeSubscription.trial_end ? new Date(stripeSubscription.trial_end * 1000) : null;
 
     if (!subscription) {
         subscription = new Subscription({
             userId,
             plan,
-            status: SUBSCRIPTION_STATUS.ACTIVE,
+            status,
+            trialUsedAt: now,
+            trialEndsAt,
             currentPeriodStart: now,
             currentPeriodEnd: periodEnd,
             usage: {
@@ -570,7 +636,10 @@ async function handleCheckoutCompleted(session) {
     }
 
     subscription.plan = plan;
-    subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
+    subscription.status = status;
+    // Any completed checkout (trial or paid) uses up the account's one free trial.
+    if (!subscription.trialUsedAt) subscription.trialUsedAt = now;
+    subscription.trialEndsAt = trialEndsAt;
     subscription.stripeSubscriptionId = stripeSubscriptionId;
     subscription.stripePriceId = stripeSubscription.items.data[0].price.id;
     if (customerId) {
@@ -586,7 +655,7 @@ async function handleCheckoutCompleted(session) {
 
     await subscription.save();
 
-    console.log(`[Stripe Webhook] Upgraded user ${userId} to ${plan} plan`);
+    console.log(`[Stripe Webhook] Upgraded user ${userId} to ${plan} plan${trialing ? ' (free trial)' : ''}`);
 }
 
 // Handle subscription updated.
@@ -612,8 +681,18 @@ async function handleSubscriptionUpdated(stripeSubscription) {
 
     // Update status (two-branch mapping preserved from previous behavior —
     // unrecognized Stripe statuses leave the local status unchanged).
-    if (stripeSubscription.status === 'active') {
+    if (stripeSubscription.status === 'trialing') {
+        subscription.status = SUBSCRIPTION_STATUS.TRIAL;
+        if (stripeSubscription.trial_end) subscription.trialEndsAt = new Date(stripeSubscription.trial_end * 1000);
+    } else if (stripeSubscription.status === 'active') {
+        // Trial converted to paid: the full plan allowance starts now.
+        if (subscription.status === SUBSCRIPTION_STATUS.TRIAL) {
+            subscription.usage.videosUsed = 0;
+            subscription.usage.chatMessagesUsed = 0;
+            subscription.usage.lastResetAt = new Date();
+        }
         subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
+        subscription.trialEndsAt = null;
     } else if (stripeSubscription.status === 'canceled') {
         subscription.status = SUBSCRIPTION_STATUS.CANCELLED;
     }
@@ -667,6 +746,7 @@ async function handleSubscriptionDeleted(stripeSubscription) {
     subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     subscription.stripeSubscriptionId = null;
     subscription.stripePriceId = null;
+    subscription.trialEndsAt = null;
     subscription.currentPeriodStart = now;
     subscription.currentPeriodEnd = periodEnd;
     subscription.usage.videosUsed = 0;
@@ -754,6 +834,7 @@ export const cancelSubscription = async (userId) => {
     subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     subscription.stripeSubscriptionId = null;
     subscription.stripePriceId = null;
+    subscription.trialEndsAt = null;
     subscription.currentPeriodStart = now;
     subscription.currentPeriodEnd = periodEnd;
     subscription.usage.videosUsed = 0;

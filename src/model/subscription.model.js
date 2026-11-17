@@ -68,6 +68,16 @@ const subscriptionSchema = new mongoose.Schema({
     paymentFailedAt: {
         type: Date,
         default: null
+    },
+    /** Set once the account has started a free trial or a paid plan; a free trial is offered only while null. */
+    trialUsedAt: {
+        type: Date,
+        default: null
+    },
+    /** When the current Stripe trial ends (first charge). Null when not trialing. */
+    trialEndsAt: {
+        type: Date,
+        default: null
     }
 }, { timestamps: true });
 

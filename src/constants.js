@@ -125,7 +125,7 @@ export const SUBSCRIPTION_PLANS = {
 export const PLAN_LIMITS = {
   free: {
     videosPerMonth: 2,
-    chatMessagesPerMonth: 20
+    chatMessagesPerMonth: 5
   },
   premium: {
     videosPerMonth: 15,

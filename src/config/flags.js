@@ -23,7 +23,13 @@ export const hasEditorAccess = (user) => {
     return String(process.env.EDITOR_BETA_EMAILS || '').split(',').some((e) => e.trim().toLowerCase() === email);
 };
 
-export const ACCESS_MODELS =Object.freeze({ LEGACY_FREE: 'legacy_free', CARD_TRIAL: 'card_trial' });
+/**
+ * 7-day free trial of a paid plan through Stripe Checkout (card required, $0 today). On unless
+ * TRIAL_BILLING_ENABLED is exactly 'false'. One trial per account (Subscription.trialUsedAt).
+ */
+export const isTrialBillingEnabled = () => String(process.env.TRIAL_BILLING_ENABLED ?? '').trim().toLowerCase() !== 'false';
+
+export const ACCESS_MODELS = Object.freeze({ LEGACY_FREE: 'legacy_free', CARD_TRIAL: 'card_trial' });
 
 /** legacy_free (default, current behavior) or card_trial. Unknown values fall back to legacy_free. */
 export const getNewUserAccessModel = () => {
@@ -41,4 +47,11 @@ export const getHookRewriteLimits = () => ({
     perSession: positiveInt('HOOK_REWRITE_PER_SESSION', 1),
     anonPerIpPerDay: positiveInt('HOOK_REWRITE_ANON_PER_IP_PER_DAY', 5),
     entitledPerDay: positiveInt('HOOK_REWRITE_ENTITLED_PER_DAY', 50),
+});
+
+/** Trial length and the caps that apply while a subscription is trialing (the plan's own cap wins if lower). */
+export const getTrialConfig = () => ({
+    days: positiveInt('TRIAL_DAYS', 7),
+    videoLimit: positiveInt('TRIAL_VIDEO_LIMIT', 5),
+    chatMessageLimit: positiveInt('TRIAL_CHAT_MESSAGE_LIMIT', 60),
 });
