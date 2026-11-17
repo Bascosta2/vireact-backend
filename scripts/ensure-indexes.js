@@ -32,10 +32,11 @@ import { ResearchEvalRun } from '../src/model/research-eval-run.model.js';
 import { ContentStrategy } from '../src/model/content-strategy.model.js';
 import { EditProject } from '../src/model/edit-project.model.js';
 import { SoundAsset } from '../src/model/sound-asset.model.js';
+import { PromoRedemption } from '../src/model/promo-redemption.model.js';
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
-    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, SoundAsset,
+    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, SoundAsset, PromoRedemption,
 ];
 
 const apply = process.argv.includes('--apply');
