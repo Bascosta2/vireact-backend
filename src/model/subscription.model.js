@@ -78,6 +78,19 @@ const subscriptionSchema = new mongoose.Schema({
     trialEndsAt: {
         type: Date,
         default: null
+    },
+    /**
+     * Plan granted by a promo code (see config/promo-codes.js). endsAt null = for life.
+     * Cleared when it ends; the PromoRedemption collection keeps the history.
+     */
+    promo: {
+        type: new mongoose.Schema({
+            code: { type: String, required: true },
+            plan: { type: String, enum: Object.values(SUBSCRIPTION_PLANS), required: true },
+            grantedAt: { type: Date, required: true },
+            endsAt: { type: Date, default: null }
+        }, { _id: false }),
+        default: null
     }
 }, { timestamps: true });
 

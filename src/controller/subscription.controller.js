@@ -9,6 +9,8 @@ import {
     effectiveLimits,
     trialInfo
 } from '../service/subscription.service.js';
+import { redeemPromoCode } from '../service/promo.service.js';
+import { promoInfo } from '../service/promo-state.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
 import { PLAN_LIMITS, LIFETIME_FREE_VIDEO_LIMIT } from '../constants.js';
@@ -45,7 +47,8 @@ export const getSubscription = async (req, res, next) => {
                 {
                     subscription,
                     limits,
-                    trial: trialInfo(subscription)
+                    trial: trialInfo(subscription),
+                    promo: promoInfo(subscription)
                 }
             )
         );
@@ -218,3 +221,17 @@ export const cancelSubscription = async (req, res, next) => {
     }
 };
 
+
+// POST /subscription/promo - Redeem a promo code ({ code }) and switch the plan
+export const redeemPromo = async (req, res, next) => {
+    try {
+        const userId = req.user._id;
+        const result = await redeemPromoCode(userId, req.body?.code);
+        captureServerEvent(userId, 'promo_redeemed', { code: result.promo?.code, plan: result.plan, source: 'server' });
+        res.status(200).json(
+            ApiResponse.success(200, `Promo code applied: ${result.label}.`, result)
+        );
+    } catch (error) {
+        next(error);
+    }
+};

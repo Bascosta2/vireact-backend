@@ -7,6 +7,7 @@ import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, PLAN_LIMITS, STRIPE_PRICE_IDS,
 import defaultStripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
 import { isTrialBillingEnabled, getTrialConfig } from '../config/flags.js';
+import { expirePromoIfDue, planAfterBillingEnds } from './promo-state.js';
 
 let stripe = defaultStripe;
 /** Tests swap in a fake Stripe client; null restores the real one. */
@@ -86,6 +87,9 @@ export const getOrCreateSubscription = async (userId) => {
 
         await subscription.save();
         console.log(`[Subscription] Created FREE subscription for user ${userId}`);
+    } else if (subscription.promo) {
+        // A promo plan whose time is up ends here, on the first read after it expires.
+        await expirePromoIfDue(subscription);
     }
 
     return subscription;
@@ -737,12 +741,12 @@ async function handleSubscriptionDeleted(stripeSubscription) {
         return;
     }
 
-    // Downgrade to FREE plan
+    // Downgrade to FREE plan (or back to a promo plan that is still running)
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-    subscription.plan = SUBSCRIPTION_PLANS.FREE;
+    subscription.plan = planAfterBillingEnds(subscription, now);
     subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     subscription.stripeSubscriptionId = null;
     subscription.stripePriceId = null;
@@ -757,7 +761,7 @@ async function handleSubscriptionDeleted(stripeSubscription) {
 
     await subscription.save();
 
-    console.log(`[Stripe Webhook] Downgraded user ${subscription.userId} to FREE plan`);
+    console.log(`[Stripe Webhook] Downgraded user ${subscription.userId} to ${subscription.plan.toUpperCase()} plan`);
 }
 
 // Handle payment succeeded (renew period)
@@ -825,12 +829,12 @@ export const cancelSubscription = async (userId) => {
     // Cancel Stripe subscription immediately
     await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
 
-    // Downgrade to FREE plan immediately
+    // Downgrade to FREE plan immediately (or back to a promo plan that is still running)
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-    subscription.plan = SUBSCRIPTION_PLANS.FREE;
+    subscription.plan = planAfterBillingEnds(subscription, now);
     subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     subscription.stripeSubscriptionId = null;
     subscription.stripePriceId = null;
@@ -845,7 +849,7 @@ export const cancelSubscription = async (userId) => {
 
     await subscription.save();
 
-    console.log(`[Subscription] Cancelled and downgraded user ${userId} to FREE plan`);
+    console.log(`[Subscription] Cancelled and downgraded user ${userId} to ${subscription.plan.toUpperCase()} plan`);
 
     return subscription;
 };

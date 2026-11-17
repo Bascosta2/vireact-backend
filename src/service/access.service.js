@@ -1,6 +1,7 @@
 import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS, ROLES } from '../constants.js';
 import { getNewUserAccessModel, ACCESS_MODELS } from '../config/flags.js';
 import { Subscription } from '../model/subscription.model.js';
+import { promoLapsed } from './promo-state.js';
 
 export const ACCESS_STATES = Object.freeze({
     LEAD: 'lead',
@@ -22,7 +23,8 @@ const ENTITLED_STATES = new Set([ACCESS_STATES.TRIALING, ACCESS_STATES.ACTIVE, A
  */
 export function getAccessState(user, subscription, { model = getNewUserAccessModel() } = {}) {
     if (!user) return null;
-    const paid = subscription && subscription.plan && subscription.plan !== SUBSCRIPTION_PLANS.FREE;
+    // A promo plan that has ended (and is not yet written back to Free) counts as Free.
+    const paid = subscription && subscription.plan && subscription.plan !== SUBSCRIPTION_PLANS.FREE && !promoLapsed(subscription);
     if (paid && subscription.paymentFailed) return ACCESS_STATES.PAST_DUE;
     if (paid && subscription.status === SUBSCRIPTION_STATUS.TRIAL) return ACCESS_STATES.TRIALING;
     if (paid && subscription.status === SUBSCRIPTION_STATUS.ACTIVE) return ACCESS_STATES.ACTIVE;
