@@ -261,6 +261,8 @@ const videoSchema = new mongoose.Schema({
         type: new mongoose.Schema({
             generatedAt: { type: Date },
             generationCount: { type: Number, default: 0 },
+            /** 2 = ten named ideas (plan-gated). Older sets hold four and are rewritten on next open. */
+            version: { type: Number, default: 1 },
             targetSeconds: { type: Number },
             options: {
                 type: [new mongoose.Schema({

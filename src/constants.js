@@ -1,4 +1,4 @@
-import { NODE_ENV, STRIPE_PRICE_ID_PREMIUM, STRIPE_PRICE_ID_PRO } from "./config/index.js";
+import { NODE_ENV, STRIPE_PRICE_ID_PREMIUM, STRIPE_PRICE_ID_PRO, STRIPE_LEGACY_PRICE_IDS_PRO, STRIPE_LEGACY_PRICE_IDS_PREMIUM } from "./config/index.js";
 
 export const ROLES = {
   ADMIN: "admin",
@@ -132,7 +132,7 @@ export const PLAN_LIMITS = {
     chatMessagesPerMonth: 100
   },
   pro: {
-    videosPerMonth: 30,
+    videosPerMonth: 40,
     chatMessagesPerMonth: 500
   },
   enterprise: {
@@ -158,6 +158,15 @@ export const EDITOR_LIMITS = {
   premium: 5,
   pro: 20,
   enterprise: 60
+};
+
+// Scripts: every analyzed video gets up to 10 script ideas. Everyone sees all the idea names; the
+// full script behind each one is unlocked in order, up to this many per video.
+export const SCRIPT_ACCESS = {
+  free: 2,
+  premium: 6,
+  pro: 10,
+  enterprise: 10
 };
 
 // Lifetime free-trial video allowance per user account. Enforced via
@@ -226,6 +235,9 @@ export const STRIPE_PRICE_IDS = {
 export const STRIPE_PRICE_ID_TO_PLAN = Object.freeze(
   Object.fromEntries(
     [
+      // Earlier prices that existing subscribers are still billed on (e.g. Pro at $19 before $19.99).
+      ...STRIPE_LEGACY_PRICE_IDS_PREMIUM.map((id) => [id, SUBSCRIPTION_PLANS.PREMIUM]),
+      ...STRIPE_LEGACY_PRICE_IDS_PRO.map((id) => [id, SUBSCRIPTION_PLANS.PRO]),
       [STRIPE_PRICE_ID_PREMIUM, SUBSCRIPTION_PLANS.PREMIUM],
       [STRIPE_PRICE_ID_PRO, SUBSCRIPTION_PLANS.PRO]
     ].filter(([priceId]) => Boolean(priceId))

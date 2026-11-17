@@ -44,6 +44,8 @@ import { buildInitialAnalysisMessage } from '../service/initial-analysis-message
 import {
     generateScriptOptions,
     toScriptSuggestionsResponse,
+    isLegacyScriptSet,
+    SCRIPT_SET_VERSION,
     MAX_SCRIPT_REGENERATIONS,
 } from '../service/script-suggestions.service.js';
 import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
@@ -915,6 +917,16 @@ export const uploadVideoUrlToTwelveLabs = async (req, res, next) => {
 /** Videos with a script generation in flight on this instance (stops double-clicks from paying twice). */
 const scriptGenerationsInFlight = new Set();
 
+/** The creator's plan decides how many full scripts are sent. A failed read falls back to Free (least access). */
+const scriptPlanFor = async (userId) => {
+    try {
+        return (await getOrCreateSubscription(userId))?.plan ?? SUBSCRIPTION_PLANS.FREE;
+    } catch (error) {
+        console.warn('[Scripts] Could not load the subscription, using Free access:', error?.message);
+        return SUBSCRIPTION_PLANS.FREE;
+    }
+};
+
 export const getScriptSuggestions = async (req, res, next) => {
     try {
         const { videoId } = req.params;
@@ -922,8 +934,9 @@ export const getScriptSuggestions = async (req, res, next) => {
         if (!video) {
             throw new ApiError(404, 'Video not found');
         }
+        const plan = await scriptPlanFor(req.user._id);
         res.status(200).json(
-            ApiResponse.success(200, 'Script suggestions retrieved', toScriptSuggestionsResponse(video.scriptSuggestions))
+            ApiResponse.success(200, 'Script suggestions retrieved', toScriptSuggestionsResponse(video.scriptSuggestions, { plan }))
         );
     } catch (error) {
         next(error);
@@ -939,6 +952,7 @@ export const createScriptSuggestions = async (req, res, next) => {
         if (!video) {
             throw new ApiError(404, 'Video not found');
         }
+        const plan = await scriptPlanFor(req.user._id);
         if (video.analysisStatus !== ANALYSIS_STATUS.COMPLETED) {
             throw new ApiError(409, 'Scripts are available once the analysis has finished.');
         }
@@ -948,11 +962,13 @@ export const createScriptSuggestions = async (req, res, next) => {
 
         const existing = video.scriptSuggestions;
         const hasExisting = Array.isArray(existing?.options) && existing.options.length > 0;
-        if (hasExisting && !regenerate) {
-            return res.status(200).json(ApiResponse.success(200, 'Script suggestions retrieved', toScriptSuggestionsResponse(existing)));
+        // A set from before the ten-idea version is rewritten once without using up a refresh.
+        const upgrade = isLegacyScriptSet(existing) && !regenerate;
+        if (hasExisting && !regenerate && !upgrade) {
+            return res.status(200).json(ApiResponse.success(200, 'Script suggestions retrieved', toScriptSuggestionsResponse(existing, { plan })));
         }
         const generationCount = existing?.generationCount ?? 0;
-        if (hasExisting && generationCount - 1 >= MAX_SCRIPT_REGENERATIONS) {
+        if (hasExisting && !upgrade && generationCount - 1 >= MAX_SCRIPT_REGENERATIONS) {
             throw new ApiError(429, `You have used all ${MAX_SCRIPT_REGENERATIONS} script refreshes for this video.`);
         }
 
@@ -968,14 +984,15 @@ export const createScriptSuggestions = async (req, res, next) => {
         );
         video.scriptSuggestions = {
             generatedAt: new Date(),
-            generationCount: generationCount + 1,
+            generationCount: upgrade ? Math.max(1, generationCount) : generationCount + 1,
+            version: SCRIPT_SET_VERSION,
             targetSeconds,
             options,
         };
         await video.save();
 
         res.status(200).json(
-            ApiResponse.success(200, 'Script suggestions generated', toScriptSuggestionsResponse(video.scriptSuggestions))
+            ApiResponse.success(200, 'Script suggestions generated', toScriptSuggestionsResponse(video.scriptSuggestions, { plan }))
         );
     } catch (error) {
         if (!(error instanceof ApiError)) {

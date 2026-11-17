@@ -79,6 +79,10 @@ export const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 export const STRIPE_PRICE_ID_PREMIUM = process.env.STRIPE_PRICE_ID_PREMIUM;
 export const STRIPE_PRICE_ID_PRO = process.env.STRIPE_PRICE_ID_PRO;
 export const STRIPE_PRICE_ID_ENTERPRISE = process.env.STRIPE_PRICE_ID_ENTERPRISE;
+// Comma-separated older price ids that still belong to a plan, so existing subscribers keep it after a price change.
+const priceIdList = (value) => String(value || '').split(',').map((id) => id.trim()).filter(Boolean);
+export const STRIPE_LEGACY_PRICE_IDS_PREMIUM = priceIdList(process.env.STRIPE_LEGACY_PRICE_IDS_PREMIUM);
+export const STRIPE_LEGACY_PRICE_IDS_PRO = priceIdList(process.env.STRIPE_LEGACY_PRICE_IDS_PRO);
 export const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'support@vireact.io';
 /** Dev-only: when set and NODE_ENV !== 'production', all outgoing email goes here instead (see lib/resend.js). */
 export const EMAIL_DEV_OVERRIDE_TO = process.env.EMAIL_DEV_OVERRIDE_TO;
