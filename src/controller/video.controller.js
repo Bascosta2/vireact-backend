@@ -41,6 +41,7 @@ import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
 import { predictViewBand, normalizeFollowers, normalizePlatform } from '../service/view-prediction.service.js';
 import { getLearnedModel } from '../service/view-learning.service.js';
+import { contentSignals } from '../service/view-signals.js';
 import { buildInitialAnalysisMessage } from '../service/initial-analysis-message.js';
 import {
     generateScriptOptions,
@@ -723,14 +724,15 @@ export const processVideoAnalysis = async (req, res) => {
             }
 
             // Predicted views from the best evidence available: comparable real results scaled to the
-            // creator's followers, a follower-based estimate, or the model's band capped by the score.
-            if (video.predictedViewsLow != null || video.predictedViewsHigh != null || video.creatorFollowers) {
+            // creator's followers, or the reach model (followers, score and the edit itself).
+            if (video.viralityScore != null || video.predictedViewsLow != null || video.predictedViewsHigh != null || video.creatorFollowers) {
                 const views = await predictViewBand({
                     viralityScore: video.viralityScore,
                     followers: video.creatorFollowers,
                     platform: video.creatorPlatform,
                     modelBand: { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
                     excludeVideoId: video._id,
+                    signals: contentSignals(video),
                     learned: await getLearnedModel(),
                 });
                 console.log(

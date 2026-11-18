@@ -192,7 +192,7 @@ export const applyLearnedModel = (model, band, { platform, viralityScore, follow
         ? ordered(expected * Math.exp(model.spread.low), expected, expected * Math.exp(model.spread.high))
         : ordered((band.low ?? band.expected) * factor, expected, (band.high ?? band.expected) * factor);
     return {
-        band: limitForScore(corrected, viralityScore, { capMultiplier: Math.max(1, factor) }),
+        band: limitForScore(corrected, viralityScore, { capMultiplier: Math.max(1, factor), followers }),
         learning: { version: model.version ?? null, factor: round(factor, 3), n, observations: model.observations },
     };
 };

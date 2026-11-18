@@ -1,5 +1,5 @@
 import { allowedFeaturesForPlan } from '../constants.js';
-import { displayViewBand } from './view-prediction.service.js';
+import { displayViewBand, viewDrivers } from './view-prediction.service.js';
 import {
     severityToLegacy,
     legacyToSeverity,
@@ -176,6 +176,7 @@ export function buildVideoAnalysisDTO(video, userPlan) {
     // Follower- and dataset-based bands are stored final. Score-based and older reports (stored before the
     // view ceiling existed) are capped on read.
     const views = displayViewBand(video);
+    const drivers = viewDrivers(video);
 
     const dto = {
         viralityScore: video.viralityScore ?? 0,
@@ -208,6 +209,9 @@ export function buildVideoAnalysisDTO(video, userPlan) {
             comparables: video.viewPredictionComparables ?? 0,
             /** Real results the learned correction came from (0 = rules only). */
             learnedFrom: video.viewLearning?.observations ?? 0,
+            /** What in the edit moved the prediction ("fast cuts" / "slow cuts"). */
+            boosts: drivers.boosts,
+            drags: drivers.drags,
             followers: video.creatorFollowers ?? null,
             platform: video.creatorPlatform ?? null,
         },

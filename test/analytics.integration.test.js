@@ -16,7 +16,7 @@ const newUser = (suffix) =>
 
 const newVideo = (userId, extra = {}) => Video.create({
     filename: 'clip.mp4', fileSize: 1000, uploader_id: userId, analysisStatus: 'completed', viralityScore: 55,
-    predictedViewsLow: 20, predictedViewsExpected: 100, predictedViewsHigh: 400, viewPredictionMethod: 'score', ...extra,
+    predictedViewsLow: 20, predictedViewsExpected: 100, predictedViewsHigh: 400, viewPredictionMethod: 'dataset', ...extra,
 });
 
 const call = async (handler, req) => {

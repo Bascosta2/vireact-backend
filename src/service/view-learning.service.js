@@ -63,6 +63,8 @@ const FIELDS = [
     'uploader_id', 'viralityScore', 'creatorPlatform', 'creatorFollowers', 'postedAt', 'createdAt',
     'actualViews', 'actualViewsReportedAt', 'performanceSnapshots.capturedAt',
     'predictedViewsLow', 'predictedViewsExpected', 'predictedViewsHigh', 'viewPredictionMethod', 'viewBase', 'viewLearning',
+    'duration', 'analysis.feature', 'analysis.score', 'scenes.startTime', 'scenes.endTime', 'scenes.audioSummary',
+    'scenes.visualDescription', 'scenes.primaryAction',
 ].join(' ');
 
 export const loadObservations = async () => {

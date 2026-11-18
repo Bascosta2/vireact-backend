@@ -35,7 +35,8 @@ const video = (overrides = {}) => {
         predictedViewsLow: 20,
         predictedViewsExpected: 100,
         predictedViewsHigh: 400,
-        viewPredictionMethod: 'score',
+        // A fixed stored band (comparable-based predictions are shown as made), so these tests count outcomes only.
+        viewPredictionMethod: 'dataset',
         performanceSnapshots: [],
         actualViews: null,
         postedAt: null,

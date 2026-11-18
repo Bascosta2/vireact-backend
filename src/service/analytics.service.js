@@ -22,7 +22,8 @@ export const ANALYTICS_VIDEO_FIELDS = [
     '_id', 'filename', 'sourceTitle', 'thumbnailUrl', 'createdAt', 'duration', 'viralityScore', 'analysis.feature',
     'analysis.score', 'predictedViewsLow', 'predictedViewsExpected', 'predictedViewsHigh', 'viewPredictionMethod',
     'creatorFollowers', 'creatorPlatform', 'postedAt', 'postUrl', 'performanceSnapshots', 'actualViews',
-    'actualViewsReportedAt',
+    'actualViewsReportedAt', 'viewLearning', 'scenes.startTime', 'scenes.endTime', 'scenes.audioSummary',
+    'scenes.visualDescription', 'scenes.primaryAction',
 ].join(' ');
 
 const round = (n, digits = 0) => (Number.isFinite(n) ? Number(n.toFixed(digits)) : null);

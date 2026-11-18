@@ -10,7 +10,8 @@
  * above 5,000 views unless the overall score is at least STANDOUT_SCORE (a clearly strong video).
  */
 export const STANDOUT_SCORE = 85;
-export const ORDINARY_MAX_VIEWS = 5000;
+/** Cap for ordinary scores when the account size is unknown (was 5,000 until 2026-11-17: too harsh). */
+export const ORDINARY_MAX_VIEWS = 25000;
 
 export const VIEW_CEILINGS = [
     { minScore: 92, low: 1500, expected: 6000, high: 25000 },
@@ -23,11 +24,13 @@ export const VIEW_CEILINGS = [
 ];
 
 /**
- * Final guard on any band shown to a user: below STANDOUT_SCORE nothing exceeds ORDINARY_MAX_VIEWS.
+ * Final guard on a band shown to a user when the account size is unknown: below STANDOUT_SCORE nothing
+ * exceeds ORDINARY_MAX_VIEWS. With a follower count the reach model sizes the band itself (no cap).
  * Keeps the band ordered.
  */
-export const limitForScore = (band, viralityScore, { capMultiplier = 1 } = {}) => {
+export const limitForScore = (band, viralityScore, { capMultiplier = 1, followers = null } = {}) => {
     if (!band || (band.low == null && band.expected == null && band.high == null)) return band;
+    if (Number(followers) > 0) return band;
     if (Number.isFinite(viralityScore) && viralityScore >= STANDOUT_SCORE) return band;
     // capMultiplier > 1 only when learned real results show this cap is too low (view-learning.js).
     const max = ORDINARY_MAX_VIEWS * (Number.isFinite(capMultiplier) && capMultiplier > 1 ? capMultiplier : 1);
