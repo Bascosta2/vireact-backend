@@ -6,13 +6,13 @@
  *     (the vireact.io web app is allowed by CORS for the user API, but never here);
  *   - carry the header X-Vireact-Owner: 1 (not in the CORS allowlist, so no other site can send it);
  *   - be rate limited (sign-in: 5 per 15 minutes per network; data: 120 per minute).
- * Data routes also need a live owner session (admin key + texted code, see owner-auth.service.js).
+ * Data routes also need a live owner session (admin key, see owner-auth.service.js).
  * Responses are never cached.
  */
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import {
-    SESSION_MAX_MS, consoleStatus, requestCode, signIn, signOut, resolveSession, audit,
+    SESSION_MAX_MS, consoleStatus, signIn, signOut, resolveSession, audit,
 } from '../service/owner-auth.service.js';
 import { listVideos, getVideoDetail, listUsers, getUserDetail, overview, auditLog } from '../service/owner-data.service.js';
 
@@ -85,13 +85,8 @@ ownerRoutes.get('/session', dataLimit, wrap(async (req, res) => {
     ok(res, { ...status, signedIn: Boolean(session), expiresAt: session?.expiresAt ?? null });
 }));
 
-// Admin key -> a code texted to the owner's phone (the number is fixed on the server).
-ownerRoutes.post('/session/code', signInLimit, wrap(async (req, res) => {
-    ok(res, await requestCode(req, { key: req.body?.key }));
-}));
-
 ownerRoutes.post('/session/login', signInLimit, wrap(async (req, res) => {
-    const { sid, expiresAt } = await signIn(req, { key: req.body?.key, code: req.body?.code });
+    const { sid, expiresAt } = await signIn(req, { key: req.body?.key });
     res.cookie(cookieName(req), sid, { ...cookieOptions(req), maxAge: SESSION_MAX_MS });
     ok(res, { expiresAt });
 }));
