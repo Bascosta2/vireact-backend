@@ -12,6 +12,9 @@ const PAGE_HTML = read('ai-responses.html');
 const PAGE_JS = read('ai-responses.js');
 const EDITOR_HTML = read('editor.html');
 const EDITOR_JS = read('editor.js');
+const OWNER_HTML = read('owner.html');
+const OWNER_JS = read('owner.js');
+const HLS_JS = read('vendor/hls.light.min.js');
 
 export const ADMIN_UI_CSP = [
     "default-src 'none'",
@@ -24,8 +27,24 @@ export const ADMIN_UI_CSP = [
     "frame-ancestors 'none'",
 ].join('; ');
 
-const privateHeaders = (res) => {
-    res.setHeader('Content-Security-Policy', ADMIN_UI_CSP);
+/**
+ * Owner console (/admin/videos): same rules, plus playing users' videos (Twelve Labs HLS over https) and
+ * showing their thumbnails. Scripts still only from this origin; no inline script, no framing.
+ */
+export const OWNER_UI_CSP = [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'unsafe-inline'",
+    "connect-src 'self' https:",
+    "media-src 'self' blob: https:",
+    "img-src 'self' data: https:",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+].join('; ');
+
+const privateHeaders = (res, csp = ADMIN_UI_CSP) => {
+    res.setHeader('Content-Security-Policy', csp);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -53,6 +72,24 @@ adminUiRoutes.get('/editor', (req, res) => {
 adminUiRoutes.get('/editor/app.js', (req, res) => {
     privateHeaders(res);
     res.type('application/javascript').send(EDITOR_JS);
+});
+
+// Owner console: every user's videos, inputs and outputs. The page holds no data; the API behind it needs
+// the admin key plus an authenticator code (owner.routes.js).
+adminUiRoutes.get('/videos', (req, res) => {
+    privateHeaders(res, OWNER_UI_CSP);
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.type('html').send(OWNER_HTML);
+});
+
+adminUiRoutes.get('/videos/app.js', (req, res) => {
+    privateHeaders(res, OWNER_UI_CSP);
+    res.type('application/javascript').send(OWNER_JS);
+});
+
+adminUiRoutes.get('/videos/hls.js', (req, res) => {
+    privateHeaders(res, OWNER_UI_CSP);
+    res.type('application/javascript').send(HLS_JS);
 });
 
 export default adminUiRoutes;

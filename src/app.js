@@ -37,6 +37,7 @@ import { verifyQStashAndParseBody } from './middleware/qstash-verify.js';
 import { processVideoAnalysis } from './controller/video.controller.js';
 import adminUiRoutes from './route/admin-ui.routes.js';
 import { stripSameOriginHeader } from './middleware/same-origin.js';
+import ownerRoutes from './route/owner.routes.js';
 import { runResearchIngestWebhook } from './controller/research-ingest.controller.js';
 import { runEditJobWebhook } from './controller/editor.controller.js';
 
@@ -283,6 +284,8 @@ app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/admin', adminRateLimit, adminRoutes);
 // Private AI response review page (data still needs ADMIN_API_KEY on every request).
 app.use('/admin', adminRateLimit, adminUiRoutes);
+// Owner console API (videos, users, outputs): same-origin only, admin key + authenticator code, see owner.routes.js.
+app.use('/api/v1/owner', ownerRoutes);
 
 // Safety net: errors from users' browsers. Public, small, and limited per IP so it cannot be used to flood.
 const clientErrorRateLimit = rateLimit({
