@@ -61,6 +61,16 @@ const videoSchema = new mongoose.Schema({
         type: Number,
         default: null
     },
+    /** The prediction from the rules alone (before learning); the learning loop measures misses against it. */
+    viewBase: {
+        type: new mongoose.Schema({ low: Number, expected: Number, high: Number }, { _id: false }),
+        default: undefined
+    },
+    /** The learned correction applied to this prediction (view-learning.js), if any. */
+    viewLearning: {
+        type: new mongoose.Schema({ version: Number, factor: Number, n: Number, observations: Number }, { _id: false }),
+        default: undefined
+    },
     /** Real result the creator reported after posting; feeds future predictions. */
     actualViews: {
         type: Number,

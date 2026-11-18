@@ -26,10 +26,12 @@ export const VIEW_CEILINGS = [
  * Final guard on any band shown to a user: below STANDOUT_SCORE nothing exceeds ORDINARY_MAX_VIEWS.
  * Keeps the band ordered.
  */
-export const limitForScore = (band, viralityScore) => {
+export const limitForScore = (band, viralityScore, { capMultiplier = 1 } = {}) => {
     if (!band || (band.low == null && band.expected == null && band.high == null)) return band;
     if (Number.isFinite(viralityScore) && viralityScore >= STANDOUT_SCORE) return band;
-    const cap = (n) => (n == null ? n : Math.min(n, ORDINARY_MAX_VIEWS));
+    // capMultiplier > 1 only when learned real results show this cap is too low (view-learning.js).
+    const max = ORDINARY_MAX_VIEWS * (Number.isFinite(capMultiplier) && capMultiplier > 1 ? capMultiplier : 1);
+    const cap = (n) => (n == null ? n : Math.min(n, max));
     const low = cap(band.low);
     const expected = cap(band.expected);
     const high = cap(band.high);

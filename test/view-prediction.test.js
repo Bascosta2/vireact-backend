@@ -14,7 +14,7 @@ const noRatios = async () => [];
 
 test('no follower count: keeps the strict score ceiling (no viral-skewed dataset numbers)', async () => {
     const band = await predictViewBand({ viralityScore: 43, followers: null, modelBand: { low: 40000, expected: 75000, high: 110000 }, findRatios: async () => { throw new Error('must not query'); } });
-    assert.deepEqual(band, { low: 20, expected: 100, high: 400, method: 'score', comparables: 0 });
+    assert.deepEqual(band, { low: 20, expected: 100, high: 400, method: 'score', comparables: 0, base: { low: 20, expected: 100, high: 400 }, learning: null });
 });
 
 test('small account: follower estimate never drops below what an unknown account would get', async () => {

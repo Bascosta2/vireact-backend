@@ -34,12 +34,24 @@ import {
 import { getResearchStatsAdmin } from '../controller/research-ingest.controller.js';
 import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 
+import { learningReport, refitLearnedModel } from '../service/view-learning.service.js';
+
 const adminRoutes = Router();
 
 adminRoutes.use(adminAuth);
 
 // Model calls made by admin work (ingest, research runs) are tracked as system work, one trace per request.
 adminRoutes.use((req, res, next) => withAiContext({ feature: 'admin', distinctId: 'system:admin', traceId: newTraceId('admin') }, next));
+
+// Views learning loop: the model in use and how its accuracy moved over the last fits. ?limit=20 &refit=1
+adminRoutes.get('/view-learning', async (req, res, next) => {
+    try {
+        if (req.query.refit === '1') await refitLearnedModel();
+        res.status(200).json({ ok: true, ...(await learningReport({ limit: Number(req.query.limit) || 20 })) });
+    } catch (error) {
+        next(error);
+    }
+});
 
 adminRoutes.get('/ping', (req, res) => {
     res.status(200).json({ ok: true });

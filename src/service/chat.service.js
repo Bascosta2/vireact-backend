@@ -337,6 +337,7 @@ const CHAT_SYSTEM_PROMPT = [
     '- Plain text only: no markdown, no bullet characters, no emojis, no em dashes. Keep the reply under 140 words.',
     '- Lead with the single most important change for this video. Number the steps when there is more than one.',
     '- Use the RELEVANT EXPERT KNOWLEDGE to decide what to recommend, but never mention it, quote it as a source, or say "examples" or "insights".',
+    "- Language: reply in the language of the creator's latest message (Spanish question, Spanish answer). The supplied analysis is in English; translate what you use from it. Keep quotes from the transcript exactly as spoken, and keep timestamps and ids unchanged.",
     '',
     SPECIFICITY_CONTRACT,
 ].join('\n');
@@ -347,9 +348,25 @@ const CHAT_SYSTEM_PROMPT = [
  * Returns a persistable message: prose `text` plus structured `fixes`,
  * `scriptRewrites`, `feedbackRefs`, and `coverage`.
  */
+const SMALL_TALK_WORDS = new Set([
+    'hi', 'hello', 'hey', 'heya', 'hiya', 'yo', 'there', 'thanks', 'thank', 'you', 'thx', 'ty', 'tysm', 'cheers', 'so', 'much',
+    'a', 'lot', 'ok', 'okay', 'cool', 'great', 'nice', 'awesome', 'perfect', 'got', 'it', 'appreciate', 'that', 'this',
+    'man', 'bro', 'again', 'sounds', 'good', 'love', 'helpful', 'very', 'really', 'amazing', 'sweet', 'all', 'right', 'alright',
+]);
+
+/** True when every word is common English small talk ("thanks so much", "hey there"). */
+export const isEnglishSmallTalk = (text) => {
+    const raw = String(text ?? '').trim();
+    if (!raw || /[^\x20-\x7E]/.test(raw)) return false;
+    const words = raw.toLowerCase().match(/[a-z']+/g) ?? [];
+    return words.length > 0 && words.length <= 8 && words.every((w) => SMALL_TALK_WORDS.has(w.replace(/'/g, '')));
+};
+
 async function generateAIResponse(userMessage, video, intent = 'question', priorMessages = [], { canSeeAdvanced = false } = {}) {
-    // Cheap short-circuits: no structured call needed, and these are not advice.
-    if (intent === 'greeting') {
+    // Cheap short-circuits: no structured call needed, and these are not advice. They are English, so
+    // only plain English small talk gets them; anything else goes to the model, which answers in kind.
+    const englishSmallTalk = isEnglishSmallTalk(userMessage);
+    if (intent === 'greeting' && englishSmallTalk) {
         return {
             text: "Hello. Ask me about any moment in your video and I'll point to the timestamp and give you the exact fix.",
             isUser: false,
@@ -357,7 +374,7 @@ async function generateAIResponse(userMessage, video, intent = 'question', prior
         };
     }
 
-    if (intent === 'thanks' || intent === 'feedback') {
+    if ((intent === 'thanks' || intent === 'feedback') && englishSmallTalk) {
         return {
             text: "Noted. Ask about any timestamp in this video and I'll give you the specific change to make.",
             isUser: false,

@@ -11,9 +11,13 @@
  * 3. "score": no follower count. The model's band capped by the virality score (view-calibration.js).
  *
  * Every band then passes limitForScore: nothing above 5,000 views unless the score is 85+.
+ *
+ * Last, the learned correction from real results (view-learning.js) is applied when a model is passed in.
+ * The band before it is kept as the base, which is what the learning loop measures its misses against.
  */
 import { Video } from '../model/video.model.js';
 import { calibrateViewBand, viewCeilingFor, limitForScore } from './view-calibration.js';
+import { applyLearnedModel } from './view-learning.js';
 
 export const PLATFORMS = Object.freeze(['tiktok', 'instagram', 'youtube', 'facebook', 'other']);
 export const MIN_COMPARABLES = 8;
@@ -104,9 +108,22 @@ export const findComparableRatios = async ({ viralityScore, platform, excludeVid
  * @param {{ viralityScore: number|null, followers?: number|null, platform?: string|null,
  *           modelBand: { low: number|null, expected: number|null, high: number|null }, excludeVideoId?: unknown,
  *           findRatios?: Function }} input
- * @returns {Promise<{ low: number|null, expected: number|null, high: number|null, method: 'dataset'|'followers'|'score', comparables: number }>}
+ * @returns {Promise<{ low: number|null, expected: number|null, high: number|null, method: 'dataset'|'followers'|'score', comparables: number,
+ *                     base: { low: number|null, expected: number|null, high: number|null }, learning: object|null }>}
  */
-export const predictViewBand = async ({ viralityScore, followers, platform, modelBand, excludeVideoId, findRatios = findComparableRatios }) => {
+export const predictViewBand = async (input) => {
+    const base = await baseViewBand(input);
+    const band = { low: base.low, expected: base.expected, high: base.high };
+    const { band: final, learning } = applyLearnedModel(input.learned, band, {
+        platform: normalizePlatform(input.platform),
+        viralityScore: input.viralityScore,
+        followers: normalizeFollowers(input.followers),
+    });
+    return { ...final, method: base.method, comparables: base.comparables, base: band, learning };
+};
+
+/** The prediction from the rules alone, before any learned correction. */
+export const baseViewBand = async ({ viralityScore, followers, platform, modelBand, excludeVideoId, findRatios = findComparableRatios }) => {
     const knownFollowers = normalizeFollowers(followers);
     if (knownFollowers == null || knownFollowers === 0) {
         const capped = limitForScore(calibrateViewBand(modelBand ?? {}, viralityScore), viralityScore);
@@ -128,6 +145,10 @@ export const predictViewBand = async ({ viralityScore, followers, platform, mode
 export const displayViewBand = (video) => {
     const score = Number.isFinite(video?.viralityScore) ? video.viralityScore : null;
     const stored = { low: video?.predictedViewsLow ?? null, expected: video?.predictedViewsExpected ?? null, high: video?.predictedViewsHigh ?? null };
+    // Learned predictions are shown as made; their cap already allowed for the learned correction.
+    if (video?.viewLearning?.factor != null) {
+        return limitForScore(stored, score, { capMultiplier: Math.max(1, video.viewLearning.factor) });
+    }
     const followers = normalizeFollowers(video?.creatorFollowers);
     if (video?.viewPredictionMethod === 'followers' && followers) {
         return followerBand({ viralityScore: score, followers });

@@ -206,6 +206,8 @@ export function buildVideoAnalysisDTO(video, userPlan) {
             high: views.high,
             method: video.viewPredictionMethod || 'score',
             comparables: video.viewPredictionComparables ?? 0,
+            /** Real results the learned correction came from (0 = rules only). */
+            learnedFrom: video.viewLearning?.observations ?? 0,
             followers: video.creatorFollowers ?? null,
             platform: video.creatorPlatform ?? null,
         },

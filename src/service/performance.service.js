@@ -8,6 +8,7 @@ import mongoose from 'mongoose';
 import { Video } from '../model/video.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { normalizeFollowers, normalizePlatform } from './view-prediction.service.js';
+import { markLearningStale } from './view-learning.service.js';
 
 export const MAX_SNAPSHOTS = 20;
 const MAX_URL_LENGTH = 500;
@@ -108,6 +109,7 @@ export const addSnapshot = async (userId, videoId, body = {}) => {
     const followers = normalizeFollowers(body.followers);
     if (followers != null) video.creatorFollowers = followers;
     await video.save();
+    markLearningStale();
     return toPerformanceResponse(video);
 };
 
@@ -118,6 +120,7 @@ export const deleteSnapshot = async (userId, videoId, snapshotId) => {
     if (video.performanceSnapshots.length === before) throw new ApiError(404, 'That entry was not found.');
     syncActualViews(video);
     await video.save();
+    markLearningStale();
     return toPerformanceResponse(video);
 };
 
@@ -142,6 +145,7 @@ export const setPostDetails = async (userId, videoId, body = {}) => {
     const video = await loadOwnedVideo(userId, videoId);
     Object.assign(video, update);
     await video.save();
+    if ('postedAt' in update) markLearningStale();
     return toPerformanceResponse(video);
 };
 

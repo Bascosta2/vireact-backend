@@ -40,6 +40,7 @@ import { analyzeViewsPredictor } from '../service/analyzer/views-predictor.analy
 import { computeRetentionCurve } from '../service/retention-curve.service.js';
 import { buildVideoWithAnalysisResponse } from '../service/video-analysis-dto.service.js';
 import { predictViewBand, normalizeFollowers, normalizePlatform } from '../service/view-prediction.service.js';
+import { getLearnedModel } from '../service/view-learning.service.js';
 import { buildInitialAnalysisMessage } from '../service/initial-analysis-message.js';
 import {
     generateScriptOptions,
@@ -730,8 +731,14 @@ export const processVideoAnalysis = async (req, res) => {
                     platform: video.creatorPlatform,
                     modelBand: { low: video.predictedViewsLow, expected: video.predictedViewsExpected, high: video.predictedViewsHigh },
                     excludeVideoId: video._id,
+                    learned: await getLearnedModel(),
                 });
-                console.log(`[Analysis] Views for ${videoId} via ${views.method} (${views.comparables} comparables): ${views.low}-${views.high}, expected ${views.expected}`);
+                console.log(
+                    `[Analysis] Views for ${videoId} via ${views.method} (${views.comparables} comparables): ${views.low}-${views.high}, expected ${views.expected}` +
+                    (views.learning ? `; learned x${views.learning.factor} from ${views.learning.observations} results` : '')
+                );
+                video.viewBase = views.base;
+                video.viewLearning = views.learning ?? undefined;
                 video.predictedViewsLow = views.low;
                 video.predictedViewsExpected = views.expected;
                 video.predictedViewsHigh = views.high;
