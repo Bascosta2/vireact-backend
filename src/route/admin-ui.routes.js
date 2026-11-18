@@ -75,7 +75,7 @@ adminUiRoutes.get('/editor/app.js', (req, res) => {
 });
 
 // Owner console: every user's videos, inputs and outputs. The page holds no data; the API behind it needs
-// the admin key plus an authenticator code (owner.routes.js).
+// the admin key plus a code texted to the owner's phone (owner.routes.js).
 adminUiRoutes.get('/videos', (req, res) => {
     privateHeaders(res, OWNER_UI_CSP);
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');

@@ -1,5 +1,5 @@
 /* Vireact owner console. Same-origin page; every data call needs a live owner session (admin key +
- * authenticator code). All user content is inserted as text nodes (never as HTML). The admin key is
+ * a code texted to the owner's phone). All user content is inserted as text nodes (never as HTML). The admin key is
  * kept in memory only for the sign-in request and never stored. */
 (() => {
   'use strict';
@@ -82,22 +82,61 @@
     h('div', { class: 'brand' }, 'VIREACT ', h('b', { text: '·' }), ' OWNER'),
     h('h1', { text: title, style: 'margin-top:14px' }), h('p', { text: intro }), ...body));
 
-  const showNotConfigured = () => mount(authCard('Not set up', 'The owner console is switched off on the server.',
-    h('p', { class: 'note', text: 'Set ADMIN_API_KEY and ADMIN_SESSION_SECRET (at least 32 characters) on Railway, then reload.' })));
+  const showNotConfigured = (missing = []) => mount(authCard('Not set up', 'The owner console is switched off until these are set on Railway (backend service, Variables):',
+    h('ul', { class: 'tight' }, (missing.length ? missing : ['server settings']).map((m) => h('li', { class: 'mono', text: m }))),
+    h('p', { class: 'note', text: 'Reload this page once they are saved and the deploy has finished.' })));
 
-  const showSignIn = (message = '', { canReset = false } = {}) => {
+  let phoneHint = null;
+
+  // Step 1: admin key -> a code is texted to the owner's phone.
+  const showSignIn = (message = '') => {
     const key = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Admin key' });
-    const code = h('input', { class: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000', 'aria-label': 'Authenticator code' });
     const err = h('div', { class: 'error', role: 'alert', text: message });
+    const send = h('button', { class: 'primary', type: 'submit', text: 'Text me a code' });
+    const form = h('form', {
+      onsubmit: async (e) => {
+        e.preventDefault();
+        err.textContent = '';
+        send.disabled = true;
+        try {
+          const out = await api('/session/code', { method: 'POST', body: { key: key.value } });
+          showCodeStep(key.value, out.sentTo);
+          key.value = '';
+        } catch (ex) { err.textContent = ex.message; } finally { send.disabled = false; }
+      },
+    },
+    h('label', { text: 'Admin key' }), key, err,
+    h('div', { class: 'actions' }, send));
+    mount(authCard('Sign in', `Enter your admin key and we'll text a 6-digit code to ${phoneHint || 'your phone'}.`, form,
+      h('p', { class: 'note', text: 'Sessions end after 30 minutes idle or 8 hours. Every sign-in and every record opened is logged.' })));
+    setTimeout(() => key.focus(), 0);
+  };
+
+  // Step 2: the texted code. The admin key stays in this closure only until sign-in finishes.
+  const showCodeStep = (adminKey, sentTo) => {
+    const code = h('input', { class: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '10', placeholder: '000000', 'aria-label': 'Code from the text message' });
+    const err = h('div', { class: 'error', role: 'alert' });
+    const info = h('p', { text: `We texted a code to ${sentTo || phoneHint || 'your phone'}. It works once and expires in 10 minutes.` });
     const go = h('button', { class: 'primary', type: 'submit', text: 'Sign in' });
+    const resend = h('button', { class: 'link', type: 'button', text: 'Text a new code', disabled: true });
+    setTimeout(() => { resend.disabled = false; }, 30000);
+    resend.addEventListener('click', async () => {
+      resend.disabled = true;
+      err.textContent = '';
+      try {
+        const out = await api('/session/code', { method: 'POST', body: { key: adminKey } });
+        info.textContent = `We texted a new code to ${out.sentTo || phoneHint || 'your phone'}.`;
+      } catch (ex) { err.textContent = ex.message; }
+      setTimeout(() => { resend.disabled = false; }, 30000);
+    });
     const form = h('form', {
       onsubmit: async (e) => {
         e.preventDefault();
         err.textContent = '';
         go.disabled = true;
         try {
-          const out = await api('/session/login', { method: 'POST', body: { key: key.value, code: code.value } });
-          key.value = '';
+          const out = await api('/session/login', { method: 'POST', body: { key: adminKey, code: code.value } });
+          adminKey = '';
           session = { expiresAt: out.expiresAt };
           route();
         } catch (ex) {
@@ -106,56 +145,11 @@
         } finally { go.disabled = false; }
       },
     },
-    h('label', { text: 'Admin key' }), key,
-    h('label', { text: 'Code from your authenticator app' }), code,
-    err,
-    h('div', { class: 'actions' }, go, canReset ? h('button', { class: 'link', type: 'button', text: 'Replace authenticator', onclick: () => showSetup() }) : h('span')));
-    mount(authCard('Sign in', 'Admin key plus the 6-digit code from your authenticator app.', form,
-      h('p', { class: 'note', text: 'Sessions end after 30 minutes idle or 8 hours. Every sign-in and every record opened is logged.' })));
-    setTimeout(() => key.focus(), 0);
-  };
-
-  const showSetup = () => {
-    const key = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Admin key' });
-    const err = h('div', { class: 'error', role: 'alert' });
-    const start = h('button', { class: 'primary', type: 'submit', text: 'Continue' });
-    const step1 = h('form', {
-      onsubmit: async (e) => {
-        e.preventDefault();
-        err.textContent = '';
-        start.disabled = true;
-        try {
-          const out = await api('/session/enroll/start', { method: 'POST', body: { key: key.value } });
-          showSetupCode(key.value, out);
-          key.value = '';
-        } catch (ex) { err.textContent = ex.message; } finally { start.disabled = false; }
-      },
-    }, h('label', { text: 'Admin key' }), key, err, h('div', { class: 'actions' }, start));
-    mount(authCard('Set up your authenticator', 'Link one authenticator app (Google Authenticator, Authy, 1Password). Only one can be linked; after this, setup is closed.', step1));
-    setTimeout(() => key.focus(), 0);
-  };
-
-  const showSetupCode = (adminKey, { secret, otpauthUrl }) => {
-    const code = h('input', { class: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000', 'aria-label': 'Authenticator code' });
-    const err = h('div', { class: 'error', role: 'alert' });
-    const confirm = h('button', { class: 'primary', type: 'submit', text: 'Confirm' });
-    const grouped = secret.match(/.{1,4}/g).join(' ');
-    const form = h('form', {
-      onsubmit: async (e) => {
-        e.preventDefault();
-        err.textContent = '';
-        confirm.disabled = true;
-        try {
-          await api('/session/enroll/confirm', { method: 'POST', body: { key: adminKey, code: code.value } });
-          showSignIn('Authenticator linked. Sign in with a new code.');
-        } catch (ex) { err.textContent = ex.message; code.value = ''; } finally { confirm.disabled = false; }
-      },
-    },
-    h('label', { text: 'Setup key (enter it in your app, type: time-based)' }), h('div', { class: 'secret', text: grouped }),
-    h('p', { class: 'note' }, 'On your phone you can also tap ', h('a', { href: otpauthUrl, text: 'open in authenticator app' }), '. This key is shown only once and expires in 10 minutes.'),
-    h('label', { text: 'Then enter the 6-digit code it shows' }), code, err,
-    h('div', { class: 'actions' }, confirm));
-    mount(authCard('Add Vireact to your authenticator', 'Account name: Vireact Owner.', form));
+    info,
+    h('label', { text: 'Code from the text' }), code, err,
+    h('div', { class: 'actions' }, go, resend));
+    mount(authCard('Check your phone', '', form,
+      h('p', { class: 'note' }, h('button', { class: 'link', type: 'button', text: 'Start over', onclick: () => { adminKey = ''; showSignIn(); } }))));
     setTimeout(() => code.focus(), 0);
   };
 
@@ -422,7 +416,7 @@
     const view = shell('audit');
     const rows = await api('/audit?limit=300');
     clear(view);
-    const LABELS = { login: 'Sign-in', logout: 'Sign-out', enroll_start: 'Authenticator setup started', enroll_confirm: 'Authenticator linked', view_video: 'Opened video', view_user: 'Opened user' };
+    const LABELS = { sms_send: 'Code texted', login: 'Sign-in', logout: 'Sign-out', view_video: 'Opened video', view_user: 'Opened user' };
     view.append(h('h2', { text: 'Access log' }), h('p', { class: 'muted', text: 'Every sign-in attempt and every record opened here. Anything you did not do means the admin key has leaked: change ADMIN_API_KEY on Railway.' }),
       card(null, h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, ['When', 'What', 'Result', 'Record', 'IP', 'Browser'].map((t) => h('th', { text: t })))),
@@ -448,9 +442,9 @@
   const boot = async () => {
     try {
       const s = await api('/session');
-      if (!s.configured) return showNotConfigured();
-      if (!s.enrolled) return showSetup();
-      if (!s.signedIn) return showSignIn('', { canReset: s.setupOpen });
+      phoneHint = s.phoneHint || null;
+      if (!s.configured) return showNotConfigured(s.missing || []);
+      if (!s.signedIn) return showSignIn();
       session = { expiresAt: s.expiresAt };
       route();
     } catch (err) { showError(err); }

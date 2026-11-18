@@ -34,11 +34,11 @@ import { EditProject } from '../src/model/edit-project.model.js';
 import { SoundAsset } from '../src/model/sound-asset.model.js';
 import { PromoRedemption } from '../src/model/promo-redemption.model.js';
 import { PredictionModel } from '../src/model/prediction-model.model.js';
-import { OwnerSecurity, OwnerSession, OwnerAudit } from '../src/model/owner-security.model.js';
+import { OwnerSession, OwnerAudit } from '../src/model/owner-security.model.js';
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
-    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, SoundAsset, PromoRedemption, PredictionModel, OwnerSecurity, OwnerSession, OwnerAudit,
+    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, SoundAsset, PromoRedemption, PredictionModel, OwnerSession, OwnerAudit,
 ];
 
 const apply = process.argv.includes('--apply');
