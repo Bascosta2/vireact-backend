@@ -24,6 +24,7 @@ import {
 } from '../lib/twelve-labs-ingest.helper.js';
 import { isAllowedSocialVideoUrl } from '../lib/social-video-url.js';
 import { downloadSocialVideoForIngest } from './social-video-fetch.service.js';
+import { removeVideoLearningData } from './learning/learning.service.js';
 import { Readable } from 'stream';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -415,6 +416,7 @@ export const deleteVideoService = async (videoId, userId) => {
         // Delete from database
         await Video.deleteOne({ _id: videoId, uploader_id: userId });
         console.log(`[Delete] Successfully deleted video document: ${videoId}`);
+        await removeVideoLearningData(videoId).catch((err) => console.error(`[Delete] Learning data for ${videoId} not removed:`, err.message));
 
         return true;
     } catch (error) {

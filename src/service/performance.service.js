@@ -9,6 +9,7 @@ import { Video } from '../model/video.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { normalizeFollowers, normalizePlatform } from './view-prediction.service.js';
 import { markLearningStale } from './view-learning.service.js';
+import { onPerformanceChanged } from './learning/learning.service.js';
 
 export const MAX_SNAPSHOTS = 20;
 const MAX_URL_LENGTH = 500;
@@ -110,6 +111,7 @@ export const addSnapshot = async (userId, videoId, body = {}) => {
     if (followers != null) video.creatorFollowers = followers;
     await video.save();
     markLearningStale();
+    onPerformanceChanged(video);
     return toPerformanceResponse(video);
 };
 
@@ -121,6 +123,7 @@ export const deleteSnapshot = async (userId, videoId, snapshotId) => {
     syncActualViews(video);
     await video.save();
     markLearningStale();
+    onPerformanceChanged(video);
     return toPerformanceResponse(video);
 };
 
@@ -146,6 +149,7 @@ export const setPostDetails = async (userId, videoId, body = {}) => {
     Object.assign(video, update);
     await video.save();
     if ('postedAt' in update) markLearningStale();
+    if ('postedAt' in update || 'creatorPlatform' in update) onPerformanceChanged(video);
     return toPerformanceResponse(video);
 };
 

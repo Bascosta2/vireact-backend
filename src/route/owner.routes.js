@@ -15,6 +15,7 @@ import {
     SESSION_MAX_MS, consoleStatus, signIn, signOut, resolveSession, audit,
 } from '../service/owner-auth.service.js';
 import { listVideos, getVideoDetail, listUsers, getUserDetail, overview, auditLog } from '../service/owner-data.service.js';
+import { learningOverview } from '../service/learning/learning.service.js';
 
 export const OWNER_HEADER = 'x-vireact-owner';
 const COOKIE_SECURE = '__Host-vx_owner';
@@ -115,5 +116,6 @@ ownerRoutes.get('/users/:userId', wrap(async (req, res) => {
     ok(res, detail);
 }));
 ownerRoutes.get('/audit', wrap(async (req, res) => ok(res, await auditLog({ limit: req.query.limit }))));
+ownerRoutes.get('/learning', wrap(async (req, res) => ok(res, await learningOverview())));
 
 export default ownerRoutes;

@@ -39,6 +39,7 @@ import adminUiRoutes from './route/admin-ui.routes.js';
 import { stripSameOriginHeader } from './middleware/same-origin.js';
 import ownerRoutes from './route/owner.routes.js';
 import { runResearchIngestWebhook } from './controller/research-ingest.controller.js';
+import { runLearningWebhook } from './controller/learning.controller.js';
 import { runEditJobWebhook } from './controller/editor.controller.js';
 
 const app = express();
@@ -150,6 +151,14 @@ app.post(
     express.raw({ type: '*/*' }),
     verifyQStashAndParseBody,
     runResearchIngestWebhook
+);
+
+// QStash daily learning job (signed; LEARNING_ENABLED gates it). docs/learning-engine/PLAN.md
+app.post(
+    '/api/v1/learning/run',
+    express.raw({ type: '*/*' }),
+    verifyQStashAndParseBody,
+    runLearningWebhook
 );
 
 // Body parsers (applied after webhook route)

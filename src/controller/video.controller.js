@@ -55,6 +55,7 @@ import { TWELVELABS_USER_INDEX } from '../config/index.js';
 import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 import { addSnapshot, deleteSnapshot, setPostDetails, getPerformance } from '../service/performance.service.js';
 import { captureServerEvent } from '../lib/analytics.js';
+import { onVideoAnalyzed } from '../service/learning/learning.service.js';
 import { buildFeedbackId, buildScriptRewriteId } from '../service/analyzer/feedback-schema.js';
 
 export const getPresignedUploadUrl = async (req, res) => {
@@ -760,6 +761,7 @@ export const processVideoAnalysis = async (req, res) => {
             video.analysisHeartbeatAt = null;
             video.analysisAttempts = 0;
             await video.save();
+            onVideoAnalyzed(video);
 
             try {
                 const uploaderId = video.uploader_id || userId;

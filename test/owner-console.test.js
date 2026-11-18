@@ -129,6 +129,10 @@ test('one video shows input and outputs, never password or tokens, and the view 
     assert.equal((await call('/videos/not-an-id', { cookie })).status, 404);
     assert.equal((await call('/overview', { cookie })).status, 200);
     assert.equal((await call('/audit', { cookie })).status, 200);
+    const learning = await json(await call('/learning', { cookie }));
+    assert.equal(learning.status, 200);
+    assert.equal(learning.body.data.reportCard.ownerCases.length, 2);
+    assert.equal((await call('/learning')).status, 401, 'learning data needs the session too');
 });
 
 test('sessions end after 30 minutes idle and on sign-out', async () => {

@@ -35,10 +35,12 @@ import { SoundAsset } from '../src/model/sound-asset.model.js';
 import { PromoRedemption } from '../src/model/promo-redemption.model.js';
 import { PredictionModel } from '../src/model/prediction-model.model.js';
 import { OwnerSession, OwnerAudit } from '../src/model/owner-security.model.js';
+import { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, LearningRun } from '../src/model/learning.model.js';
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
     LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, SoundAsset, PromoRedemption, PredictionModel, OwnerSession, OwnerAudit,
+    VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, LearningRun,
 ];
 
 const apply = process.argv.includes('--apply');

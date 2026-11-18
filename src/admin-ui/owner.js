@@ -114,7 +114,7 @@
   };
 
   // ---------- shell
-  const TABS = [['overview', 'Overview'], ['videos', 'Videos'], ['users', 'Users'], ['audit', 'Access log']];
+  const TABS = [['overview', 'Overview'], ['videos', 'Videos'], ['users', 'Users'], ['learning', 'Learning'], ['audit', 'Access log']];
   const shell = (active) => {
     const view = h('div', { id: 'view' }, h('div', { class: 'loading', text: 'Loading' }));
     const header = h('header', { class: 'top' }, h('div', { class: 'bar' },
@@ -387,6 +387,61 @@
           h('td', { class: 'mono', text: r.ip || '' }), h('td', { class: 'subtle', text: (r.userAgent || '').slice(0, 80) }))))))));
   });
 
+  const pct = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+  const times = (x) => (x == null ? '–' : `${x.toFixed(2)}×`);
+  const NICE = { video: 'Your users', social: 'Public (collected)', dataset: 'Admin examples' };
+
+  const accuracyTable = (rows) => h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, ['', 'Videos', 'Usually off by', 'Within 2×', 'Inside the band', 'Bias'].map((t, i) => h('th', { class: i ? 'num' : '', text: t })))),
+    h('tbody', {}, rows.map(([label, m]) => h('tr', {},
+      h('td', { text: label }), h('td', { class: 'num', text: fmtNum(m?.n ?? 0) }), h('td', { class: 'num', text: times(m?.typicalMiss) }),
+      h('td', { class: 'num', text: pct(m?.within2x) }), h('td', { class: 'num', text: pct(m?.coverage) }),
+      h('td', { class: 'num', text: m?.bias == null ? '–' : m.bias > 1 ? `${times(m.bias)} too low` : `${times(1 / m.bias)} too high` }))))));
+
+  const showLearning = guard(async () => {
+    const view = shell('learning');
+    const d = await api('/learning');
+    clear(view);
+    const inv = d.inventory;
+    const rc = d.reportCard;
+    const next = inv.nextMilestone;
+    view.append(
+      h('h2', { text: 'Learning engine' }),
+      h('p', { class: 'muted', text: 'How much real data the prediction model has learned from, and how accurate it is against real results.' }),
+      card('Status', kv([
+        ['Daily job', d.config.enabled ? 'On' : 'Off (set LEARNING_ENABLED=true on Railway)'],
+        ['Public data provider', d.config.provider || 'None yet: public video collection is off'],
+        ['Daily record budget', fmtNum(d.config.dailyRecords)],
+        ['Videos labelled per day', fmtNum(d.config.labelLimit)],
+      ])),
+      card('Data', h('div', { class: 'tiles' },
+        tile('Videos with real results', fmtNum(inv.labelled.total)),
+        ...Object.entries(inv.labelled.bySubject).map(([k, n]) => tile(NICE[k] || k, fmtNum(n), 'with real results')),
+        tile('Public creators tracked', fmtNum(inv.social.creators), `${fmtNum(inv.social.creatorsWithBaseline)} with a baseline`),
+        tile('Public videos collected', fmtNum(inv.social.videos))),
+        next ? h('p', { class: 'note', text: `Next milestone: ${fmtNum(next.at)} videos with real results (${pct(next.progress)} there). Unlocks: ${next.unlocks}.` }) : null),
+      card('Prediction accuracy against real results', accuracyTable([
+        ['All results', rc.live], ['Last 14 days', rc.last14Days], ['Rules only (same videos)', rc.rulesOnly], ['With learning (same videos)', rc.liveOnSameVideos],
+      ]), h('p', { class: 'note', text: 'Usually off by: 1.00× is perfect. Inside the band: the target is about 80%. Bias shows whether predictions run high or low.' })),
+      card('By platform', Object.keys(rc.byPlatform).length
+        ? accuracyTable(Object.entries(rc.byPlatform))
+        : h('p', { class: 'muted', text: 'Needs at least 5 real results per platform.' })),
+      card('Your calibration cases (must always pass)', h('div', {}, rc.ownerCases.map((c) => h('div', { class: 'item' },
+        h('div', { class: 'head' }, h('span', { class: `badge ${c.pass ? 'ok' : 'err'}`, text: c.pass ? 'pass' : 'fail' }), h('span', { text: c.label })),
+        h('div', { class: 'subtle', text: `Predicts ${fmtNum(c.band.low)} – ${fmtNum(c.band.high)}, expected ${fmtNum(c.band.expected)}` }))))),
+      card('Videos by niche', Object.keys(inv.byNiche).length
+        ? h('div', { class: 'tiles' }, Object.entries(inv.byNiche).map(([k, n]) => tile(k.replace(/_/g, ' '), fmtNum(n))))
+        : h('p', { class: 'muted', text: 'No videos described yet. The daily job fills this in.' })),
+      card('Recent daily runs', d.runs.length ? h('div', { class: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Started', 'Result', 'Provider', 'Records used', 'Steps'].map((t) => h('th', { text: t })))),
+        h('tbody', {}, d.runs.map((r) => h('tr', {},
+          h('td', { class: 'num', text: fmtDate(r.startedAt) }),
+          h('td', {}, h('span', { class: `badge ${r.ok ? 'ok' : r.ok === false ? 'err' : 'warn'}`, text: r.ok ? 'ok' : r.ok === false ? 'problem' : 'running' })),
+          h('td', { text: r.provider || 'none' }), h('td', { class: 'num', text: fmtNum(r.recordsUsed) }),
+          h('td', { class: 'subtle', text: (r.steps || []).map((s) => `${s.name}${s.ok ? '' : ' (failed)'}`).join(', ') }))))))
+        : h('p', { class: 'muted', text: 'No runs yet.' })));
+  });
+
   // ---------- router
   const route = guard(async () => {
     const [path] = location.hash.replace(/^#\/?/, '').split('?');
@@ -396,6 +451,7 @@
     if (section === 'users') return showUsers();
     if (section === 'audit') return showAudit();
     if (section === 'overview') return showOverview();
+    if (section === 'learning') return showLearning();
     return showVideos();
   });
 
