@@ -11,7 +11,15 @@ const { pickPairs, OUTLIER_LOG, measuredVideoFeatures } = await import('../src/s
 const { hookFeatures } = await import('../src/service/learning/hook-vision.js');
 const { intentShares } = await import('../src/service/learning/comments.js');
 const { soundStage, buildSoundIndex, usesBefore, isOriginalSound } = await import('../src/service/learning/trends.js');
-const { insightLines } = await import('../src/service/learning/insights.js');
+const { insightLines, benjaminiHochberg } = await import('../src/service/learning/insights.js');
+
+test('Benjamini-Hochberg keeps strong p-values and drops ones that only pass alone', () => {
+    // 10 tests: two strong, one at 0.04 (passes p < 0.05 alone, not after correction at q = 0.1).
+    const p = [0.001, 0.004, 0.04, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95];
+    assert.deepEqual([...benjaminiHochberg(p)].sort(), [0, 1]);
+    assert.deepEqual([...benjaminiHochberg([0.01, 0.02, 0.03])].sort(), [0, 1, 2], 'all pass when all are small');
+    assert.equal(benjaminiHochberg([]).size, 0);
+});
 const { capCreatorWeights, recencyWeight } = await import('../src/service/learning/model/trainer.js');
 
 const frames = (scores, fps = 30) => scores.map((s, i) => ({ t: i / fps, scene: s }));

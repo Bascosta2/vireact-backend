@@ -17,6 +17,21 @@ import { featuresFromVideo } from './features.js';
 import { MODEL_KIND } from './model/trainer.js';
 
 export const MAX_P = 0.05;
+/** False discovery rate across the factors tested in one niche (Benjamini-Hochberg). */
+export const FDR_Q = 0.1;
+
+/**
+ * Benjamini-Hochberg: of m tests, keep those with p <= (rank / m) q. Controls the expected share of false
+ * findings among the kept ones at q, which matters when ~40 factors are tested in every niche.
+ * Returns the set of indexes that pass.
+ */
+export const benjaminiHochberg = (pValues, q = FDR_Q) => {
+    const m = pValues.length;
+    const order = pValues.map((p, i) => [p, i]).filter(([p]) => Number.isFinite(p)).sort((a, b) => a[0] - b[0]);
+    let cut = -1;
+    order.forEach(([p], k) => { if (p <= ((k + 1) / m) * q) cut = k; });
+    return new Set(order.slice(0, cut + 1).map(([, i]) => i));
+};
 
 /** Plain names and units, for text the analyzers read. */
 export const FEATURE_TEXT = {
@@ -64,8 +79,10 @@ export const refreshInsights = async ({ now = Date.now() } = {}) => {
     const ops = [];
     let findings = 0;
     for (const [niche, list] of groups) {
-        for (const f of factorReport(list).factors) {
-            if (f.pairs < RELIABLE_PAIRS || !(f.p < MAX_P)) continue;
+        const tested = factorReport(list).factors.filter((f) => f.pairs >= RELIABLE_PAIRS);
+        const pass = benjaminiHochberg(tested.map((f) => f.p));
+        for (const [k, f] of tested.entries()) {
+            if (!pass.has(k) || !(f.p < MAX_P)) continue;
             const direction = f.hitHigherShare >= 0.5 ? 1 : -1;
             const beta = effect.get(f.feature);
             findings += 1;
