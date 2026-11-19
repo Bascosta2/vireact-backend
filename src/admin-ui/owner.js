@@ -411,8 +411,77 @@
     sceneCount: 'Scenes (Twelve Labs)', cutsPerMin: 'Cuts per minute (Twelve Labs estimate)', avgShotSec: 'Average shot (Twelve Labs estimate)',
     firstCutSec: 'First cut (Twelve Labs estimate)', longestShotSec: 'Longest shot (Twelve Labs estimate)', captionChars: 'Caption length', hashtagCount: 'Hashtags',
     originalSound: 'Original sound', postHourUtc: 'Post hour (UTC)', postWeekdayUtc: 'Post weekday (UTC)',
+    brightness: 'Brightness', brightnessFirst3s: 'Brightness, first 3 s', saturation: 'Colour saturation', motion: 'Motion',
+    motionFirst3s: 'Motion, first 3 s', motionHookRatio: 'Opening motion vs rest', motionVariability: 'Motion variability',
+    onsetRate: 'Beats/hits per second', tempoBpm: 'Music tempo (BPM)', cutsOnBeatShare: 'Cuts on a beat', cutsOnBeatLift: 'Cuts on beat vs chance',
+    hookFaceShare: 'Face size in opening', hookPeople: 'People in opening', hookCloseUp: 'Close-up opening', hookTextOverlay: 'Text overlay in opening',
+    hookTextWords: 'Words of text in opening', hookEyeContact: 'Eye contact in opening', hookSceneChange: 'Scene change in first 3 s', hookVisual: 'Opening shows',
+    softCutCount: 'Soft cuts', soundUsesPrior14d: 'Sound uses in prior 14 days', niche: 'Niche', format: 'Format', hookPattern: 'Hook type', language: 'Language',
   };
   const factorName = (k) => FACTOR_NAMES[k] || k;
+  /** Model column names: "key", "key:missing", "key:sin", "key=level". */
+  const columnName = (c) => {
+    const m = String(c).match(/^([^:=]+)(?::(missing|sin|cos)|=(.+))?$/);
+    if (!m) return c;
+    const base = factorName(m[1]);
+    if (m[2] === 'missing') return `${base} (not measured)`;
+    if (m[2]) return `${base} (${m[2]})`;
+    if (m[3]) return `${base}: ${m[3].replace(/_/g, ' ')}`;
+    return base;
+  };
+
+  const modelCards = (d) => {
+    const m = d.model;
+    const trainBtn = h('button', { class: 'link', text: 'Train the model now', onclick: guard(async () => {
+      trainBtn.disabled = true;
+      const r = await api('/learning/model/run', { method: 'POST', body: {} });
+      trainBtn.textContent = r.status === 'started' ? 'Started: refresh in a minute' : 'Already running';
+    }) });
+    const pctOrDash = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+    const cards = [card('Matrix model (learns what beats a creator\'s own usual)', m ? h('div', {},
+      kv([
+        ['Version', `v${m.version}, trained ${fmtDate(m.trainedAt)} (${m.status})`],
+        ['Data', `${fmtNum(m.n)} videos from ${fmtNum(m.creators)} creators with 2+ videos, ${fmtNum(m.p)} measured columns`],
+        ['Ranks two videos of the same creator correctly', `${pctOrDash(m.metrics.ridge?.pairAccuracy)} (50% = coin flip; ${fmtNum(m.metrics.ridge?.pairs)} pairs, held-out creators)`],
+        ['Error vs "creator\'s usual"', m.metrics.ridge?.skill == null ? '–' : `${Math.round(m.metrics.ridge.skill * 100)}% smaller`],
+        ['Within 2× of the real result', pctOrDash(m.metrics.ridge?.within2x)],
+        ['Neural network vs linear', m.metrics.neural ? `${m.metrics.neural.beatsRidge ? 'better' : 'not better'} (pair accuracy ${pctOrDash(m.metrics.neural.metrics?.pairAccuracy)} vs ${pctOrDash(m.metrics.neural.ridgeOnSameRows?.pairAccuracy)})` : 'not trained yet (needs 200+ videos)'],
+        ['Serving to users', m.promotion?.serving ? 'yes' : `no: ${m.promotion?.reason || ''}`],
+        ['Now', trainBtn],
+      ]),
+      h('h4', { text: 'Strongest effects (+1 standard deviation, other features held fixed)' }),
+      h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, ['Feature', 'Views multiplier'].map((t, i) => h('th', { class: i ? 'num' : '', text: t })))),
+        h('tbody', {}, m.coefficients.slice(0, 15).map((c) => h('tr', {}, h('td', { text: columnName(c.column) }), h('td', { class: 'num', text: `×${c.multiplier}` }))))))
+    ) : h('div', {}, h('p', { class: 'muted', text: 'Not trained yet. It trains in the daily job once 200 videos have settled results.' }), trainBtn))];
+    if (m) {
+      cards.push(card('Statistical network: what is directly linked to performance', m.toPerformance.length
+        ? h('div', {}, h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, ['Feature', 'Direct link (partial correlation)'].map((t, i) => h('th', { class: i ? 'num' : '', text: t })))),
+          h('tbody', {}, m.toPerformance.map((t) => h('tr', {}, h('td', { text: columnName(t.column) }), h('td', { class: 'num', text: t.partialCorrelation.toFixed(3) })))))),
+          m.edges.length ? h('p', { class: 'note', text: `Strongest links between features: ${m.edges.slice(0, 8).map((e) => `${columnName(e.a)} ↔ ${columnName(e.b)} (${e.partialCorrelation})`).join('; ')}.` }) : null,
+          h('p', { class: 'note', text: `Partial correlation = link that remains after every other feature is accounted for (inverse of the shrunk covariance matrix; shrinkage ${m.shrinkage}). Only links significant at p < 0.001 are shown.` }))
+        : h('p', { class: 'muted', text: 'No feature has a significant direct link yet.' })));
+      cards.push(card('Editing styles (principal components)', h('div', {}, m.components.map((c) => h('div', { class: 'item' },
+        h('div', { class: 'head' }, h('b', { text: `Style ${c.component}` }), h('span', { class: 'subtle', text: ` explains ${Math.round(c.explained * 100)}% of the variation; link to performance ${c.correlationWithPerformance}` })),
+        h('div', { class: 'subtle', text: c.loadings.map((l) => `${l.loading > 0 ? '+' : '−'}${columnName(l.column)}`).join(', ') }))))));
+    }
+    cards.push(card('Confirmed findings (reach the analyzers)', d.insights && d.insights.length ? h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Niche', 'Factor', 'Pairs', 'Hit had more', 'Typical hit', 'Typical miss', 'p', 'Model agrees'].map((t, i) => h('th', { class: i > 1 ? 'num' : '', text: t })))),
+      h('tbody', {}, d.insights.map((i) => h('tr', {}, h('td', { text: i.niche.replace(/_/g, ' ') }), h('td', { text: factorName(i.feature) }), h('td', { class: 'num', text: fmtNum(i.pairs) }),
+        h('td', { class: 'num', text: pct(i.hitHigherShare) }), h('td', { class: 'num', text: fmtVal(i.medianHit) }), h('td', { class: 'num', text: fmtVal(i.medianMiss) }),
+        h('td', { class: 'num', text: String(i.p) }), h('td', { class: 'num', text: i.modelEffect == null ? '–' : `yes (×${Math.exp(i.modelEffect).toFixed(2)})` }))))))
+      : h('p', { class: 'muted', text: 'None yet: a factor needs 30+ creator pairs and p < 0.05. Until then the analyzers get nothing from here.' })));
+    cards.push(card('Rising sounds (in collected videos)', d.trends && d.trends.length ? h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Sound', 'Stage', 'Uses, last 14 d', 'Prior 14 d', 'vs usual'].map((t, i) => h('th', { class: i > 1 ? 'num' : '', text: t })))),
+      h('tbody', {}, d.trends.map((t) => h('tr', {}, h('td', { text: t.title || t.soundId }), h('td', { text: t.stage }), h('td', { class: 'num', text: fmtNum(t.last14) }),
+        h('td', { class: 'num', text: fmtNum(t.prior14) }), h('td', { class: 'num', text: vsUsual(t.medianOutperformance) }))))))
+      : h('p', { class: 'muted', text: 'No sound is used often enough in the sample yet.' })));
+    const c = d.comments;
+    cards.push(card('What viewers say: hits vs misses', c && c.intents && c.intents.length ? h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Comment intent', 'Hits', 'Misses'].map((t, i) => h('th', { class: i ? 'num' : '', text: t })))),
+      h('tbody', {}, c.intents.map((r) => h('tr', {}, h('td', { text: r.intent.replace(/_/g, ' ') }), h('td', { class: 'num', text: pct(r.hit) }), h('td', { class: 'num', text: pct(r.miss) }))))))
+      : h('p', { class: 'muted', text: 'Needs analyzed hits and misses with labelled comments. Comments are results, so they explain engagement but are never model inputs.' })));
+    return cards;
+  };
   const fmtVal = (v) => (v == null ? '–' : Math.abs(v) >= 100 ? fmtNum(Math.round(v)) : String(Math.round(v * 100) / 100));
   const vsUsual = (o) => (o == null ? '' : `${Math.exp(o) >= 1 ? Math.exp(o).toFixed(1) : Math.exp(o).toFixed(2)}× usual`);
 
@@ -471,7 +540,9 @@
         ['Views', `${fmtNum(a.views)} (${vsUsual(a.outperformance)}; usual ${fmtNum(a.baselineViews)})`],
         ['Creator', `${fmtNum(c.followers)} followers, niche ${(a.niche || c.niche || '').replace(/_/g, ' ')}`],
         ['Cuts', a.cutsSource === 'ffmpeg' ? `${fmtNum(a.cuts.length)} measured from the file` : 'Estimated by Twelve Labs (file could not be measured)'],
-        ['Length', fmtTime(a.media?.durationSec)], ['Model', a.model || ''], ['Link', link],
+        ['Length', fmtTime(a.media?.durationSec)], ['Language', a.language || ''],
+        ['Opening frames', a.hookVision ? `${String(a.hookVision.visual || '').replace(/_/g, ' ')}; face ${a.hookVision.faceSize}; ${a.hookVision.framing?.replace(/_/g, ' ')}; ${a.hookVision.textOverlay ? `text overlay (${a.hookVision.textWords} words)` : 'no text overlay'}; ${a.hookVision.eyeContact ? 'eye contact' : 'no eye contact'}` : ''],
+        ['Model', a.model || ''], ['Link', link],
       ])),
       card('Shot by shot', h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, ['Time', 'Said', 'On-screen text', 'What is on screen', 'Purpose'].map((t) => h('th', { text: t })))),
@@ -507,6 +578,7 @@
         tile('Public videos collected', fmtNum(inv.social.videos))),
         next ? h('p', { class: 'note', text: `Next milestone: ${fmtNum(next.at)} videos with real results (${pct(next.progress)} there). Unlocks: ${next.unlocks}.` }) : null),
       ...deepCards(d),
+      ...modelCards(d),
       card('Prediction accuracy against real results', accuracyTable([
         ['All results', rc.live], ['Last 14 days', rc.last14Days], ['Rules only (same videos)', rc.rulesOnly], ['With learning (same videos)', rc.liveOnSameVideos],
       ]), h('p', { class: 'note', text: 'Usually off by: 1.00× is perfect. Inside the band: the target is about 80%. Bias shows whether predictions run high or low.' })),
@@ -524,7 +596,7 @@
         h('tbody', {}, d.runs.map((r) => h('tr', {},
           h('td', { class: 'num', text: fmtDate(r.startedAt) }),
           h('td', {}, h('span', { class: `badge ${r.ok ? 'ok' : r.ok === false ? 'err' : 'warn'}`, text: r.ok ? 'ok' : r.ok === false ? 'problem' : 'running' })),
-          h('td', { text: `${r.provider || 'none'}${r.kind === 'deep' ? ' (deep only)' : ''}` }), h('td', { class: 'num', text: fmtNum(r.recordsUsed) }),
+          h('td', { text: `${r.provider || 'none'}${r.kind === 'deep' ? ' (deep only)' : r.kind === 'model' ? ' (model only)' : ''}` }), h('td', { class: 'num', text: fmtNum(r.recordsUsed) }),
           h('td', { class: 'subtle', text: (r.steps || []).map((s) => `${s.name}${s.ok ? '' : ' (failed)'}`).join(', ') }))))))
         : h('p', { class: 'muted', text: 'No runs yet.' })));
   });

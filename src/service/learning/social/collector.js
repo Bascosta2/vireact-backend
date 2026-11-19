@@ -15,6 +15,7 @@ import { SocialCreator, SocialVideo, OutcomeSnapshot, VideoFeatures } from '../.
 import { FEATURE_VERSION, featuresFromSocial, transcriptFeatures } from '../features.js';
 import { ageHoursAt, median } from '../labels.js';
 import { cleanVideo, cleanCreator, cleanStats, usedOf } from './providers.js';
+import { detectLanguage } from '../media-signals.js';
 
 /**
  * Days after posting at which a tracked video's numbers are read again. Videos keep growing for months
@@ -172,7 +173,7 @@ const upsertVideo = async (raw, { platform, providerName, via, query, nicheHint,
                 creatorExternalId: v.creatorExternalId ?? creatorDoc?.externalId ?? null,
                 creatorId: creatorDoc?._id ?? null,
                 url: v.url, caption: v.caption, hashtags: v.hashtags, soundId: v.soundId, soundTitle: v.soundTitle,
-                durationSec: v.durationSec, postedAt: v.postedAt, region: v.region, language: v.language,
+                durationSec: v.durationSec, postedAt: v.postedAt, region: v.region, language: v.language ?? detectLanguage(v.caption),
                 ...(latest ? { latest, lastCheckedAt: new Date(now) } : {}),
             },
             $setOnInsert: { provider: providerName, discoveredVia: via, query: query ?? null, nicheHint: nicheHint ?? null, nextCheckAt: firstCheckAt({ externalId: v.externalId, postedAt: v.postedAt, via }, { now, trackShare }) },

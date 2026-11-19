@@ -98,7 +98,10 @@ const compact = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) =
  * both can be trained on together; *Exact keys come from measured cuts and exist only when the file
  * was measured (cutsSource 'ffmpeg').
  */
-export const deepFeatures = ({ durationSec, cutsSource = null, shots = [], scenes = [], transcript = [], timeline = [], silences = [], loudnessLufs = null, hasAudio = null } = {}) => {
+export const deepFeatures = ({
+    durationSec, cutsSource = null, shots = [], scenes = [], transcript = [], timeline = [], silences = [], loudnessLufs = null, hasAudio = null,
+    picture = {}, rhythm = {}, hook = {},
+} = {}) => {
     const duration = num(durationSec);
     const base = {
         durationSec: duration != null ? round(duration, 1) : null,
@@ -144,12 +147,38 @@ export const deepFeatures = ({ durationSec, cutsSource = null, shots = [], scene
         ...base,
         ...exact,
         ...align,
+        ...(cutsSource === 'ffmpeg' ? picture : {}),
+        ...(cutsSource === 'ffmpeg' ? rhythm : {}),
+        ...hook,
         silenceShare: hasAudio && duration > 0 ? round(Math.min(1, silent / duration)) : null,
         loudnessLufs: num(loudnessLufs) != null ? round(num(loudnessLufs), 1) : null,
         hookEndSec: purposeEnd('hook'),
         hasCta: Array.isArray(scenes) && scenes.length ? scenes.some((s) => s?.purpose === 'cta') : null,
         hasPayoff: Array.isArray(scenes) && scenes.length ? scenes.some((s) => s?.purpose === 'payoff') : null,
     });
+};
+
+/** Keys that come only from measuring the file (or its hook frames), never from Twelve Labs alone. */
+const MEASURED_ONLY = /Exact$|^(textShotShare|textWhileSpeakingShare|wordsBeforeFirstCut|hookTextAndSpeech|silenceShare|loudnessLufs|brightness|brightnessFirst3s|saturation|motion|motionFirst3s|motionHookRatio|motionVariability|onsetRate|tempoBpm|cutsOnBeatShare|cutsOnBeatLift|hook[A-Z]\w*|softCutCount)$/;
+
+/**
+ * Measured features of a user's upload (Video.mediaMeasure, user-media.js) lined up with its Twelve Labs
+ * scenes and transcript: the same measured keys public videos get. Empty when the upload was not measured.
+ */
+export const measuredVideoFeatures = (video, mediaMeasure = video?.mediaMeasure) => {
+    const m = mediaMeasure;
+    if (!m || !(m.durationSec > 0)) return {};
+    const shots = shotsFromCuts(m.cuts ?? [], m.durationSec);
+    const transcript = video.rawTranscript ?? [];
+    const scenes = video.scenes ?? [];
+    const all = deepFeatures({
+        durationSec: m.durationSec, cutsSource: 'ffmpeg', shots, scenes, transcript,
+        timeline: buildTimeline({ shots, scenes, transcript }), silences: m.silences ?? [], loudnessLufs: m.loudnessLufs,
+        hasAudio: m.hasAudio, picture: m.picture ?? {}, rhythm: m.rhythm ?? {}, hook: m.hook ?? {},
+    });
+    const out = Object.fromEntries(Object.entries(all).filter(([k]) => MEASURED_ONLY.test(k)));
+    if (Number.isFinite(m.hardCuts)) out.softCutCount = Math.max(0, (m.cuts?.length ?? 0) - m.hardCuts);
+    return out;
 };
 
 // ---- WebVTT captions (TikTok auto-captions from the provider)
@@ -183,6 +212,12 @@ export const parseCaptions = (raw) => {
 
 /** Pairs need at least this gap: the hit did ~2x+ the miss (log ratio 0.69). */
 export const MIN_PAIR_GAP = Math.log(2);
+/**
+ * Above 50x a creator's usual, a result is mostly luck (a lottery hit). Such videos are not used as a pair's
+ * hit; a small share of picks studies them separately as role 'viral'. Training caps the label here too.
+ */
+export const OUTLIER_LOG = Math.log(50);
+export const VIRAL_SHARE = 0.1;
 const lnRatio = (views, baseline) => Math.log((views + 1) / (baseline + 1));
 
 /**
@@ -190,18 +225,24 @@ const lnRatio = (views, baseline) => Math.log((views + 1) / (baseline + 1));
  * since creator, audience and account size are held fixed.
  *
  * groups: [{ creatorId, niche, baseline, analyzed (count so far), videos: [{ id, views, durationSec }] }]
- * Creators with the fewest analyzed videos go first; niches take turns so no niche crowds out the rest.
- * Returns [{ id, creatorId, role: 'hit'|'miss', outperformance, niche }], at most `limit` items.
+ * nicheDone: { niche: pairs analyzed so far } — niches with the least evidence are served first.
+ * The hit is the creator's best video below the outlier line (lottery hits are kept out of pairs), so each
+ * later run naturally moves to the 2nd, 3rd ... best and worst. Up to VIRAL_SHARE of picks are outliers.
+ * Returns [{ id, creatorId, role: 'hit'|'miss'|'viral', outperformance, niche }], at most `limit` items.
  */
-export const pickPairs = (groups = [], { limit = 60, maxDurationSec = 180 } = {}) => {
+export const pickPairs = (groups = [], { limit = 60, maxDurationSec = 180, nicheDone = {} } = {}) => {
     const candidates = [];
+    const virals = [];
     for (const g of groups) {
         if (!Number.isFinite(g?.baseline) || g.baseline < 0) continue;
         const vids = (g.videos ?? []).filter((v) => Number.isFinite(v?.views) && (v.durationSec == null || v.durationSec <= maxDurationSec));
-        if (vids.length < 2) continue;
         const scored = vids.map((v) => ({ ...v, outperformance: lnRatio(v.views, g.baseline) })).sort((a, b) => b.outperformance - a.outperformance);
-        const hit = scored[0];
-        const miss = scored.at(-1);
+        const viral = scored.find((v) => v.outperformance > OUTLIER_LOG);
+        if (viral) virals.push({ g, v: viral });
+        const usable = scored.filter((v) => v.outperformance <= OUTLIER_LOG);
+        if (usable.length < 2) continue;
+        const hit = usable[0];
+        const miss = usable.at(-1);
         if (hit.outperformance - miss.outperformance < MIN_PAIR_GAP) continue;
         candidates.push({ g, hit, miss });
     }
@@ -213,16 +254,22 @@ export const pickPairs = (groups = [], { limit = 60, maxDurationSec = 180 } = {}
         byNiche.get(key).push(c);
     }
     const out = [];
-    const queues = [...byNiche.values()];
-    while (out.length + 2 <= limit && queues.some((q) => q.length)) {
+    const queues = [...byNiche.entries()].sort((a, b) => (nicheDone[a[0]] ?? 0) - (nicheDone[b[0]] ?? 0)).map(([, q]) => q);
+    const viralSlots = Math.min(virals.length, Math.floor(limit * VIRAL_SHARE));
+    const pairLimit = limit - viralSlots;
+    while (out.length + 2 <= pairLimit && queues.some((q) => q.length)) {
         for (const q of queues) {
-            if (out.length + 2 > limit) break;
+            if (out.length + 2 > pairLimit) break;
             const c = q.shift();
             if (!c) continue;
             for (const [v, role] of [[c.hit, 'hit'], [c.miss, 'miss']]) {
                 out.push({ id: v.id, creatorId: c.g.creatorId, role, outperformance: round(v.outperformance), niche: c.g.niche ?? null });
             }
         }
+    }
+    virals.sort((a, b) => (a.g.analyzed ?? 0) - (b.g.analyzed ?? 0));
+    for (const { g, v } of virals.slice(0, Math.min(viralSlots, limit - out.length))) {
+        out.push({ id: v.id, creatorId: g.creatorId, role: 'viral', outperformance: round(v.outperformance), niche: g.niche ?? null });
     }
     return out;
 };

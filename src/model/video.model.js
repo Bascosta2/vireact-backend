@@ -312,6 +312,14 @@ const videoSchema = new mongoose.Schema({
         type: String,
         default: null
     },
+    /**
+     * Measured from the uploaded file before it was deleted (learning/user-media.js): exact cut times,
+     * pauses, loudness, picture and rhythm stats, and the hook-frame description. Learning data only.
+     */
+    mediaMeasure: {
+        type: mongoose.Schema.Types.Mixed,
+        default: undefined
+    },
     twelveLabsAssetId: {
         type: String,
         default: null,

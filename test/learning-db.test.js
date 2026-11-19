@@ -218,7 +218,8 @@ test('daily job runs every step, records the run, and refuses to overlap', async
     });
     assert.equal(result.status, 'done');
     const run = await LearningRun.findById(result.runId).lean();
-    assert.deepEqual(run.steps.map((s) => s.name), ['backfill', 'collect', 'deep', 'label', 'inventory', 'report_card']);
+    assert.deepEqual(run.steps.map((s) => s.name), ['backfill', 'collect', 'deep', 'label', 'comments', 'trends', 'model', 'insights', 'inventory', 'report_card']);
+    assert.match(run.steps.find((s) => s.name === 'model').counts.skipped, /needs 200 labelled videos/);
     assert.equal(run.steps.find((s) => s.name === 'deep').counts.skipped, 'LEARNING_DEEP_DAILY=0');
     assert.ok(run.steps.every((s) => s.ok), JSON.stringify(run.steps));
     assert.equal(run.provider, 'fake');
@@ -240,7 +241,9 @@ test('settings: off unless LEARNING_ENABLED=true; budgets parse safely', () => {
     assert.equal(learning.learningConfig({ LEARNING_DAILY_RECORDS: '-5' }).dailyRecords, 2000);
     assert.equal(learning.learningConfig({ LEARNING_DAILY_RECORDS: '500' }).dailyRecords, 500);
     assert.equal(learning.learningConfig({ LEARNING_PROVIDER: ' Bright ' }).provider, 'bright');
-    assert.equal(learning.learningConfig({}).deepDaily, 60);
+    assert.equal(learning.learningConfig({}).deepDaily, 100);
+    assert.deepEqual(learning.learningConfig({ LEARNING_LANGUAGES: 'en, ES' }).languages, ['en', 'es']);
+    assert.equal(learning.learningConfig({}).halfLifeDays, 120);
     assert.equal(learning.learningConfig({}).labelLimit, 2000);
     assert.equal(learning.learningConfig({ LEARNING_DEEP_DAILY: '0' }).deepDaily, 0);
     assert.equal(learning.learningConfig({ LEARNING_DEEP_CONCURRENCY: '50' }).deepConcurrency, 6);

@@ -25,6 +25,9 @@ import { isMediaUrl, mediaHeaders } from './social/brightdata.js';
 import { cleanStats, usedOf } from './social/providers.js';
 import { extrasUpdate, writeOutcome } from './social/collector.js';
 import { withAiContext, newTraceId } from '../../lib/ai-tracking.js';
+import { measureMedia } from './media-measure.js';
+import { describeHook } from './hook-vision.js';
+import { detectLanguage } from './media-signals.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const MAX_BYTES = 250 * 1024 * 1024;
@@ -56,21 +59,8 @@ export const downloadVideo = async (url, chainToken, dest, { fetchImpl = globalT
     return { path: dest, bytes: seen };
 };
 
-/** Probe, exact cuts, pauses and loudness of a local file. */
-export const measureVideo = async (file) => {
-    const { ffmpeg, probe, parseSceneCuts, parseSilences, parseLoudness } = await import('../../lib/ffmpeg.js');
-    const info = await probe(file);
-    // Scene changes on a small copy (fast; same threshold as the editor). Audio skipped.
-    const { stderr: sceneLog } = await ffmpeg(['-i', file, '-an', '-vf', "scale=360:-2,select='gt(scene,0.3)',showinfo", '-f', 'null', '-'], { timeoutMs: 4 * 60_000 });
-    let silences = [];
-    let loudnessLufs = null;
-    if (info.hasAudio) {
-        const { stderr } = await ffmpeg(['-i', file, '-vn', '-af', 'silencedetect=noise=-35dB:d=0.3,ebur128=framelog=quiet', '-f', 'null', '-'], { timeoutMs: 4 * 60_000 });
-        silences = parseSilences(stderr, info.durationSec);
-        loudnessLufs = parseLoudness(stderr);
-    }
-    return { info, cuts: parseSceneCuts(sceneLog), silences, loudnessLufs };
-};
+/** Probe, adaptive cuts, pauses, loudness, picture and rhythm of a local file (media-measure.js). */
+export const measureVideo = (file, opts) => measureMedia(file, opts);
 
 const realTwelveLabs = async () => {
     const [{ default: client }, ingest, analyze] = await Promise.all([
@@ -109,25 +99,35 @@ const realTwelveLabs = async () => {
  * Today's videos: hit-and-miss pairs from creators with a reliable baseline, settled videos only
  * (7+ days old), skipping anything already analyzed or tried.
  */
-export const pickDeepSample = async ({ limit, maxDurationSec = 180, now = Date.now(), platform = 'tiktok' } = {}) => {
+export const pickDeepSample = async ({ limit, maxDurationSec = 180, maxAgeDays = 365, languages = ['en'], now = Date.now(), platform = 'tiktok' } = {}) => {
     if (!(limit > 0)) return [];
     const creators = await SocialCreator.find({ platform, baselineViews: { $ne: null }, baselineN: { $gte: 5 } })
         .select('_id niche baselineViews').lean();
     if (!creators.length) return [];
-    const doneRows = await SocialVideoAnalysis.aggregate([{ $group: { _id: '$creatorId', n: { $sum: 1 } } }]);
+    const [doneRows, nicheRows] = await Promise.all([
+        SocialVideoAnalysis.aggregate([{ $group: { _id: '$creatorId', n: { $sum: 1 } } }]),
+        SocialVideoAnalysis.aggregate([{ $match: { role: { $in: ['hit', 'miss'] } } }, { $group: { _id: '$niche', n: { $sum: 1 } } }]),
+    ]);
     const done = new Map(doneRows.map((r) => [String(r._id), r.n]));
+    const nicheDone = Object.fromEntries(nicheRows.map((r) => [r._id ?? 'unknown', r.n / 2]));
     // Least-analyzed creators first; look at a generous slice so niches can take turns.
-    const ordered = creators.sort((a, b) => (done.get(String(a._id)) ?? 0) - (done.get(String(b._id)) ?? 0)).slice(0, Math.max(50, limit * 4));
+    const ordered = creators.sort((a, b) => (done.get(String(a._id)) ?? 0) - (done.get(String(b._id)) ?? 0)).slice(0, Math.max(80, limit * 5));
     const videos = await SocialVideo.find({
         creatorId: { $in: ordered.map((c) => c._id) },
         deep: null,
         url: { $ne: null },
         'latest.views': { $ne: null },
-        postedAt: { $lte: new Date(now - 7 * DAY_MS) },
+        // Settled (7+ days) but recent: older videos were ranked by a different TikTok.
+        postedAt: { $lte: new Date(now - 7 * DAY_MS), ...(maxAgeDays > 0 ? { $gte: new Date(now - maxAgeDays * DAY_MS) } : {}) },
         $or: [{ durationSec: null }, { durationSec: { $gte: MIN_DURATION_SEC, $lte: maxDurationSec } }],
-    }).select('_id creatorId latest.views durationSec').lean();
+    }).select('_id creatorId latest.views durationSec caption language').lean();
+    const wanted = new Set((languages ?? []).map((l) => String(l).toLowerCase()).filter(Boolean));
     const byCreator = new Map();
     for (const v of videos) {
+        // Speech speed and on-screen text differ by language, so pairs stay within the chosen languages.
+        // Captions too short to tell (null) are allowed; a clearly different language is not.
+        const lang = v.language ?? detectLanguage(v.caption);
+        if (wanted.size && lang && !wanted.has(lang)) continue;
         const k = String(v.creatorId);
         if (!byCreator.has(k)) byCreator.set(k, []);
         byCreator.get(k).push({ id: v._id, views: v.latest.views, durationSec: v.durationSec ?? null });
@@ -135,7 +135,7 @@ export const pickDeepSample = async ({ limit, maxDurationSec = 180, now = Date.n
     const groups = ordered.map((c) => ({
         creatorId: c._id, niche: c.niche ?? null, baseline: c.baselineViews, analyzed: done.get(String(c._id)) ?? 0, videos: byCreator.get(String(c._id)) ?? [],
     }));
-    return pickPairs(groups, { limit, maxDurationSec });
+    return pickPairs(groups, { limit, maxDurationSec, nicheDone });
 };
 
 // ---- one video
@@ -149,6 +149,7 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
     const tl = deps.twelveLabs ?? await realTwelveLabs();
     const download = deps.download ?? downloadVideo;
     const measure = deps.measure ?? measureVideo;
+    const hookVision = deps.describeHook ?? describeHook;
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'vx-deep-'));
     let assetId = null;
     try {
@@ -159,7 +160,7 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
         try {
             const file = await download(extra.videoUrl, extra.chainToken, path.join(dir, 'video.mp4'));
             bytes = file.bytes ?? null;
-            measured = await measure(file.path);
+            measured = await measure(file.path, { hookFrames: true, workDir: dir });
             if (measured.info?.durationSec > maxDurationSec + 1) throw Object.assign(new Error(`video is ${Math.round(measured.info.durationSec)}s, over the ${maxDurationSec}s limit`), { final: true });
             if (measured.info?.durationSec < MIN_DURATION_SEC) throw Object.assign(new Error('video too short to analyze'), { final: true });
             asset = await tl.createFromFile(file.path);
@@ -173,17 +174,24 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
         assetId = asset.id;
         if (!assetId) throw new Error('Twelve Labs returned no asset id');
         await tl.waitReady(assetId, asset.status);
-        const [scenes, transcript] = await Promise.all([tl.scenes(assetId), tl.transcript(assetId)]);
+        const [scenes, transcript, hook] = await Promise.all([
+            tl.scenes(assetId),
+            tl.transcript(assetId),
+            measured?.hookImage ? hookVision(measured.hookImage) : Promise.resolve(null),
+        ]);
         if (!scenes.length && !transcript.length) throw new Error('Twelve Labs returned no scenes and no transcript');
 
         const durationSec = measured?.info?.durationSec ?? video.durationSec ?? scenes.at(-1)?.endTime ?? null;
         const cutsSource = measured ? 'ffmpeg' : 'pegasus';
         const shots = measured ? shotsFromCuts(measured.cuts, durationSec) : shotsFromScenes(scenes);
         const timeline = buildTimeline({ shots, scenes, transcript });
+        const language = detectLanguage(transcript.map((s) => s.text).join(' ')) ?? video.language ?? detectLanguage(video.caption);
         const features = deepFeatures({
             durationSec, cutsSource, shots, scenes, transcript, timeline,
             silences: measured?.silences ?? [], loudnessLufs: measured?.loudnessLufs ?? null, hasAudio: measured?.info?.hasAudio ?? null,
+            picture: measured?.picture ?? {}, rhythm: measured?.rhythm ?? {}, hook: hook?.features ?? {},
         });
+        if (measured && Array.isArray(measured.cutsHardOnly)) features.softCutCount = Math.max(0, (measured.cuts?.length ?? 0) - measured.cutsHardOnly.length);
         const doc = {
             socialVideoId: video._id, platform: video.platform ?? 'tiktok', externalId: video.externalId, creatorId: video.creatorId ?? null,
             niche: pick?.niche ?? creator?.niche ?? null, role: pick?.role ?? 'other',
@@ -192,12 +200,16 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
             media: measured ? {
                 durationSec: measured.info.durationSec, width: measured.info.width, height: measured.info.height, fps: measured.info.fps,
                 hasAudio: measured.info.hasAudio, loudnessLufs: measured.loudnessLufs, bytes,
+                picture: measured.picture ?? null, rhythm: measured.rhythm ?? null, measureVersion: measured.version ?? null,
             } : { durationSec },
+            hookVision: hook?.answer ?? null,
+            language: language ?? null,
             cuts: measured ? shots.slice(1).map((s) => s.start) : [],
             silences: measured?.silences ?? [],
             scenes, transcript, timeline, features, ms: Date.now() - started, analyzedAt: new Date(),
         };
         const saved = await SocialVideoAnalysis.findOneAndUpdate({ socialVideoId: video._id }, { $set: doc }, { upsert: true, new: true }).lean();
+        if (language && !video.language) await SocialVideo.updateOne({ _id: video._id }, { $set: { language } });
         await VideoFeatures.updateOne(
             { subjectType: 'social', subjectId: video._id },
             { $set: { ...Object.fromEntries(Object.entries(features).map(([k, v]) => [`features.${k}`, v])), 'features.speechFromCaptions': false, deepAt: new Date() } },
@@ -218,14 +230,16 @@ export const isDeepRunning = () => deepRunning;
  * Picks today's sample and analyzes it. Never throws for one video: failures are counted and recorded
  * on the SocialVideo (deep.status 'failed') so they are not retried every day.
  */
-export const runDeepAnalysis = async ({ provider, limit = 60, concurrency = 3, maxDurationSec = 180, now = Date.now(), deps = {}, log = () => {} } = {}) => {
+export const runDeepAnalysis = async ({
+    provider, limit = 60, concurrency = 3, maxDurationSec = 180, maxAgeDays = 365, languages = ['en'], now = Date.now(), deps = {}, log = () => {},
+} = {}) => {
     const out = { picked: 0, withLink: 0, analyzed: 0, exactCuts: 0, viaUrl: 0, failed: 0, used: 0, videoMinutes: 0, errors: [] };
     if (!provider?.videoStats) return { ...out, skipped: 'no provider configured' };
     if (!deps.twelveLabs && !process.env.TWELVE_LABS_API_KEY) return { ...out, skipped: 'TWELVE_LABS_API_KEY not set' };
     if (deepRunning) return { ...out, skipped: 'already running' };
     deepRunning = true;
     try {
-        const picks = await pickDeepSample({ limit, maxDurationSec, now });
+        const picks = await pickDeepSample({ limit, maxDurationSec, maxAgeDays, languages, now });
         out.picked = picks.length;
         if (!picks.length) return out;
         const videos = await SocialVideo.find({ _id: { $in: picks.map((p) => p.id) } }).lean();

@@ -15,7 +15,7 @@ import {
     SESSION_MAX_MS, consoleStatus, signIn, signOut, resolveSession, audit,
 } from '../service/owner-auth.service.js';
 import { listVideos, getVideoDetail, listUsers, getUserDetail, overview, auditLog } from '../service/owner-data.service.js';
-import { learningOverview, deepDetail, startDeepRun } from '../service/learning/learning.service.js';
+import { learningOverview, deepDetail, startDeepRun, startModelRun } from '../service/learning/learning.service.js';
 
 export const OWNER_HEADER = 'x-vireact-owner';
 const COOKIE_SECURE = '__Host-vx_owner';
@@ -121,6 +121,12 @@ ownerRoutes.get('/learning/deep/:id', wrap(async (req, res) => {
     const detail = await deepDetail(req.params.id);
     if (!detail) return deny(res, 404, 'Analysis not found.');
     ok(res, detail);
+}));
+// Train the matrix engine and refresh trends and insights now (no provider records, no AI spend).
+ownerRoutes.post('/learning/model/run', wrap(async (req, res) => {
+    const result = startModelRun();
+    await audit(req, 'learning_model_run', {}).catch(() => {});
+    ok(res, result);
 }));
 // Deep-analyze N public videos now (2 to 100; spends provider records and Twelve Labs minutes).
 ownerRoutes.post('/learning/deep/run', wrap(async (req, res) => {

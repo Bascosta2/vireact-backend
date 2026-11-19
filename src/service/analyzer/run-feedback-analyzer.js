@@ -15,6 +15,7 @@ import { retrieveKnowledge, formatKnowledgeContext } from './retrieve-knowledge.
 import { normalizeFrameFeedback, normalizeScriptRewrite } from './feedback-schema.js';
 import { runValidatedStructuredCompletion } from './validated-completion.js';
 import { VOICE_RULES, CALIBRATION_RULES, cleanUserFacing, retimeForDuration } from './voice.js';
+import { learnedContextForVideo } from '../learning/insights.js';
 
 /** Scene context block shared by all analyzers. */
 export const buildScenesBlock = (scenes) => {
@@ -95,8 +96,12 @@ export const runFeedbackAnalyzer = async ({
     maxTokens = 3500,
     temperature = 0.2,
 }) => {
-    const knowledgeDocs = await retrieveKnowledge({ query: ragQuery, topics: ragTopics });
-    const ragContext = formatKnowledgeContext(knowledgeDocs);
+    const [knowledgeDocs, learned] = await Promise.all([
+        retrieveKnowledge({ query: ragQuery, topics: ragTopics }),
+        learnedContextForVideo(videoId, feature),
+    ]);
+    // Confirmed hit-vs-miss findings for this niche (empty until the learning engine has enough evidence).
+    const ragContext = [formatKnowledgeContext(knowledgeDocs), learned].filter(Boolean).join('\n\n');
 
     const prompt = buildPrompt({
         scenesBlock: buildScenesBlock(scenes),

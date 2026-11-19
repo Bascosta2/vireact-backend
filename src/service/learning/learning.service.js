@@ -24,7 +24,12 @@ import { User } from '../../model/user.model.js';
 import { VideoPerformanceDataset } from '../../model/VideoPerformanceDataset.model.js';
 import { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, SocialVideoAnalysis, LearningRun } from '../../model/learning.model.js';
 import { runDeepAnalysis, isDeepRunning } from './deep-analyzer.js';
-import { factorReport } from './deep-features.js';
+import { factorReport, measuredVideoFeatures } from './deep-features.js';
+import { labelComments, COMMENT_INTENTS } from './comments.js';
+import { refreshSoundTrends } from './trends.js';
+import { trainMatrixEngine, MODEL_KIND } from './model/trainer.js';
+import { refreshInsights } from './insights.js';
+import { LearningInsight, LearningModel, SoundTrend } from '../../model/learning.model.js';
 import { ANALYSIS_STATUS } from '../../constants.js';
 import { TAXONOMY_VERSION, isNiche } from '../../constants/taxonomy.js';
 import { FEATURE_VERSION, featuresFromVideo, featuresFromDataset } from './features.js';
@@ -60,9 +65,14 @@ export const learningConfig = (env = process.env) => ({
     // ~1,800 public videos arrive a day; 2,000 keeps labelling ahead of collection (one small call per 25).
     labelLimit: intEnv('LEARNING_LABEL_LIMIT', 2000, env),
     trackShare: shareEnv('LEARNING_TRACK_SHARE', TRACK_SHARE, env),
-    deepDaily: intEnv('LEARNING_DEEP_DAILY', 60, env),
+    deepDaily: intEnv('LEARNING_DEEP_DAILY', 100, env),
     deepConcurrency: Math.max(1, Math.min(6, intEnv('LEARNING_DEEP_CONCURRENCY', 3, env))),
     deepMaxSec: Math.max(10, intEnv('LEARNING_DEEP_MAX_SEC', 180, env)),
+    deepMaxAgeDays: intEnv('LEARNING_DEEP_MAX_AGE_DAYS', 365, env),
+    languages: String(env.LEARNING_LANGUAGES ?? 'en').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    commentLimit: intEnv('LEARNING_COMMENT_LIMIT', 300, env),
+    halfLifeDays: Math.max(7, intEnv('LEARNING_HALF_LIFE_DAYS', 120, env)),
+    modelEnabled: String(env.LEARNING_MODEL ?? 'true').trim().toLowerCase() !== 'false',
 });
 
 // ---- users' videos
@@ -83,12 +93,14 @@ export const upsertVideoFeatures = async (video) => {
     if (!video?._id || video.analysisStatus !== ANALYSIS_STATUS.COMPLETED) return null;
     const userId = video.uploader_id ?? null;
     const existing = await VideoFeatures.findOne({ subjectType: 'video', subjectId: video._id }).select('labelSource').lean();
+    // The in-memory video from the analysis job may predate the upload measurement: read it if missing.
+    const mediaMeasure = video.mediaMeasure !== undefined ? video.mediaMeasure : (await Video.findById(video._id).select('mediaMeasure').lean())?.mediaMeasure;
     const set = {
         userId,
         creatorKey: userId ? `user:${userId}` : null,
         platform: video.creatorPlatform ?? null,
         featureVersion: FEATURE_VERSION,
-        features: featuresFromVideo(video),
+        features: { ...featuresFromVideo(video), ...measuredVideoFeatures(video, mediaMeasure) },
         followers: Number.isFinite(video.creatorFollowers) ? video.creatorFollowers : null,
         postedAt: video.postedAt ?? null,
         extractedAt: new Date(),
@@ -152,7 +164,7 @@ export const removeVideoLearningData = async (videoId) => {
 
 // ---- backfill
 
-const VIDEO_FIELDS = 'uploader_id analysisStatus creatorPlatform creatorFollowers postedAt duration scenes rawTranscript analysis viralityScore sourceDescription contentProfile performanceSnapshots';
+const VIDEO_FIELDS = 'uploader_id analysisStatus creatorPlatform creatorFollowers postedAt duration scenes rawTranscript analysis viralityScore sourceDescription contentProfile performanceSnapshots mediaMeasure';
 
 /**
  * Features + outcomes for completed uploads and admin examples that are missing or outdated.
@@ -302,10 +314,14 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
             : { skipped: 'no provider configured (LEARNING_PROVIDER)' }));
         run.recordsUsed = collected?.used ?? 0;
         const deep = await step('deep', () => (provider && config.deepDaily > 0
-            ? runDeepAnalysis({ provider, limit: config.deepDaily, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, now, deps: deps.deep, log })
+            ? runDeepAnalysis({ provider, limit: config.deepDaily, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, maxAgeDays: config.deepMaxAgeDays ?? 365, languages: config.languages ?? ['en'], now, deps: deps.deep, log })
             : { skipped: provider ? 'LEARNING_DEEP_DAILY=0' : 'no provider configured' }));
         run.recordsUsed += deep?.used ?? 0;
         await step('label', () => (config.labelLimit > 0 ? labelPending({ limit: config.labelLimit, complete: deps.complete, log }) : { skipped: 'LEARNING_LABEL_LIMIT=0' }));
+        await step('comments', () => (config.commentLimit > 0 ? labelComments({ limit: config.commentLimit, complete: deps.complete, log }) : { skipped: 'LEARNING_COMMENT_LIMIT=0' }));
+        await step('trends', () => refreshSoundTrends({ now }));
+        await step('model', () => (config.modelEnabled !== false ? trainMatrixEngine({ now, halfLifeDays: config.halfLifeDays ?? 120, deps: deps.model, log }) : { skipped: 'LEARNING_MODEL=false' }));
+        await step('insights', () => refreshInsights({ now }));
         run.inventory = await step('inventory', () => dataInventory());
         run.reportCard = await step('report_card', () => reportCard({ now }));
         run.ok = run.steps.every((s) => s.ok);
@@ -364,7 +380,7 @@ export const startDeepRun = ({ limit = 10, config = learningConfig(), log = (l) 
         const run = await LearningRun.create({ kind: 'deep', startedAt: new Date(), provider: provider.name });
         const t0 = Date.now();
         try {
-            const counts = await runDeepAnalysis({ provider, limit: n, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, log });
+            const counts = await runDeepAnalysis({ provider, limit: n, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, maxAgeDays: config.deepMaxAgeDays, languages: config.languages, log });
             run.steps.push({ name: 'deep', ok: true, ms: Date.now() - t0, counts });
             run.recordsUsed = counts.used ?? 0;
             run.ok = true;
@@ -379,20 +395,91 @@ export const startDeepRun = ({ limit = 10, config = learningConfig(), log = (l) 
     return { status: 'started', limit: n };
 };
 
+const medianOf = (xs) => {
+    const s = xs.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!s.length) return null;
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/** The latest matrix-engine model, trimmed for the console. */
+export const modelOverview = async () => {
+    const m = await LearningModel.findOne({ kind: MODEL_KIND }).sort({ version: -1 }).select('-weights -standardization -coefficients.beta').lean();
+    if (!m) return null;
+    return {
+        version: m.version, trainedAt: m.trainedAt, status: m.status, n: m.n, p: m.p, creators: m.creators, lambda: m.lambda,
+        metrics: { ridge: m.metrics?.ridge ?? null, neural: m.metrics?.neural ? { metrics: m.metrics.neural.metrics, ridgeOnSameRows: m.metrics.neural.ridgeOnSameRows, beatsRidge: m.metrics.neural.beatsRidge } : null, rows: m.metrics?.rows, bySource: m.metrics?.bySource },
+        coefficients: (m.coefficients?.top ?? []).slice(0, 20),
+        toPerformance: (m.network?.toPerformance ?? []).filter((t) => t.significant).slice(0, 15),
+        edges: (m.network?.edges ?? []).slice(0, 15),
+        shrinkage: m.network?.shrinkage ?? null,
+        components: (m.components ?? []).slice(0, 5),
+        promotion: m.promotion,
+    };
+};
+
+/** Comment intents on analyzed hits vs misses (a result, not an input). */
+export const commentReport = async () => {
+    const rows = await SocialVideoAnalysis.find({ role: { $in: ['hit', 'miss'] } }).select('socialVideoId role').lean();
+    if (!rows.length) return null;
+    const intents = new Map((await SocialVideo.find({ _id: { $in: rows.map((r) => r.socialVideoId) }, 'commentIntents.n': { $gt: 0 } }).select('commentIntents').lean()).map((v) => [String(v._id), v.commentIntents]));
+    const by = { hit: [], miss: [] };
+    for (const r of rows) { const c = intents.get(String(r.socialVideoId)); if (c) by[r.role].push(c); }
+    if (!by.hit.length || !by.miss.length) return { hits: by.hit.length, misses: by.miss.length, intents: [] };
+    return {
+        hits: by.hit.length,
+        misses: by.miss.length,
+        intents: COMMENT_INTENTS.map((k) => ({ intent: k, hit: medianOf(by.hit.map((c) => c[k])), miss: medianOf(by.miss.map((c) => c[k])) }))
+            .sort((a, b) => Math.abs((b.hit ?? 0) - (b.miss ?? 0)) - Math.abs((a.hit ?? 0) - (a.miss ?? 0))),
+    };
+};
+
+let modelRunning = false;
+/** Trains the matrix engine and refreshes trends and insights now (owner console), in the background. */
+export const startModelRun = ({ config = learningConfig(), log = (l) => console.log(`[learning] ${l}`) } = {}) => {
+    if (modelRunning || running) return { status: 'already_running' };
+    modelRunning = true;
+    (async () => {
+        const run = await LearningRun.create({ kind: 'model', startedAt: new Date() });
+        for (const [name, fn] of [
+            ['trends', () => refreshSoundTrends({})],
+            ['model', () => trainMatrixEngine({ halfLifeDays: config.halfLifeDays, log })],
+            ['insights', () => refreshInsights({})],
+        ]) {
+            const t0 = Date.now();
+            try {
+                const counts = await fn();
+                run.steps.push({ name, ok: true, ms: Date.now() - t0, counts });
+            } catch (error) {
+                run.steps.push({ name, ok: false, ms: Date.now() - t0, detail: String(error.message).slice(0, 500) });
+            }
+        }
+        run.ok = run.steps.every((s) => s.ok);
+        run.finishedAt = new Date();
+        await run.save().catch(() => {});
+    })().catch((error) => log(`model run failed: ${error.message}`)).finally(() => { modelRunning = false; });
+    return { status: 'started' };
+};
+
 /** For the owner console. */
 export const learningOverview = async () => {
-    const [inventory, card, runs, deep] = await Promise.all([
+    const [inventory, card, runs, deep, model, trends, insights, comments] = await Promise.all([
         dataInventory(),
         reportCard(),
         LearningRun.find({}).sort({ startedAt: -1 }).limit(10).select('kind startedAt finishedAt ok provider recordsUsed steps').lean(),
         deepOverview(),
+        modelOverview(),
+        SoundTrend.find({ stage: { $in: ['emerging', 'rising'] } }).sort({ last14: -1 }).limit(15).lean(),
+        LearningInsight.find({}).sort({ pairs: -1 }).limit(40).lean(),
+        commentReport(),
     ]);
     const config = learningConfig();
     return {
         config: {
             enabled: config.enabled, provider: config.provider, dailyRecords: config.dailyRecords, labelLimit: config.labelLimit, trackShare: config.trackShare,
-            deepDaily: config.deepDaily, deepConcurrency: config.deepConcurrency, deepMaxSec: config.deepMaxSec,
+            deepDaily: config.deepDaily, deepConcurrency: config.deepConcurrency, deepMaxSec: config.deepMaxSec, deepMaxAgeDays: config.deepMaxAgeDays,
+            languages: config.languages, halfLifeDays: config.halfLifeDays, modelEnabled: config.modelEnabled,
         },
-        inventory, reportCard: card, runs, deep,
+        inventory, reportCard: card, runs, deep, model, trends, insights, comments,
     };
 };

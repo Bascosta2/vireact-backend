@@ -115,6 +115,8 @@ const socialVideoSchema = new mongoose.Schema({
     captionsLang: { type: String, default: null },
     /** Top comments by likes: text and counts only, never shown to users. */
     topComments: { type: [new mongoose.Schema({ text: String, likes: Number, replies: Number, at: Date }, { _id: false })], default: undefined },
+    /** Share of top comments per intent (comments.js). A result, never a model input. */
+    commentIntents: { type: mongoose.Schema.Types.Mixed, default: null },
     /** Deep analysis state (the analysis itself is in SocialVideoAnalysis). */
     deep: {
         type: new mongoose.Schema({ status: { type: String, enum: ['done', 'failed'] }, at: Date, error: String, role: String }, { _id: false }),
@@ -137,7 +139,7 @@ const socialVideoAnalysisSchema = new mongoose.Schema({
     creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'SocialCreator', default: null },
     niche: { type: String, default: null },
     /** Why it was picked: the creator's best ('hit') or worst ('miss') video, compared with their baseline. */
-    role: { type: String, enum: ['hit', 'miss', 'other'], default: 'other' },
+    role: { type: String, enum: ['hit', 'miss', 'viral', 'other'], default: 'other' },
     views: { type: Number, default: null },
     baselineViews: { type: Number, default: null },
     outperformance: { type: Number, default: null },
@@ -152,6 +154,9 @@ const socialVideoAnalysisSchema = new mongoose.Schema({
     transcript: { type: [new mongoose.Schema({ text: String, tStart: Number, tEnd: Number }, { _id: false })], default: [] },
     timeline: { type: [mongoose.Schema.Types.Mixed], default: [] },
     features: { type: mongoose.Schema.Types.Mixed, default: {} },
+    /** The hook-frame description (hook-vision.js), closed-list answers. */
+    hookVision: { type: mongoose.Schema.Types.Mixed, default: null },
+    language: { type: String, default: null },
     ms: { type: Number, default: null },
     analyzedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
@@ -181,5 +186,68 @@ export const VideoFeatures = mongoose.model('VideoFeatures', videoFeaturesSchema
 export const OutcomeSnapshot = mongoose.model('OutcomeSnapshot', outcomeSnapshotSchema);
 export const SocialCreator = mongoose.model('SocialCreator', socialCreatorSchema);
 export const SocialVideo = mongoose.model('SocialVideo', socialVideoSchema);
+/** A sound's recent use in collected public videos and how those videos did (trends.js). */
+const soundTrendSchema = new mongoose.Schema({
+    soundId: { type: String, required: true },
+    title: { type: String, default: null },
+    last14: Number,
+    prior14: Number,
+    uses56: Number,
+    medianOutperformance: Number,
+    measured: Number,
+    stage: { type: String, enum: ['emerging', 'rising', 'peak', 'fading'] },
+    updatedAt: Date,
+});
+soundTrendSchema.index({ soundId: 1 }, { unique: true });
+soundTrendSchema.index({ stage: 1, last14: -1 });
+
+/**
+ * A confirmed factor (insights.js): within-creator hit-vs-miss evidence that passed the sign test, per niche
+ * ('all' = every niche). Only these reach the analyzers.
+ */
+const learningInsightSchema = new mongoose.Schema({
+    niche: { type: String, required: true },
+    feature: { type: String, required: true },
+    pairs: Number,
+    hitHigherShare: Number,
+    p: Number,
+    medianHit: Number,
+    medianMiss: Number,
+    correlation: Number,
+    /** Coefficient from the within-creator matrix model, when it agrees in sign (model/trainer.js). */
+    modelEffect: { type: Number, default: null },
+    updatedAt: Date,
+});
+learningInsightSchema.index({ niche: 1, feature: 1 }, { unique: true });
+
+/**
+ * One trained model or analysis run of the matrix engine (model/trainer.js): metrics on held-out creators,
+ * coefficients, the partial-correlation network, style components. status: candidate | shadow | champion | retired.
+ */
+const learningModelSchema = new mongoose.Schema({
+    kind: { type: String, required: true },
+    version: { type: Number, required: true },
+    status: { type: String, enum: ['candidate', 'shadow', 'champion', 'retired'], default: 'candidate' },
+    trainedAt: { type: Date, default: Date.now },
+    n: Number,
+    p: Number,
+    creators: Number,
+    columns: [String],
+    standardization: mongoose.Schema.Types.Mixed,
+    lambda: Number,
+    coefficients: mongoose.Schema.Types.Mixed,
+    metrics: mongoose.Schema.Types.Mixed,
+    network: mongoose.Schema.Types.Mixed,
+    components: mongoose.Schema.Types.Mixed,
+    weights: mongoose.Schema.Types.Mixed,
+    promotion: mongoose.Schema.Types.Mixed,
+    notes: [String],
+}, { timestamps: true });
+learningModelSchema.index({ kind: 1, trainedAt: -1 });
+learningModelSchema.index({ status: 1, kind: 1 });
+
 export const LearningRun = mongoose.model('LearningRun', learningRunSchema);
+export const SoundTrend = mongoose.model('SoundTrend', soundTrendSchema);
+export const LearningInsight = mongoose.model('LearningInsight', learningInsightSchema);
+export const LearningModel = mongoose.model('LearningModel', learningModelSchema);
 export const SocialVideoAnalysis = mongoose.model('SocialVideoAnalysis', socialVideoAnalysisSchema);

@@ -100,11 +100,20 @@ const clipText = (value, max) => {
     return value.length > max ? `${value.slice(0, max)}\n…[truncated ${value.length - max} chars]` : value;
 };
 
+/** Multi-part content (text + images): images are replaced by a marker so base64 never reaches the logs. */
+const normalizeParts = (parts) => parts.map((p) => {
+    if (p?.type === 'image_url' || p?.type === 'input_image' || p?.type === 'image') return { type: 'image', note: '[image omitted]' };
+    if (typeof p?.text === 'string') return { ...p, text: clipText(p.text, MAX_CONTENT_CHARS) };
+    return p;
+});
+
 const normalizeMessages = (input) => {
     const list = Array.isArray(input) ? input : input == null ? [] : [{ role: 'user', content: input }];
     return list.map((m) => ({
         role: String(m?.role || 'user'),
-        content: typeof m?.content === 'string' ? clipText(m.content, MAX_CONTENT_CHARS) : m?.content ?? '',
+        content: typeof m?.content === 'string'
+            ? clipText(m.content, MAX_CONTENT_CHARS)
+            : Array.isArray(m?.content) ? normalizeParts(m.content) : m?.content ?? '',
     }));
 };
 
