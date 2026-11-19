@@ -25,6 +25,7 @@ import {
 import { isAllowedSocialVideoUrl } from '../lib/social-video-url.js';
 import { downloadSocialVideoForIngest } from './social-video-fetch.service.js';
 import { removeVideoLearningData } from './learning/learning.service.js';
+import { keepForMeasure, measureLater } from './learning/user-media.js';
 import { Readable } from 'stream';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -543,6 +544,9 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             const assetResponse = await twelveLabsUploadSlots.run(() => twelveLabsCreateDirectAsset(fileToUpload));
 
             console.log(`📦 TwelveLabs response:`, JSON.stringify(assetResponse, null, 2));
+            // Learning: keep the file (hard link, instant) and measure cuts/picture/rhythm in the background.
+            const measureHandle = await keepForMeasure(file?.path ? { path: file.path } : { buffer: Buffer.isBuffer(file) ? file : file?.buffer });
+            void measureLater(video._id, measureHandle);
             // Readiness + indexing now run in the background job (see ensureVideoIndexed).
             let queueError = null;
             try {
@@ -657,6 +661,7 @@ export const uploadVideoUrlToTwelveLabsService = async (userId, url, filename, s
                 await video.save();
                 assetResponse = await twelveLabsCreateDirectAsset(Readable.from(buffer));
                 console.log(`📦 TwelveLabs direct upload (social URL fetch), asset status: ${assetResponse?.status || 'unknown'}`);
+                void measureLater(video._id, await keepForMeasure({ buffer }));
             } else {
                 assetResponse = await twelveLabsCreateUrlAsset(url);
                 console.log(`📦 TwelveLabs URL upload response:`, JSON.stringify(assetResponse, null, 2));
