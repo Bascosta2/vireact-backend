@@ -10,8 +10,15 @@
  *   creator     gd_m7n5v2gq296pex2f5m  "Posts by Profile" (fast), input { url: tiktok.com/@handle }
  *   stats       gd_lu702nij2f790tmv9h  "Posts", collect by URL, input { url: video url } (many per job)
  * Keyword discovery on the Posts dataset also works but took ~10 minutes, so it is not used.
+ *
+ * Only the full "Posts" dataset (stats) returns the video file link (video_url / cdn_link; cdn_url is a
+ * tiktok.com page, not the file), TikTok's auto-captions (subtitle_url, subtitle_info, valid ~3 days),
+ * the cover image and top comments. The fast search/profile datasets return none of these (checked
+ * 2026-11-19). So re-checks and the deep analyzer, which both use the stats dataset, get them as
+ * `extras`; links are session-bound, so downloads send the record's tt_chain_token cookie.
  */
 import { registerProvider } from './providers.js';
+import { parseCaptions } from '../deep-features.js';
 
 const BASE = 'https://api.brightdata.com/datasets/v3';
 export const DATASETS = Object.freeze({
@@ -47,6 +54,53 @@ export const toCreator = (r) => (r?.profile_id
     : null);
 
 const isVideoRecord = (r) => r && !r.error && r.post_id && (r.post_type == null || r.post_type === 'video');
+
+/** Hosts TikTok serves video files and captions from. Provider links to anything else are ignored. */
+const MEDIA_HOST = /(^|\.)(tiktok\.com|tiktokcdn\.com|tiktokcdn-us\.com|tiktokcdn-eu\.com|tiktokv\.com|tiktokv\.us|tiktokv\.eu|ibytedtos\.com|ibyteimg\.com|byteoversea\.com|muscdn\.com)$/i;
+export const isMediaUrl = (x) => {
+    try {
+        const u = new URL(String(x));
+        return u.protocol === 'https:' && MEDIA_HOST.test(u.hostname);
+    } catch {
+        return false;
+    }
+};
+
+/** Headers TikTok's CDN expects for a session-bound link. */
+export const mediaHeaders = (chainToken) => ({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
+    Referer: 'https://www.tiktok.com/',
+    ...(typeof chainToken === 'string' && /^[\w%.=+/-]{1,500}$/.test(chainToken) ? { Cookie: `tt_chain_token=${chainToken}` } : {}),
+});
+
+const pickSubtitle = (r) => {
+    const infos = Array.isArray(r.subtitle_info) ? r.subtitle_info : [];
+    const top = isMediaUrl(r.subtitle_url) ? r.subtitle_url : null;
+    const match = infos.find((s) => s?.url === top) ?? infos.find((s) => isMediaUrl(s?.url)) ?? null;
+    const url = top ?? match?.url ?? null;
+    return url ? { url, language: typeof match?.language_code_name === 'string' ? match.language_code_name.slice(0, 16) : null } : null;
+};
+
+const countOf = (x) => (Number.isFinite(Number(x)) && Number(x) >= 0 ? Math.round(Number(x)) : null);
+
+/** The non-numeric extras of a full Posts record: file link, captions link, cover, top comments. */
+export const toExtras = (r) => ({
+    externalId: r.post_id,
+    videoUrl: [r.video_url, r.cdn_link].find(isMediaUrl) ?? null,
+    chainToken: typeof r.tt_chain_token === 'string' ? r.tt_chain_token : null,
+    coverUrl: isMediaUrl(r.preview_image) ? r.preview_image : null,
+    subtitle: pickSubtitle(r),
+    region: typeof r.region === 'string' ? r.region.slice(0, 8) : null,
+    // Comment text and counts only (no commenter handles): audience-reaction evidence, never shown to users.
+    topComments: (Array.isArray(r.comments) ? r.comments : [])
+        .map((c) => ({ text: typeof c?.comment === 'string' ? c.comment.trim().slice(0, 300) : '', likes: countOf(c?.likes), replies: countOf(c?.num_of_replies), at: c?.date ?? null }))
+        .filter((c) => c.text)
+        .sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0))
+        .slice(0, 20),
+});
+
+const CAPTION_CONCURRENCY = 8;
+const CAPTION_TIMEOUT_MS = 15_000;
 
 export const createBrightDataAdapter = ({
     apiKey,
@@ -111,6 +165,25 @@ export const createBrightDataAdapter = ({
 
     const billable = (records) => records.filter((r) => r && !r.error).length;
 
+    /** Caption text for each extra that has a captions link (several at once). Failures leave captions null. */
+    const fetchCaptions = async (extras) => {
+        const queue = extras.filter((e) => e.subtitle?.url);
+        const worker = async () => {
+            for (let e = queue.shift(); e; e = queue.shift()) {
+                try {
+                    const res = await fetchImpl(e.subtitle.url, { headers: mediaHeaders(e.chainToken), signal: AbortSignal.timeout(CAPTION_TIMEOUT_MS) });
+                    if (!res.ok) continue;
+                    const segments = parseCaptions(String(await res.text()).slice(0, 500_000));
+                    if (segments.length) e.captions = segments;
+                } catch {
+                    // captions are a bonus; the reading still counts
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: CAPTION_CONCURRENCY }, worker));
+        return extras;
+    };
+
     return {
         async searchVideos({ query, limit = 30 }) {
             const url = `https://www.tiktok.com/search?q=${encodeURIComponent(query)}`;
@@ -132,16 +205,19 @@ export const createBrightDataAdapter = ({
             return { videos: posts.map(toVideo), creator: posts.length ? toCreator(posts[0]) : null, used: billable(records) };
         },
 
-        async videoStats({ ids, videos = [] }) {
+        /** Fresh numbers plus `extras` (file link, captions, comments); withCaptions downloads caption text. */
+        async videoStats({ ids, videos = [], withCaptions = true }) {
             const urls = new Map(videos.filter((v) => v?.url).map((v) => [v.externalId, v.url]));
             const input = ids.filter((id) => urls.has(id)).map((id) => ({ url: urls.get(id) }));
             if (!input.length) return { stats: [], used: 0 };
             const records = await runJob(DATASETS.stats, input);
-            const stats = records.filter((r) => r && !r.error && r.post_id).map((r) => {
+            const ok = records.filter((r) => r && !r.error && r.post_id);
+            const stats = ok.map((r) => {
                 const v = toVideo(r);
                 return { externalId: v.externalId, views: v.views, likes: v.likes, comments: v.comments, shares: v.shares, saves: v.saves };
             });
-            return { stats, used: billable(records) };
+            const extras = withCaptions ? await fetchCaptions(ok.map(toExtras)) : ok.map(toExtras);
+            return { stats, extras, used: billable(records) };
         },
     };
 };

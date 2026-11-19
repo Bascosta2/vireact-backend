@@ -55,13 +55,14 @@ export const describeSubject = (type, doc) => {
         const p = doc.editProfile ?? {};
         return `creator: ${clip(doc.creatorHandle, 40)} | category: ${doc.viralCategory ?? ''} | hook: "${clip(p.hookFirst2s, 150)}" | summary: "${clip(p.summary, 250)}"`;
     }
-    return `caption: "${clip(doc.caption, 250)}" | hashtags: ${(doc.hashtags ?? []).slice(0, 12).join(' ')} | sound: "${clip(doc.soundTitle, 60)}" | found by searching: "${clip(doc.query, 40)}"`;
+    const spoken = (doc.captions ?? []).slice(0, 4).map((s) => s.text).join(' ');
+    return `caption: "${clip(doc.caption, 250)}" | hashtags: ${(doc.hashtags ?? []).slice(0, 12).join(' ')} | sound: "${clip(doc.soundTitle, 60)}"${spoken ? ` | opening words: "${clip(spoken, 200)}"` : ''} | found by searching: "${clip(doc.query, 40)}"`;
 };
 
 const SOURCES = {
     video: { model: Video, fields: 'filename sourceTitle sourceDescription rawTranscript scenes' },
     dataset: { model: VideoPerformanceDataset, fields: 'creatorHandle viralCategory editProfile niche' },
-    social: { model: SocialVideo, fields: 'caption hashtags soundTitle query' },
+    social: { model: SocialVideo, fields: 'caption hashtags soundTitle query captions' },
 };
 
 /** Applies validated labels from one model reply. Returns the $set for each ref. */

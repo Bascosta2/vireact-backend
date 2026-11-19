@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 process.env.NODE_ENV = 'test';
 console.warn = () => {};
 
-const { createBrightDataAdapter, DATASETS } = await import('../src/service/learning/social/brightdata.js');
+const { createBrightDataAdapter, DATASETS, isMediaUrl, mediaHeaders } = await import('../src/service/learning/social/brightdata.js');
 const { getProvider, cleanVideo, cleanCreator } = await import('../src/service/learning/social/providers.js');
 
 /** A record shaped like the live API's (2026-11-19 probe). */
@@ -33,7 +33,7 @@ const fakeApi = ({ records, progress = ['running', 'ready'], snapshot = null, tr
         if (url.includes('/snapshot/')) return snapshot ?? json(200, records);
         throw new Error(`unexpected ${url}`);
     };
-    return { calls, adapter: createBrightDataAdapter({ apiKey: 'k', fetchImpl, sleep: async () => {}, pollMs: 0 }) };
+    return { calls, fetchImpl, adapter: createBrightDataAdapter({ apiKey: 'k', fetchImpl, sleep: async () => {}, pollMs: 0 }) };
 };
 
 test('search: maps records to the provider contract, skips errors and non-videos, counts billable records', async () => {
@@ -79,6 +79,50 @@ test('video stats: one job for the whole batch, by stored URL', async () => {
     assert.equal(triggers[0].body.input.length, 2, 'a video without a URL is skipped');
     assert.deepEqual(out.stats.map((s) => [s.externalId, s.views]), [['1', 90000], ['2', 5]]);
     assert.deepEqual(await adapter.videoStats({ ids: ['9'], videos: [] }), { stats: [], used: 0 });
+});
+
+test('video stats extras: file link, captions (fetched with the session cookie), cover, top comments; other hosts ignored', async () => {
+    const sub = 'https://v16-webapp.tiktokcdn-us.com/abc/video/tos/sub.vtt';
+    const rec = post('1', {
+        video_url: 'https://v16-webapp-prime.us.tiktok.com/video/tos/x.mp4', cdn_url: 'https://www.tiktok.com/64e60a48', tt_chain_token: 'tok123',
+        subtitle_url: sub, subtitle_info: [{ url: sub, language_code_name: 'eng-US', url_expire: '1795298421' }],
+        preview_image: 'https://p16-sign.tiktokcdn-us.com/cover.jpeg',
+        comments: [{ comment: 'part 2 please', user_handle: 'someone', likes: 5, num_of_replies: 1, date: '2026-11-18T19:58:20.000Z' }, { comment: 'wow', likes: 50 }, { comment: '  ' }],
+    });
+    const evil = post('2', { video_url: 'https://evil.example.com/x.mp4', cdn_link: 'http://v16.tiktok.com/x.mp4', subtitle_url: 'https://169.254.169.254/latest' });
+    const seen = [];
+    const base = fakeApi({ records: [rec, evil] });
+    const fetchImpl = async (url, init = {}) => {
+        if (url === sub) {
+            seen.push(init.headers);
+            return { ok: true, status: 200, text: async () => 'WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nyou need this\n' };
+        }
+        if (!url.includes('api.brightdata.com')) throw new Error(`unexpected fetch ${url}`);
+        return base.fetchImpl(url, init);
+    };
+    const adapter = createBrightDataAdapter({ apiKey: 'k', fetchImpl, sleep: async () => {}, pollMs: 0 });
+    const out = await adapter.videoStats({ ids: ['1', '2'], videos: [{ externalId: '1', url: 'https://www.tiktok.com/@a/video/1' }, { externalId: '2', url: 'https://www.tiktok.com/@a/video/2' }] });
+    const [e1, e2] = out.extras;
+    assert.equal(e1.videoUrl, 'https://v16-webapp-prime.us.tiktok.com/video/tos/x.mp4', 'the file link, not the tiktok.com page link');
+    assert.deepEqual(e1.subtitle, { url: sub, language: 'eng-US' });
+    assert.deepEqual(e1.captions, [{ text: 'you need this', tStart: 0.5, tEnd: 2 }]);
+    assert.equal(seen[0].Cookie, 'tt_chain_token=tok123');
+    assert.equal(seen[0].Referer, 'https://www.tiktok.com/');
+    assert.deepEqual(e1.topComments.map((c) => [c.text, c.likes]), [['wow', 50], ['part 2 please', 5]], 'sorted by likes, empty dropped');
+    assert.ok(!('user_handle' in e1.topComments[0]), 'no commenter handles kept');
+    assert.equal(e1.coverUrl, 'https://p16-sign.tiktokcdn-us.com/cover.jpeg');
+    assert.equal(e2.videoUrl, null, 'non-TikTok and non-https links are ignored');
+    assert.equal(e2.subtitle, null);
+    assert.equal(seen.length, 1, 'never fetches a non-TikTok captions link');
+});
+
+test('media hosts and headers', () => {
+    assert.equal(isMediaUrl('https://v16m-webapp.tiktokcdn-us.com/a'), true);
+    assert.equal(isMediaUrl('https://www.tiktok.com/@a/video/1'), true);
+    assert.equal(isMediaUrl('https://tiktok.com.evil.io/a'), false);
+    assert.equal(isMediaUrl('http://v16.tiktokcdn.com/a'), false);
+    assert.equal(isMediaUrl('not a url'), false);
+    assert.equal(mediaHeaders('bad token\r\nX: y').Cookie, undefined, 'a malformed token is not sent');
 });
 
 test('job handling: empty snapshot, failed job, 429 retry', async () => {

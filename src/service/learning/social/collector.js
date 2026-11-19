@@ -12,7 +12,7 @@
  */
 import { NICHE_TREE } from '../../../constants/taxonomy.js';
 import { SocialCreator, SocialVideo, OutcomeSnapshot, VideoFeatures } from '../../../model/learning.model.js';
-import { FEATURE_VERSION, featuresFromSocial } from '../features.js';
+import { FEATURE_VERSION, featuresFromSocial, transcriptFeatures } from '../features.js';
 import { ageHoursAt, median } from '../labels.js';
 import { cleanVideo, cleanCreator, cleanStats, usedOf } from './providers.js';
 
@@ -103,7 +103,35 @@ const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
 
 const creatorKeyOf = (platform, externalId) => (externalId ? `social:${platform}:${externalId}` : null);
 
-const writeOutcome = async ({ video, stats, platform, providerName, now, followers = null }) => {
+/** SocialVideo fields from a full Posts record's extras (captions, comments, region). */
+export const extrasUpdate = (extra, video = {}) => {
+    const update = {};
+    if (Array.isArray(extra?.captions) && extra.captions.length) {
+        update.captions = extra.captions.slice(0, 500);
+        update.captionsLang = extra.subtitle?.language ?? null;
+    }
+    if (Array.isArray(extra?.topComments) && extra.topComments.length) {
+        update.topComments = extra.topComments.slice(0, 20).map((c) => ({ ...c, at: c.at && Number.isFinite(new Date(c.at).getTime()) ? new Date(c.at) : null }));
+    }
+    if (!video.region && extra?.region) update.region = extra.region;
+    return update;
+};
+
+/**
+ * Speech timing from TikTok captions, for public videos without a deep analysis (whose Twelve Labs
+ * transcript takes precedence: it is the same source user uploads are measured with).
+ */
+export const captionFeatures = async (video, captions) => {
+    if (!Array.isArray(captions) || !captions.length) return;
+    const t = transcriptFeatures(captions, video.durationSec);
+    if (!Object.keys(t).length) return;
+    await VideoFeatures.updateOne(
+        { subjectType: 'social', subjectId: video._id, deepAt: null },
+        { $set: { ...Object.fromEntries(Object.entries(t).map(([k, v]) => [`features.${k}`, v])), 'features.speechFromCaptions': true } },
+    );
+};
+
+export const writeOutcome = async ({ video, stats, platform, providerName, now, followers = null }) => {
     if (stats.views == null) return;
     await OutcomeSnapshot.updateOne(
         { subjectType: 'social', subjectId: video._id, sourceRef: `${providerName}:${dayKey(now)}` },
@@ -186,7 +214,7 @@ export const refreshBaseline = async (creatorId, now = Date.now()) => {
  * Never throws for a single failed call: it is counted in `errors` and the run continues.
  */
 export const runCollection = async ({ provider, budget, platform = 'tiktok', region = 'US', now = Date.now(), plan = buildCollectionPlan({ now }), trackShare = TRACK_SHARE, log = () => {} }) => {
-    const out = { used: 0, rechecked: 0, discovered: 0, newCreators: 0, backfilled: 0, baselines: 0, errors: 0 };
+    const out = { used: 0, rechecked: 0, captions: 0, discovered: 0, newCreators: 0, backfilled: 0, baselines: 0, errors: 0 };
     if (!provider) return { ...out, skipped: 'no provider configured' };
     const providerName = provider.name;
     const left = () => budget - out.used;
@@ -246,9 +274,16 @@ export const runCollection = async ({ provider, budget, platform = 'tiktok', reg
         })),
         save: async (batch, result) => {
             const byId = new Map((result?.stats ?? []).map(cleanStats).filter(Boolean).map((s) => [s.externalId, s]));
+            const extrasById = new Map((result?.extras ?? []).filter((e) => e?.externalId).map((e) => [String(e.externalId), e]));
             for (const v of batch) {
                 const s = byId.get(v.externalId);
                 const update = { nextCheckAt: nextCheckAt(v.postedAt, now) };
+                const extra = extrasById.get(v.externalId);
+                if (extra) {
+                    Object.assign(update, extrasUpdate(extra, v));
+                    if (update.captions) out.captions += 1;
+                    await captionFeatures(v, update.captions);
+                }
                 if (s) {
                     Object.assign(update, { latest: { ...s, at: new Date(now) }, lastCheckedAt: new Date(now) });
                     await writeOutcome({ video: v, stats: s, platform, providerName, now });

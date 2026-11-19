@@ -8,8 +8,11 @@
  * Contract (all async; `used` = billable records consumed, for the daily budget):
  *   searchVideos({ query, region, limit })        -> { videos: Video[], creators: Creator[], used }
  *   creatorVideos({ externalId, handle, limit })  -> { videos: Video[], creator: Creator|null, used }
- *   videoStats({ ids, videos })                   -> { stats: Stats[], used }   (ids: <= 20 externalIds;
- *                                                    videos: [{ externalId, url }] for providers that need URLs)
+ *   videoStats({ ids, videos })                   -> { stats: Stats[], extras?: Extra[], used }   (ids: <= 20
+ *                                                    externalIds; videos: [{ externalId, url }] for providers that need URLs)
+ *
+ *   Extra   = { externalId, videoUrl, chainToken, coverUrl, subtitle: { url, language }, captions?: [{ text, tStart, tEnd }],
+ *               region, topComments: [{ text, likes, replies, at }] }   (optional; feeds captions and the deep analyzer)
  *
  * Calls may be slow (Bright Data jobs take minutes); the collector runs up to CONCURRENCY of them at once.
  *

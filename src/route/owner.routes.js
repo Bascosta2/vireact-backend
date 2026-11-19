@@ -15,7 +15,7 @@ import {
     SESSION_MAX_MS, consoleStatus, signIn, signOut, resolveSession, audit,
 } from '../service/owner-auth.service.js';
 import { listVideos, getVideoDetail, listUsers, getUserDetail, overview, auditLog } from '../service/owner-data.service.js';
-import { learningOverview } from '../service/learning/learning.service.js';
+import { learningOverview, deepDetail, startDeepRun } from '../service/learning/learning.service.js';
 
 export const OWNER_HEADER = 'x-vireact-owner';
 const COOKIE_SECURE = '__Host-vx_owner';
@@ -117,5 +117,16 @@ ownerRoutes.get('/users/:userId', wrap(async (req, res) => {
 }));
 ownerRoutes.get('/audit', wrap(async (req, res) => ok(res, await auditLog({ limit: req.query.limit }))));
 ownerRoutes.get('/learning', wrap(async (req, res) => ok(res, await learningOverview())));
+ownerRoutes.get('/learning/deep/:id', wrap(async (req, res) => {
+    const detail = await deepDetail(req.params.id);
+    if (!detail) return deny(res, 404, 'Analysis not found.');
+    ok(res, detail);
+}));
+// Deep-analyze N public videos now (2 to 100; spends provider records and Twelve Labs minutes).
+ownerRoutes.post('/learning/deep/run', wrap(async (req, res) => {
+    const result = startDeepRun({ limit: req.body?.limit });
+    await audit(req, 'learning_deep_run', {}).catch(() => {});
+    ok(res, result);
+}));
 
 export default ownerRoutes;

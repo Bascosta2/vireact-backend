@@ -14,12 +14,17 @@
  *   LEARNING_PROVIDER=<name>     public data provider adapter (social/providers.js); unset = no collection
  *   LEARNING_DAILY_RECORDS=2000  provider records per day (spending cap)
  *   LEARNING_LABEL_LIMIT=300     videos labelled by the classifier per day
+ *   LEARNING_DEEP_DAILY=60       public videos deep-analyzed per day (Twelve Labs + measured cuts); 0 = off
+ *   LEARNING_DEEP_CONCURRENCY=3  deep analyses at once (Twelve Labs is shared with users' uploads)
+ *   LEARNING_DEEP_MAX_SEC=180    longest public video worth analyzing
  */
 import mongoose from 'mongoose';
 import { Video } from '../../model/video.model.js';
 import { User } from '../../model/user.model.js';
 import { VideoPerformanceDataset } from '../../model/VideoPerformanceDataset.model.js';
-import { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, LearningRun } from '../../model/learning.model.js';
+import { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, SocialVideoAnalysis, LearningRun } from '../../model/learning.model.js';
+import { runDeepAnalysis, isDeepRunning } from './deep-analyzer.js';
+import { factorReport } from './deep-features.js';
 import { ANALYSIS_STATUS } from '../../constants.js';
 import { TAXONOMY_VERSION, isNiche } from '../../constants/taxonomy.js';
 import { FEATURE_VERSION, featuresFromVideo, featuresFromDataset } from './features.js';
@@ -52,8 +57,12 @@ export const learningConfig = (env = process.env) => ({
     enabled: String(env.LEARNING_ENABLED ?? '').trim().toLowerCase() === 'true',
     provider: String(env.LEARNING_PROVIDER ?? '').trim().toLowerCase() || null,
     dailyRecords: intEnv('LEARNING_DAILY_RECORDS', 2000, env),
-    labelLimit: intEnv('LEARNING_LABEL_LIMIT', 300, env),
+    // ~1,800 public videos arrive a day; 2,000 keeps labelling ahead of collection (one small call per 25).
+    labelLimit: intEnv('LEARNING_LABEL_LIMIT', 2000, env),
     trackShare: shareEnv('LEARNING_TRACK_SHARE', TRACK_SHARE, env),
+    deepDaily: intEnv('LEARNING_DEEP_DAILY', 60, env),
+    deepConcurrency: Math.max(1, Math.min(6, intEnv('LEARNING_DEEP_CONCURRENCY', 3, env))),
+    deepMaxSec: Math.max(10, intEnv('LEARNING_DEEP_MAX_SEC', 180, env)),
 });
 
 // ---- users' videos
@@ -292,6 +301,10 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
             ? runCollection({ provider, budget: config.dailyRecords, trackShare: config.trackShare ?? TRACK_SHARE, now, log })
             : { skipped: 'no provider configured (LEARNING_PROVIDER)' }));
         run.recordsUsed = collected?.used ?? 0;
+        const deep = await step('deep', () => (provider && config.deepDaily > 0
+            ? runDeepAnalysis({ provider, limit: config.deepDaily, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, now, deps: deps.deep, log })
+            : { skipped: provider ? 'LEARNING_DEEP_DAILY=0' : 'no provider configured' }));
+        run.recordsUsed += deep?.used ?? 0;
         await step('label', () => (config.labelLimit > 0 ? labelPending({ limit: config.labelLimit, complete: deps.complete, log }) : { skipped: 'LEARNING_LABEL_LIMIT=0' }));
         run.inventory = await step('inventory', () => dataInventory());
         run.reportCard = await step('report_card', () => reportCard({ now }));
@@ -304,13 +317,82 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
     return { status: 'done', runId: String(run._id), ok: run.ok };
 };
 
+// ---- deep analysis (owner console)
+
+/** Counts, the hit-vs-miss factor report and the latest analyses. */
+export const deepOverview = async () => {
+    const [rows, failed, captions] = await Promise.all([
+        SocialVideoAnalysis.find({}).select('creatorId role outperformance features cutsSource niche views baselineViews externalId analyzedAt media.durationSec').sort({ analyzedAt: -1 }).lean(),
+        SocialVideo.countDocuments({ 'deep.status': 'failed' }),
+        SocialVideo.countDocuments({ 'captions.0': { $exists: true } }),
+    ]);
+    const report = factorReport(rows);
+    return {
+        analyzed: rows.length,
+        exactCuts: rows.filter((r) => r.cutsSource === 'ffmpeg').length,
+        failed,
+        withCaptions: captions,
+        videoMinutes: Math.round(rows.reduce((s, r) => s + (Number(r.media?.durationSec) || 0), 0) / 6) / 10,
+        running: isDeepRunning(),
+        creatorsWithPairs: report.creatorsWithPairs,
+        factors: report.factors.filter((f) => f.status !== 'too_few').slice(0, 40),
+        recent: rows.slice(0, 25).map((r) => ({
+            id: String(r._id), externalId: r.externalId, niche: r.niche, role: r.role, views: r.views, baselineViews: r.baselineViews,
+            outperformance: r.outperformance, durationSec: r.media?.durationSec ?? null, shots: r.features?.shotCountExact ?? r.features?.sceneCount ?? null,
+            cutsSource: r.cutsSource, analyzedAt: r.analyzedAt,
+        })),
+    };
+};
+
+/** One analysis with its video's public details, for the timeline view. */
+export const deepDetail = async (id) => {
+    if (!mongoose.isValidObjectId(id)) return null;
+    const a = await SocialVideoAnalysis.findById(id).lean();
+    if (!a) return null;
+    const v = await SocialVideo.findById(a.socialVideoId).select('url caption hashtags soundTitle postedAt latest captions captionsLang topComments').lean();
+    const creator = a.creatorId ? await SocialCreator.findById(a.creatorId).select('handle followers baselineViews baselineN niche').lean() : null;
+    return { analysis: a, video: v, creator };
+};
+
+/** Starts a deep run now (owner console), in the background. */
+export const startDeepRun = ({ limit = 10, config = learningConfig(), log = (l) => console.log(`[learning] ${l}`) } = {}) => {
+    if (isDeepRunning() || running) return { status: 'already_running' };
+    const provider = getProvider();
+    if (!provider) return { status: 'no_provider' };
+    const n = Math.max(2, Math.min(100, Math.floor(Number(limit) || 10)));
+    (async () => {
+        const run = await LearningRun.create({ kind: 'deep', startedAt: new Date(), provider: provider.name });
+        const t0 = Date.now();
+        try {
+            const counts = await runDeepAnalysis({ provider, limit: n, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, log });
+            run.steps.push({ name: 'deep', ok: true, ms: Date.now() - t0, counts });
+            run.recordsUsed = counts.used ?? 0;
+            run.ok = true;
+        } catch (error) {
+            run.steps.push({ name: 'deep', ok: false, ms: Date.now() - t0, detail: String(error.message).slice(0, 500) });
+            run.ok = false;
+        } finally {
+            run.finishedAt = new Date();
+            await run.save().catch(() => {});
+        }
+    })().catch((error) => log(`deep run failed: ${error.message}`));
+    return { status: 'started', limit: n };
+};
+
 /** For the owner console. */
 export const learningOverview = async () => {
-    const [inventory, card, runs] = await Promise.all([
+    const [inventory, card, runs, deep] = await Promise.all([
         dataInventory(),
         reportCard(),
-        LearningRun.find({}).sort({ startedAt: -1 }).limit(10).select('startedAt finishedAt ok provider recordsUsed steps').lean(),
+        LearningRun.find({}).sort({ startedAt: -1 }).limit(10).select('kind startedAt finishedAt ok provider recordsUsed steps').lean(),
+        deepOverview(),
     ]);
     const config = learningConfig();
-    return { config: { enabled: config.enabled, provider: config.provider, dailyRecords: config.dailyRecords, labelLimit: config.labelLimit, trackShare: config.trackShare }, inventory, reportCard: card, runs };
+    return {
+        config: {
+            enabled: config.enabled, provider: config.provider, dailyRecords: config.dailyRecords, labelLimit: config.labelLimit, trackShare: config.trackShare,
+            deepDaily: config.deepDaily, deepConcurrency: config.deepConcurrency, deepMaxSec: config.deepMaxSec,
+        },
+        inventory, reportCard: card, runs, deep,
+    };
 };

@@ -398,6 +398,92 @@
       h('td', { class: 'num', text: pct(m?.within2x) }), h('td', { class: 'num', text: pct(m?.coverage) }),
       h('td', { class: 'num', text: m?.bias == null ? '–' : m.bias > 1 ? `${times(m.bias)} too low` : `${times(1 / m.bias)} too high` }))))));
 
+  // Plain names for the learning features (keys from features.js / deep-features.js).
+  const FACTOR_NAMES = {
+    firstCutSecExact: 'First cut (seconds in)', cutsPerMinExact: 'Cuts per minute', cutsInFirst3sExact: 'Cuts in the first 3 s',
+    cutsPerMinFirst10sExact: 'Cuts per minute, first 10 s', cutsPerMinAfter10sExact: 'Cuts per minute, after 10 s', avgShotSecExact: 'Average shot length (s)',
+    medianShotSecExact: 'Typical shot length (s)', longestShotSecExact: 'Longest shot (s)', shotCountExact: 'Number of shots', shortShotShareExact: 'Share of shots under 1 s',
+    firstSpeechSec: 'First spoken word (seconds in)', speechWpm: 'Words per minute', speechCoverage: 'Share of the video with speech', openingWords: 'Words spoken in the first 3 s',
+    wordsBeforeFirstCut: 'Words before the first cut', onScreenTextShare: 'Scenes with on-screen text', textShotShare: 'Shots with on-screen text',
+    textInFirst2s: 'On-screen text in the first 2 s', textWhileSpeakingShare: 'On-screen text while talking', hookTextAndSpeech: 'Opening has both text and speech',
+    toCameraOpening: 'Talks to camera in the opening', musicShare: 'Scenes with music', zoomShare: 'Scenes with zooms', silenceShare: 'Share of silence',
+    loudnessLufs: 'Loudness (LUFS)', hookEndSec: 'Hook ends at (s)', hasCta: 'Has a call to action', hasPayoff: 'Has a payoff', durationSec: 'Length (s)',
+    sceneCount: 'Scenes (Twelve Labs)', cutsPerMin: 'Cuts per minute (Twelve Labs estimate)', avgShotSec: 'Average shot (Twelve Labs estimate)',
+    firstCutSec: 'First cut (Twelve Labs estimate)', longestShotSec: 'Longest shot (Twelve Labs estimate)', captionChars: 'Caption length', hashtagCount: 'Hashtags',
+    originalSound: 'Original sound', postHourUtc: 'Post hour (UTC)', postWeekdayUtc: 'Post weekday (UTC)',
+  };
+  const factorName = (k) => FACTOR_NAMES[k] || k;
+  const fmtVal = (v) => (v == null ? '–' : Math.abs(v) >= 100 ? fmtNum(Math.round(v)) : String(Math.round(v * 100) / 100));
+  const vsUsual = (o) => (o == null ? '' : `${Math.exp(o) >= 1 ? Math.exp(o).toFixed(1) : Math.exp(o).toFixed(2)}× usual`);
+
+  const deepCards = (d) => {
+    const dp = d.deep || {};
+    const runBtn = h('button', { class: 'link', text: 'Analyze 10 videos now', onclick: guard(async () => {
+      runBtn.disabled = true;
+      const r = await api('/learning/deep/run', { method: 'POST', body: { limit: 10 } });
+      runBtn.textContent = r.status === 'started' ? 'Started: refresh in about 10 minutes' : r.status === 'already_running' ? 'Already running' : `Not started (${r.status})`;
+    }) });
+    return [
+      card('Deep analysis: what happens in the videos', kv([
+        ['Per day', d.config.deepDaily ? `${fmtNum(d.config.deepDaily)} videos (hit and miss pairs from the same creators)` : 'Off (LEARNING_DEEP_DAILY=0)'],
+        ['Analyzed', `${fmtNum(dp.analyzed)} videos, ${fmtNum(dp.videoMinutes)} minutes of video`],
+        ['Exact cuts measured', fmtNum(dp.exactCuts)],
+        ['Creators with a hit and a miss analyzed', fmtNum(dp.creatorsWithPairs)],
+        ['Failed (not retried)', fmtNum(dp.failed)],
+        ['Videos with TikTok captions', fmtNum(dp.withCaptions)],
+        ['Now', dp.running ? 'Running' : runBtn],
+      ]), h('p', { class: 'note', text: 'Each video: exact cut times measured from the file, Twelve Labs scene descriptions (what is on screen, on-screen text, audio, action) and the transcript, lined up shot by shot. Files are deleted after analysis.' })),
+      card('What separates hits from misses', dp.factors && dp.factors.length
+        ? h('div', {}, h('div', { class: 'scroll' }, h('table', {},
+          h('thead', {}, h('tr', {}, ['Factor', 'Creator pairs', 'Hit had more', 'Typical hit', 'Typical miss', 'Link to views', 'Confidence'].map((t, i) => h('th', { class: i ? 'num' : '', text: t })))),
+          h('tbody', {}, dp.factors.map((f) => h('tr', {},
+            h('td', { text: factorName(f.feature) }), h('td', { class: 'num', text: fmtNum(f.pairs) }), h('td', { class: 'num', text: pct(f.hitHigherShare) }),
+            h('td', { class: 'num', text: fmtVal(f.medianHit) }), h('td', { class: 'num', text: fmtVal(f.medianMiss) }),
+            h('td', { class: 'num', text: f.correlation == null ? '–' : f.correlation.toFixed(2) }),
+            h('td', { class: 'num' }, h('span', { class: `badge ${f.status === 'reliable' && f.p < 0.05 ? 'ok' : 'warn'}`, text: f.status === 'reliable' ? (f.p < 0.05 ? 'finding' : 'no clear effect') : 'early' })))))))
+        , h('p', { class: 'note', text: 'Each creator\'s best video (hit) is compared with their worst (miss), so account size and audience are the same. "Hit had more": how often the hit scored higher on that factor (50% = no difference). "Link to views": rank correlation with how far above or below usual the video did. A factor becomes a finding at 30+ creator pairs with a clear sign test (p < 0.05).' }))
+        : h('p', { class: 'muted', text: 'Needs at least 5 creators with an analyzed hit and miss.' })),
+      card('Latest deep analyses', dp.recent && dp.recent.length ? h('div', { class: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Analyzed', 'Niche', 'Picked as', 'Views', 'vs usual', 'Length', 'Shots', ''].map((t, i) => h('th', { class: i > 2 && i < 7 ? 'num' : '', text: t })))),
+        h('tbody', {}, dp.recent.map((r) => h('tr', {},
+          h('td', { class: 'num', text: fmtDate(r.analyzedAt) }), h('td', { text: (r.niche || '').replace(/_/g, ' ') }), h('td', { text: r.role }),
+          h('td', { class: 'num', text: fmtNum(r.views) }), h('td', { class: 'num', text: vsUsual(r.outperformance) }),
+          h('td', { class: 'num', text: fmtTime(r.durationSec) }), h('td', { class: 'num', text: `${fmtNum(r.shots)}${r.cutsSource === 'ffmpeg' ? '' : ' (est.)'}` }),
+          h('td', {}, h('button', { class: 'link', text: 'timeline', onclick: () => { location.hash = `#/deep/${r.id}`; } })))))))
+        : h('p', { class: 'muted', text: 'None yet. They run in the daily job after collection, or use "Analyze 10 videos now".' })),
+    ];
+  };
+
+  const showDeep = guard(async (id) => {
+    const view = shell('learning');
+    const d = await api(`/learning/deep/${encodeURIComponent(id)}`);
+    clear(view);
+    const a = d.analysis;
+    const v = d.video || {};
+    const c = d.creator || {};
+    const link = typeof v.url === 'string' && v.url.startsWith('https://www.tiktok.com/') ? h('a', { href: v.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open on TikTok' }) : '';
+    const features = Object.entries(a.features || {}).filter(([k]) => k !== 'speechFromCaptions');
+    view.append(
+      h('p', {}, h('button', { class: 'link', text: '← Learning', onclick: () => { location.hash = '#/learning'; } })),
+      h('h2', { text: `@${c.handle || 'creator'} · ${a.role === 'hit' ? 'their hit' : a.role === 'miss' ? 'their miss' : 'video'}` }),
+      card('Video', kv([
+        ['Caption', v.caption || ''], ['Sound', v.soundTitle || ''], ['Posted', fmtDay(v.postedAt)],
+        ['Views', `${fmtNum(a.views)} (${vsUsual(a.outperformance)}; usual ${fmtNum(a.baselineViews)})`],
+        ['Creator', `${fmtNum(c.followers)} followers, niche ${(a.niche || c.niche || '').replace(/_/g, ' ')}`],
+        ['Cuts', a.cutsSource === 'ffmpeg' ? `${fmtNum(a.cuts.length)} measured from the file` : 'Estimated by Twelve Labs (file could not be measured)'],
+        ['Length', fmtTime(a.media?.durationSec)], ['Model', a.model || ''], ['Link', link],
+      ])),
+      card('Shot by shot', h('div', { class: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Time', 'Said', 'On-screen text', 'What is on screen', 'Purpose'].map((t) => h('th', { text: t })))),
+        h('tbody', {}, (a.timeline || []).map((r) => h('tr', {},
+          h('td', { class: 'num mono', text: `${r.start.toFixed(1)}–${r.end.toFixed(1)}s` }), h('td', { text: r.said || '' }), h('td', { text: r.onScreenText || '' }),
+          h('td', { class: 'subtle', text: [r.visual, r.action].filter(Boolean).join(' · ') }), h('td', { text: r.purpose || '' }))))))),
+      card('Measured features', kv(features.map(([k, val]) => [factorName(k), typeof val === 'boolean' ? (val ? 'yes' : 'no') : fmtVal(val)]))),
+      v.topComments && v.topComments.length ? card('Top comments', h('div', {}, v.topComments.slice(0, 10).map((cm) => h('div', { class: 'item' },
+        h('div', { text: cm.text }), h('div', { class: 'subtle', text: `${fmtNum(cm.likes)} likes · ${fmtNum(cm.replies)} replies` }))))) : null,
+    );
+  });
+
   const showLearning = guard(async () => {
     const view = shell('learning');
     const d = await api('/learning');
@@ -420,6 +506,7 @@
         tile('Public creators tracked', fmtNum(inv.social.creators), `${fmtNum(inv.social.creatorsWithBaseline)} with a baseline`),
         tile('Public videos collected', fmtNum(inv.social.videos))),
         next ? h('p', { class: 'note', text: `Next milestone: ${fmtNum(next.at)} videos with real results (${pct(next.progress)} there). Unlocks: ${next.unlocks}.` }) : null),
+      ...deepCards(d),
       card('Prediction accuracy against real results', accuracyTable([
         ['All results', rc.live], ['Last 14 days', rc.last14Days], ['Rules only (same videos)', rc.rulesOnly], ['With learning (same videos)', rc.liveOnSameVideos],
       ]), h('p', { class: 'note', text: 'Usually off by: 1.00× is perfect. Inside the band: the target is about 80%. Bias shows whether predictions run high or low.' })),
@@ -437,7 +524,7 @@
         h('tbody', {}, d.runs.map((r) => h('tr', {},
           h('td', { class: 'num', text: fmtDate(r.startedAt) }),
           h('td', {}, h('span', { class: `badge ${r.ok ? 'ok' : r.ok === false ? 'err' : 'warn'}`, text: r.ok ? 'ok' : r.ok === false ? 'problem' : 'running' })),
-          h('td', { text: r.provider || 'none' }), h('td', { class: 'num', text: fmtNum(r.recordsUsed) }),
+          h('td', { text: `${r.provider || 'none'}${r.kind === 'deep' ? ' (deep only)' : ''}` }), h('td', { class: 'num', text: fmtNum(r.recordsUsed) }),
           h('td', { class: 'subtle', text: (r.steps || []).map((s) => `${s.name}${s.ok ? '' : ' (failed)'}`).join(', ') }))))))
         : h('p', { class: 'muted', text: 'No runs yet.' })));
   });
@@ -452,6 +539,7 @@
     if (section === 'audit') return showAudit();
     if (section === 'overview') return showOverview();
     if (section === 'learning') return showLearning();
+    if (section === 'deep' && id) return showDeep(id);
     return showVideos();
   });
 

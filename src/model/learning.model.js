@@ -6,6 +6,8 @@
  *   SocialCreator    a public creator we track (baseline = their typical views)
  *   SocialVideo      a public video collected from the data provider
  *   LearningRun      one run of the daily learning job, with its report card
+ *   SocialVideoAnalysis  deep analysis of a public video: measured cuts, Twelve Labs scenes and
+ *                    transcript, and the shot-by-shot timeline
  *
  * Subjects: 'video' = a user's upload (Video), 'dataset' = admin viral example
  * (VideoPerformanceDataset), 'social' = SocialVideo.
@@ -36,6 +38,8 @@ const videoFeaturesSchema = new mongoose.Schema({
     followers: { type: Number, default: null },
     postedAt: { type: Date, default: null },
     extractedAt: { type: Date, default: Date.now },
+    /** Set when a public video's features include the deep (Twelve Labs + measured cuts) analysis. */
+    deepAt: { type: Date, default: null },
 }, { timestamps: true });
 videoFeaturesSchema.index({ subjectType: 1, subjectId: 1 }, { unique: true });
 videoFeaturesSchema.index({ niche: 1, format: 1 });
@@ -106,10 +110,54 @@ const socialVideoSchema = new mongoose.Schema({
     lastCheckedAt: { type: Date, default: null },
     /** When the re-checker should read its numbers again (null = done). */
     nextCheckAt: { type: Date, default: null },
+    /** TikTok's auto-captions (what is said, timed), from the full Posts dataset. */
+    captions: { type: [new mongoose.Schema({ text: String, tStart: Number, tEnd: Number }, { _id: false })], default: undefined },
+    captionsLang: { type: String, default: null },
+    /** Top comments by likes: text and counts only, never shown to users. */
+    topComments: { type: [new mongoose.Schema({ text: String, likes: Number, replies: Number, at: Date }, { _id: false })], default: undefined },
+    /** Deep analysis state (the analysis itself is in SocialVideoAnalysis). */
+    deep: {
+        type: new mongoose.Schema({ status: { type: String, enum: ['done', 'failed'] }, at: Date, error: String, role: String }, { _id: false }),
+        default: undefined,
+    },
 }, { timestamps: true });
 socialVideoSchema.index({ platform: 1, externalId: 1 }, { unique: true });
 socialVideoSchema.index({ nextCheckAt: 1 });
 socialVideoSchema.index({ creatorId: 1, postedAt: -1 });
+
+/**
+ * Deep analysis of one public video (deep-analyzer.js): exact cuts measured by ffmpeg, the Twelve Labs
+ * scene breakdown and transcript, and the timeline that lines them up shot by shot. The video file itself
+ * is never kept: it is deleted locally and from Twelve Labs once analyzed.
+ */
+const socialVideoAnalysisSchema = new mongoose.Schema({
+    socialVideoId: { type: mongoose.Schema.Types.ObjectId, ref: 'SocialVideo', required: true },
+    platform: { type: String, default: 'tiktok' },
+    externalId: { type: String, required: true },
+    creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'SocialCreator', default: null },
+    niche: { type: String, default: null },
+    /** Why it was picked: the creator's best ('hit') or worst ('miss') video, compared with their baseline. */
+    role: { type: String, enum: ['hit', 'miss', 'other'], default: 'other' },
+    views: { type: Number, default: null },
+    baselineViews: { type: Number, default: null },
+    outperformance: { type: Number, default: null },
+    /** 'download' = file measured here (exact cuts); 'url' = Twelve Labs fetched it (scene times only). */
+    via: { type: String, enum: ['download', 'url'], required: true },
+    cutsSource: { type: String, enum: ['ffmpeg', 'pegasus'], required: true },
+    model: { type: String, default: null },
+    media: { type: mongoose.Schema.Types.Mixed, default: {} },
+    cuts: { type: [Number], default: [] },
+    silences: { type: [new mongoose.Schema({ start: Number, end: Number }, { _id: false })], default: [] },
+    scenes: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    transcript: { type: [new mongoose.Schema({ text: String, tStart: Number, tEnd: Number }, { _id: false })], default: [] },
+    timeline: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    features: { type: mongoose.Schema.Types.Mixed, default: {} },
+    ms: { type: Number, default: null },
+    analyzedAt: { type: Date, default: Date.now },
+}, { timestamps: true });
+socialVideoAnalysisSchema.index({ socialVideoId: 1 }, { unique: true });
+socialVideoAnalysisSchema.index({ creatorId: 1 });
+socialVideoAnalysisSchema.index({ analyzedAt: -1 });
 
 const learningRunSchema = new mongoose.Schema({
     kind: { type: String, default: 'daily' },
@@ -134,3 +182,4 @@ export const OutcomeSnapshot = mongoose.model('OutcomeSnapshot', outcomeSnapshot
 export const SocialCreator = mongoose.model('SocialCreator', socialCreatorSchema);
 export const SocialVideo = mongoose.model('SocialVideo', socialVideoSchema);
 export const LearningRun = mongoose.model('LearningRun', learningRunSchema);
+export const SocialVideoAnalysis = mongoose.model('SocialVideoAnalysis', socialVideoAnalysisSchema);
