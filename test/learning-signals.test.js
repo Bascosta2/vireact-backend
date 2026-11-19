@@ -90,6 +90,7 @@ test('hook vision answers become features; comment intents weight liked comments
     assert.equal(soundStage({ last14: 2, prior14: 9 }), 'fading');
     assert.equal(soundStage({ last14: 1, prior14: 1 }), null);
     assert.ok(isOriginalSound('original sound - arta') && !isOriginalSound('Espresso'));
+    assert.ok(isOriginalSound('오리지널 사운드 - Pixel') && isOriginalSound('原声 - abc') && isOriginalSound('оригинальный звук'));
     const DAY = 86400000;
     const idx = buildSoundIndex([{ soundId: 's', soundTitle: 'Song', postedAt: new Date(10 * DAY) }, { soundId: 's', soundTitle: 'Song', postedAt: new Date(20 * DAY) }, { soundId: 'o', soundTitle: 'original sound', postedAt: new Date(20 * DAY) }]);
     assert.equal(usesBefore(idx, 's', 21 * DAY), 2);

@@ -9,7 +9,8 @@
 import { SocialCreator, SocialVideo, SoundTrend } from '../../model/learning.model.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const ORIGINAL = /original sound|son original|sonido original|som original|originalton|suono originale/i;
+/** "original sound" in the languages TikTok shows it in: a creator's own audio is never a trend. */
+const ORIGINAL = /original sound|son original|sonido original|som original|originalton|suono originale|origineel geluid|oryginalny dźwięk|orijinal ses|suara asli|âm thanh gốc|เสียงต้นฉบับ|оригинальный звук|оригінальний звук|الصوت الأصلي|오리지널 사운드|オリジナル楽曲|オリジナル音源|原声|原聲|मूल ध्वनि/i;
 const median = (xs) => {
     const s = xs.filter(Number.isFinite).sort((a, b) => a - b);
     if (!s.length) return null;

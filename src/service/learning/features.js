@@ -148,7 +148,7 @@ export const featuresFromSocial = (doc) => compact({
     durationSec: num(doc?.durationSec),
     ...captionFeatures(doc?.caption),
     hashtagCount: Array.isArray(doc?.hashtags) && doc.hashtags.length ? doc.hashtags.length : captionFeatures(doc?.caption).hashtagCount ?? null,
-    originalSound: doc?.soundTitle ? /original sound|son original|sonido original|som original/i.test(doc.soundTitle) : null,
+    originalSound: doc?.soundTitle ? /original sound|son original|sonido original|som original|originalton|suono originale|suara asli|âm thanh gốc|оригинальный звук|오리지널 사운드|オリジナル楽曲|原声|原聲/i.test(doc.soundTitle) : null,
     ...postTiming(doc?.postedAt),
 });
 
