@@ -48,6 +48,22 @@ export const outcomeAtHorizon = (snapshots = [], { horizonHours = HORIZON_HOURS 
     return { views: newest.views, ageHours: null, ageKnown: false, source: newest.source ?? null };
 };
 
+/** Readings at least this old count as a video's long-run result (late bloomers included). */
+export const LONG_RUN_DAYS = 30;
+
+/**
+ * The long-run result: the newest reading taken at least LONG_RUN_DAYS after posting, or null.
+ * Trained as a second target next to the 7-day one, so the model can learn which videos keep growing
+ * for months (and how often a slow start turns into a hit later).
+ */
+export const longRunOutcome = (snapshots = []) => {
+    const rows = (Array.isArray(snapshots) ? snapshots : [])
+        .filter((s) => Number.isFinite(s?.views) && s.views >= 0 && Number.isFinite(s.ageHours) && s.ageHours >= LONG_RUN_DAYS * 24);
+    if (!rows.length) return null;
+    const best = rows.reduce((a, b) => (b.ageHours > a.ageHours ? b : a));
+    return { views: best.views, ageHours: best.ageHours, ageKnown: true, source: best.source ?? null };
+};
+
 /** A creator's typical views from their other settled videos, or null when there are too few. */
 export const creatorBaseline = (otherViews = []) => {
     const values = otherViews.filter((v) => Number.isFinite(v) && v >= 0);

@@ -94,6 +94,36 @@ test('collection: discovers, backfills creators (hits and misses), sets baseline
     assert.equal((await runCollection({ provider: null, budget: 10 })).skipped, 'no provider configured');
 });
 
+test('provider calls run in parallel (at most CONCURRENCY), within the budget', async () => {
+    const { CONCURRENCY, BACKFILL_VIDEOS } = await import('../src/service/learning/social/collector.js');
+    let inFlight = 0;
+    let peak = 0;
+    let creatorCalls = 0;
+    const slow = async (fn) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
+        inFlight -= 1;
+        return fn();
+    };
+    const creators = Array.from({ length: 30 }, (_, i) => ({ externalId: `p${i}`, handle: `p${i}`, followers: 100 }));
+    const provider = {
+        name: 'slow',
+        searchVideos: () => slow(() => ({ videos: [], creators, used: 1 })),
+        creatorVideos: ({ externalId }) => slow(() => {
+            creatorCalls += 1;
+            return { videos: [], creator: null, used: BACKFILL_VIDEOS, externalId };
+        }),
+        videoStats: () => slow(() => ({ stats: [], used: 0 })),
+    };
+    const budget = 1 + 15 * BACKFILL_VIDEOS;
+    const out = await runCollection({ provider, budget, now: NOW, plan: [{ niche: 'food', subNiche: 'recipes', query: 'recipes' }] });
+    assert.equal(out.errors, 0);
+    assert.ok(peak > 1 && peak <= CONCURRENCY, `peak ${peak}`);
+    assert.equal(creatorCalls, 15, 'stops starting calls once the budget is spoken for');
+    assert.ok(out.used <= budget);
+});
+
 test('a failing provider call is counted, not fatal', async () => {
     const provider = { name: 'broken', async searchVideos() { throw new Error('rate limited'); }, async creatorVideos() { throw new Error('x'); }, async videoStats() { throw new Error('x'); } };
     const out = await runCollection({ provider, budget: 100, now: NOW, plan: [{ niche: 'food', subNiche: 'recipes', query: 'recipes' }] });

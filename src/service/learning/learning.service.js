@@ -27,7 +27,7 @@ import { ageHoursAt, SETTLE_HOURS } from './labels.js';
 import { metrics, metricsBy, timeSplit, checkOwnerCases } from './evaluate.js';
 import { getProvider } from './social/providers.js';
 import './social/brightdata.js'; // registers LEARNING_PROVIDER=brightdata
-import { runCollection } from './social/collector.js';
+import { runCollection, TRACK_SHARE } from './social/collector.js';
 import { labelPending } from './classifier.js';
 
 export const MILESTONES = Object.freeze([
@@ -41,12 +41,19 @@ const intEnv = (name, fallback, env = process.env) => {
     const n = Number(env[name]);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 };
+/** A 0..1 share from the environment; unset, empty or out of range -> fallback. */
+const shareEnv = (name, fallback, env = process.env) => {
+    const raw = String(env[name] ?? '').trim();
+    const n = Number(raw);
+    return raw !== '' && Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+};
 
 export const learningConfig = (env = process.env) => ({
     enabled: String(env.LEARNING_ENABLED ?? '').trim().toLowerCase() === 'true',
     provider: String(env.LEARNING_PROVIDER ?? '').trim().toLowerCase() || null,
     dailyRecords: intEnv('LEARNING_DAILY_RECORDS', 2000, env),
     labelLimit: intEnv('LEARNING_LABEL_LIMIT', 300, env),
+    trackShare: shareEnv('LEARNING_TRACK_SHARE', TRACK_SHARE, env),
 });
 
 // ---- users' videos
@@ -282,7 +289,7 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
     try {
         await step('backfill', () => backfillLearning());
         const collected = await step('collect', () => (provider
-            ? runCollection({ provider, budget: config.dailyRecords, now, log })
+            ? runCollection({ provider, budget: config.dailyRecords, trackShare: config.trackShare ?? TRACK_SHARE, now, log })
             : { skipped: 'no provider configured (LEARNING_PROVIDER)' }));
         run.recordsUsed = collected?.used ?? 0;
         await step('label', () => (config.labelLimit > 0 ? labelPending({ limit: config.labelLimit, complete: deps.complete, log }) : { skipped: 'LEARNING_LABEL_LIMIT=0' }));
@@ -305,5 +312,5 @@ export const learningOverview = async () => {
         LearningRun.find({}).sort({ startedAt: -1 }).limit(10).select('startedAt finishedAt ok provider recordsUsed steps').lean(),
     ]);
     const config = learningConfig();
-    return { config: { enabled: config.enabled, provider: config.provider, dailyRecords: config.dailyRecords, labelLimit: config.labelLimit }, inventory, reportCard: card, runs };
+    return { config: { enabled: config.enabled, provider: config.provider, dailyRecords: config.dailyRecords, labelLimit: config.labelLimit, trackShare: config.trackShare }, inventory, reportCard: card, runs };
 };

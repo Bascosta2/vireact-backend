@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sceneFeatures, transcriptFeatures, featuresFromVideo, featuresFromDataset, featuresFromSocial, FEATURE_VERSION } from '../src/service/learning/features.js';
-import { outcomeAtHorizon, baselineFor, creatorBaseline, outperformance, median } from '../src/service/learning/labels.js';
+import { outcomeAtHorizon, longRunOutcome, baselineFor, creatorBaseline, outperformance, median } from '../src/service/learning/labels.js';
 import { metrics, metricsBy, timeSplit, checkOwnerCases, promotionDecision } from '../src/service/learning/evaluate.js';
-import { buildCollectionPlan, nextCheckAt, queryFor } from '../src/service/learning/social/collector.js';
+import { buildCollectionPlan, nextCheckAt, queryFor, isTracked, firstCheckAt, sampleValue, TRACK_SHARE } from '../src/service/learning/social/collector.js';
 import { cleanVideo, cleanCreator, cleanStats } from '../src/service/learning/social/providers.js';
 import { toLabels } from '../src/service/learning/classifier.js';
 import { NICHE_TREE, TAXONOMY_NICHES, subNicheOf, formatFromStrategy } from '../src/constants/taxonomy.js';
@@ -93,6 +93,10 @@ test('labels: settled reading nearest 7 days; baseline from the creator, else fo
     assert.equal(baselineFor({ followers: 9000 }).method, 'followers');
     assert.equal(baselineFor({}), null);
     assert.ok(Math.abs(outperformance(399, 199) - Math.log(2)) < 1e-9, '2x the usual = ln 2');
+    // Long run: the newest reading at 30+ days, so late bloomers count.
+    const late = [...snaps, { views: 250000, ageHours: 90 * 24 }, { views: 90000, ageHours: 45 * 24 }];
+    assert.equal(longRunOutcome(late).views, 250000);
+    assert.equal(longRunOutcome(snaps), null, 'nothing 30+ days old yet');
 });
 
 test('report card metrics: miss factor, within 2x, band coverage, bias, groups, time split', () => {
@@ -129,7 +133,7 @@ test("the owner's calibration cases pass on today's model and gate any replaceme
     assert.equal(promotionDecision({ champion, challenger: better, ownerCases: [{ id: 'x', pass: false }] }).promote, false);
 });
 
-test('collection plan rotates through every sub-niche and re-checks at 1, 3 and 7 days', () => {
+test('collection plan rotates through every sub-niche; tracked videos are re-checked for 6 months', () => {
     const seen = new Set();
     for (let d = 0; d < 6; d++) for (const q of buildCollectionPlan({ now: d * DAY })) seen.add(q.subNiche);
     const all = Object.entries(NICHE_TREE).filter(([n]) => n !== 'other').flatMap(([, s]) => s);
@@ -140,8 +144,23 @@ test('collection plan rotates through every sub-niche and re-checks at 1, 3 and 
     const posted = Date.UTC(2026, 10, 1);
     assert.equal(nextCheckAt(posted, posted).getTime(), posted + 24 * 3600e3);
     assert.equal(nextCheckAt(posted, posted + 2 * DAY).getTime(), posted + 72 * 3600e3);
-    assert.equal(nextCheckAt(posted, posted + 8 * DAY), null);
+    assert.equal(nextCheckAt(posted, posted + 8 * DAY).getTime(), posted + 14 * DAY);
+    assert.equal(nextCheckAt(posted, posted + 40 * DAY).getTime(), posted + 60 * DAY, 'a late check skips the ages it missed');
+    assert.equal(nextCheckAt(posted, posted + 100 * DAY).getTime(), posted + 180 * DAY);
+    assert.equal(nextCheckAt(posted, posted + 181 * DAY), null, 'done after 6 months');
     assert.equal(nextCheckAt(null, posted), null);
+
+    // Which videos are tracked: young search finds always; everything else a stable ~10% sample.
+    const now = posted + 5 * DAY;
+    assert.equal(isTracked({ externalId: 'a', postedAt: posted, via: 'search' }, { now }), true);
+    assert.equal(isTracked({ externalId: 'a', postedAt: null, via: 'search' }, { now }), false);
+    const ids = Array.from({ length: 5000 }, (_, i) => String(7600000000000000000n + BigInt(i) * 7919n));
+    const share = ids.filter((id) => isTracked({ externalId: id, postedAt: posted - 60 * DAY, via: 'creator_backfill' }, { now })).length / ids.length;
+    assert.ok(Math.abs(share - TRACK_SHARE) < 0.02, `sampled share ${share}`);
+    assert.equal(sampleValue('123'), sampleValue('123'), 'stable');
+    assert.equal(isTracked({ externalId: ids[0], postedAt: posted - 60 * DAY, via: 'creator_backfill' }, { now, trackShare: 1 }), true);
+    assert.equal(firstCheckAt({ externalId: 'x', postedAt: posted - 60 * DAY, via: 'creator_backfill' }, { now, trackShare: 0 }), null);
+    assert.equal(firstCheckAt({ externalId: 'x', postedAt: posted, via: 'search' }, { now }).getTime(), posted + 7 * DAY);
 });
 
 test('provider data is validated before it can be stored', () => {
