@@ -26,6 +26,7 @@ import { FEATURE_VERSION, featuresFromVideo, featuresFromDataset } from './featu
 import { ageHoursAt, SETTLE_HOURS } from './labels.js';
 import { metrics, metricsBy, timeSplit, checkOwnerCases } from './evaluate.js';
 import { getProvider } from './social/providers.js';
+import './social/brightdata.js'; // registers LEARNING_PROVIDER=brightdata
 import { runCollection } from './social/collector.js';
 import { labelPending } from './classifier.js';
 

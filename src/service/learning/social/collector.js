@@ -20,6 +20,9 @@ export const BACKFILL_VIDEOS = 30;
 export const SEARCH_LIMIT = 30;
 /** Share of the day's budget per step; unused budget rolls to the next step. */
 export const BUDGET_SPLIT = Object.freeze({ recheck: 0.25, discover: 0.35, backfill: 0.4 });
+/** Provider calls in flight at once. Provider jobs can take minutes; database writes stay sequential. */
+export const CONCURRENCY = 10;
+const STATS_BATCH = 20;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -164,75 +167,98 @@ export const runCollection = async ({ provider, budget, platform = 'tiktok', reg
         }
     };
     const touchedCreators = new Set();
+    /** Runs `fn` for the next wave of items (provider calls in parallel), then `save` for each in order. */
+    const waves = async (items, { size, fetch, save }) => {
+        let i = 0;
+        for (;;) {
+            const n = Math.min(CONCURRENCY, size(), items.length - i);
+            if (n <= 0) return;
+            const wave = items.slice(i, i + n);
+            i += n;
+            const results = await Promise.all(wave.map(fetch));
+            for (let k = 0; k < wave.length; k++) await save(wave[k], results[k]);
+        }
+    };
 
     // 1. re-check
     const recheckCap = Math.floor(budget * BUDGET_SPLIT.recheck);
     const due = await SocialVideo.find({ platform, nextCheckAt: { $ne: null, $lte: new Date(now) } })
         .sort({ nextCheckAt: 1 }).limit(Math.max(0, recheckCap)).lean();
-    for (let i = 0; i < due.length && out.used < recheckCap; i += 20) {
-        const batch = due.slice(i, i + 20);
-        const result = await call('videoStats', () => provider.videoStats({ ids: batch.map((v) => v.externalId) }));
-        const byId = new Map((result?.stats ?? []).map(cleanStats).filter(Boolean).map((s) => [s.externalId, s]));
-        for (const v of batch) {
-            const s = byId.get(v.externalId);
-            const update = { nextCheckAt: nextCheckAt(v.postedAt, now) };
-            if (s) {
-                Object.assign(update, { latest: { ...s, at: new Date(now) }, lastCheckedAt: new Date(now) });
-                await writeOutcome({ video: v, stats: s, platform, providerName, now });
-                out.rechecked += 1;
-                if (v.creatorId) touchedCreators.add(String(v.creatorId));
+    const batches = [];
+    for (let i = 0; i < due.length; i += STATS_BATCH) batches.push(due.slice(i, i + STATS_BATCH));
+    await waves(batches, {
+        size: () => Math.ceil((recheckCap - out.used) / STATS_BATCH),
+        fetch: (batch) => call('videoStats', () => provider.videoStats({
+            ids: batch.map((v) => v.externalId),
+            videos: batch.map((v) => ({ externalId: v.externalId, url: v.url ?? null })),
+        })),
+        save: async (batch, result) => {
+            const byId = new Map((result?.stats ?? []).map(cleanStats).filter(Boolean).map((s) => [s.externalId, s]));
+            for (const v of batch) {
+                const s = byId.get(v.externalId);
+                const update = { nextCheckAt: nextCheckAt(v.postedAt, now) };
+                if (s) {
+                    Object.assign(update, { latest: { ...s, at: new Date(now) }, lastCheckedAt: new Date(now) });
+                    await writeOutcome({ video: v, stats: s, platform, providerName, now });
+                    out.rechecked += 1;
+                    if (v.creatorId) touchedCreators.add(String(v.creatorId));
+                }
+                await SocialVideo.updateOne({ _id: v._id }, { $set: update, ...(s ? { $inc: { checks: 1 } } : {}) });
             }
-            await SocialVideo.updateOne({ _id: v._id }, { $set: update, ...(s ? { $inc: { checks: 1 } } : {}) });
-        }
-    }
+        },
+    });
 
     // 2. discover
-    const discoverCap = out.used + Math.floor(budget * BUDGET_SPLIT.discover);
-    for (const q of plan) {
-        if (out.used >= Math.min(discoverCap, budget)) break;
-        const result = await call(`search "${q.query}"`, () => provider.searchVideos({ query: q.query, region, limit: SEARCH_LIMIT }));
-        if (!result) continue;
-        const creators = new Map();
-        for (const raw of result.creators ?? []) {
-            const before = await SocialCreator.exists({ platform, externalId: cleanCreator(raw)?.externalId ?? '' });
-            const doc = await upsertCreator(raw, { platform, providerName, nicheHint: q.niche, now });
-            if (doc) {
-                creators.set(doc.externalId, doc);
-                if (!before) out.newCreators += 1;
-            }
-        }
-        for (const raw of result.videos ?? []) {
-            const creatorExternalId = cleanVideo(raw)?.creatorExternalId;
-            let creatorDoc = creators.get(creatorExternalId) ?? null;
-            if (!creatorDoc && creatorExternalId) {
-                // The provider listed the video without its creator: track the creator by id anyway.
-                const before = await SocialCreator.exists({ platform, externalId: creatorExternalId });
-                creatorDoc = await upsertCreator({ externalId: creatorExternalId }, { platform, providerName, nicheHint: q.niche, now });
-                if (creatorDoc) {
-                    creators.set(creatorExternalId, creatorDoc);
+    const discoverCap = Math.min(budget, out.used + Math.floor(budget * BUDGET_SPLIT.discover));
+    await waves(plan, {
+        size: () => Math.ceil((discoverCap - out.used) / SEARCH_LIMIT),
+        fetch: (q) => call(`search "${q.query}"`, () => provider.searchVideos({ query: q.query, region, limit: SEARCH_LIMIT })),
+        save: async (q, result) => {
+            if (!result) return;
+            const creators = new Map();
+            for (const raw of result.creators ?? []) {
+                const before = await SocialCreator.exists({ platform, externalId: cleanCreator(raw)?.externalId ?? '' });
+                const doc = await upsertCreator(raw, { platform, providerName, nicheHint: q.niche, now });
+                if (doc) {
+                    creators.set(doc.externalId, doc);
                     if (!before) out.newCreators += 1;
                 }
             }
-            const saved = await upsertVideo(raw, { platform, providerName, via: 'search', query: q.query, nicheHint: q.niche, creatorDoc, now });
-            if (saved?.isNew) out.discovered += 1;
-        }
-    }
+            for (const raw of result.videos ?? []) {
+                const creatorExternalId = cleanVideo(raw)?.creatorExternalId;
+                let creatorDoc = creators.get(creatorExternalId) ?? null;
+                if (!creatorDoc && creatorExternalId) {
+                    // The provider listed the video without its creator: track the creator by id anyway.
+                    const before = await SocialCreator.exists({ platform, externalId: creatorExternalId });
+                    creatorDoc = await upsertCreator({ externalId: creatorExternalId }, { platform, providerName, nicheHint: q.niche, now });
+                    if (creatorDoc) {
+                        creators.set(creatorExternalId, creatorDoc);
+                        if (!before) out.newCreators += 1;
+                    }
+                }
+                const saved = await upsertVideo(raw, { platform, providerName, via: 'search', query: q.query, nicheHint: q.niche, creatorDoc, now });
+                if (saved?.isNew) out.discovered += 1;
+            }
+        },
+    });
 
     // 3. backfill creators we have not backfilled yet (newest first)
     const pending = await SocialCreator.find({ platform, backfilledAt: null }).sort({ createdAt: -1 }).limit(200);
-    for (const creator of pending) {
-        if (left() < BACKFILL_VIDEOS) break;
-        const result = await call(`creatorVideos ${creator.externalId}`, () => provider.creatorVideos({ externalId: creator.externalId, handle: creator.handle, limit: BACKFILL_VIDEOS }));
-        if (!result) continue;
-        let doc = creator;
-        if (result.creator) doc = (await upsertCreator(result.creator, { platform, providerName, nicheHint: creator.niche, now })) ?? creator;
-        for (const raw of result.videos ?? []) {
-            const saved = await upsertVideo(raw, { platform, providerName, via: 'creator_backfill', nicheHint: creator.niche, creatorDoc: doc, now });
-            if (saved?.isNew) out.backfilled += 1;
-        }
-        await SocialCreator.updateOne({ _id: creator._id }, { $set: { backfilledAt: new Date(now) } });
-        touchedCreators.add(String(creator._id));
-    }
+    await waves(pending, {
+        size: () => Math.floor(left() / BACKFILL_VIDEOS),
+        fetch: (creator) => call(`creatorVideos ${creator.externalId}`, () => provider.creatorVideos({ externalId: creator.externalId, handle: creator.handle, limit: BACKFILL_VIDEOS })),
+        save: async (creator, result) => {
+            if (!result) return;
+            let doc = creator;
+            if (result.creator) doc = (await upsertCreator(result.creator, { platform, providerName, nicheHint: creator.niche, now })) ?? creator;
+            for (const raw of result.videos ?? []) {
+                const saved = await upsertVideo(raw, { platform, providerName, via: 'creator_backfill', nicheHint: creator.niche, creatorDoc: doc, now });
+                if (saved?.isNew) out.backfilled += 1;
+            }
+            await SocialCreator.updateOne({ _id: creator._id }, { $set: { backfilledAt: new Date(now) } });
+            touchedCreators.add(String(creator._id));
+        },
+    });
 
     // 4. baselines
     for (const creatorId of touchedCreators) {
