@@ -35,6 +35,8 @@ const renderSchema = new mongoose.Schema({
 const editProjectSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, maxlength: 200, default: 'Untitled edit' },
+    /** Editing skill the edit follows (service/editor/skills.js), or null for the standard editor. */
+    skill: { type: String, default: null },
     status: { type: String, enum: Object.values(EDIT_STATUS), default: EDIT_STATUS.AWAITING_UPLOAD },
     /** True while the project holds the user's one in-flight slot (unique partial index below). */
     inFlight: { type: Boolean, default: true },

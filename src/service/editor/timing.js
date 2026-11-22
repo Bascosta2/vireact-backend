@@ -160,7 +160,13 @@ function splitRun(run, maxWords, maxChars) {
  * @param {Array<{w:string,start:number,end:number}>} words
  * @param {{emphasis?:Set<number>, textOverrides?:Record<string,string>, maxWords?:number, maxChars?:number}} opts
  */
-export function captionPages(words, timeline, { emphasis = new Set(), textOverrides = {}, maxWords = 3, maxChars = 16, maxGap = 0.6 } = {}) {
+/**
+ * `hold: false` (editing skills) never holds a line into the pause before the next one: a line runs from
+ * its first word's start to its last word's end, that end capped at `capWordSec` after the word starts,
+ * plus `tailSec`. `transform` rewrites each word's text (casual case). Words with no letter or digit
+ * (stray punctuation from the transcript) are dropped.
+ */
+export function captionPages(words, timeline, { emphasis = new Set(), textOverrides = {}, maxWords = 3, maxChars = 16, maxGap = 0.6, hold = true, capWordSec = null, tailSec = 0, transform = null } = {}) {
     const placed = [];
     words.forEach((w, i) => {
         const mid = (w.start + w.end) / 2;
@@ -168,8 +174,10 @@ export function captionPages(words, timeline, { emphasis = new Set(), textOverri
         if (!piece) return;
         const s = Math.max(w.start, piece.srcStart);
         const e = Math.min(w.end, piece.srcEnd);
-        const text = String(textOverrides[i] ?? w.w).trim();
-        if (!text) return;
+        const override = textOverrides[i];
+        const base = String(override ?? w.w).trim();
+        const text = override == null && transform ? transform(base) : base;
+        if (!text || !/[\p{L}\p{N}]/u.test(text)) return;
         placed.push({
             i,
             text,
@@ -198,10 +206,18 @@ export function captionPages(words, timeline, { emphasis = new Set(), textOverri
     const pages = runs.flatMap((run) => splitRun(run, maxWords, maxChars)).map((pageWords) => ({ words: pageWords }));
     return pages.map((p, k) => {
         const start = p.words[0].start;
-        const lastEnd = p.words[p.words.length - 1].end;
+        const last = p.words[p.words.length - 1];
+        const lastEnd = last.end;
         const nextStart = pages[k + 1]?.words[0].start;
-        // Hold the page until the next one if the gap is short, so captions don't flicker.
-        const end = nextStart != null && nextStart - lastEnd < 0.3 ? nextStart : lastEnd;
+        let end;
+        if (hold) {
+            // Hold the page until the next one if the gap is short, so captions don't flicker.
+            end = nextStart != null && nextStart - lastEnd < 0.3 ? nextStart : lastEnd;
+        } else {
+            end = (capWordSec != null ? Math.min(lastEnd, last.start + capWordSec) : lastEnd) + tailSec;
+            if (nextStart != null) end = Math.min(end, nextStart);
+            end = Math.max(end, start + 0.05);
+        }
         return { start, end: round(end), words: p.words.map(({ pieceId, ...w }) => w) };
     });
 }

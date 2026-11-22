@@ -17,6 +17,7 @@ import { uploadVideoUrlToTwelveLabsService } from '../service/video.service.js';
 import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
 import { hasEditorAccess } from '../config/flags.js';
+import { SKILLS, isSkill } from '../service/editor/skills.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
@@ -82,6 +83,7 @@ const mediaFor = (p) => ({
     silences: p.media?.silences ?? [],
     cutCandidates: p.media?.cutCandidates ?? [],
     durationSec: p.source?.durationSec ?? 0,
+    skill: p.skill ?? null,
 });
 
 const trackIdSet = async () => new Set((await SoundAsset.find({ kind: 'music', active: true }).select('slug').lean()).map((t) => t.slug));
@@ -90,6 +92,7 @@ const trackIdSet = async () => new Set((await SoundAsset.find({ kind: 'music', a
 const toListItem = async (p) => ({
     id: String(p._id),
     title: p.title,
+    skill: p.skill ?? null,
     status: p.status,
     stage: p.stage,
     progress: p.progress,
@@ -172,7 +175,8 @@ export const createEditProject = async (req, res, next) => {
     try {
         assertConfigured();
         const userId = req.user._id;
-        const { fileName = '', contentType = '', sizeBytes, title } = req.body ?? {};
+        const { fileName = '', contentType = '', sizeBytes, title, skill = null } = req.body ?? {};
+        if (skill != null && !isSkill(skill)) throw new ApiError(400, 'That editing skill does not exist.', { code: 'BAD_SKILL' });
         const ext = ALLOWED_TYPES.get(String(contentType).toLowerCase());
         if (!ext) throw new ApiError(400, 'Upload an MP4, MOV, WebM or MKV video.', { code: 'BAD_TYPE' });
         const size = Number(sizeBytes);
@@ -198,6 +202,7 @@ export const createEditProject = async (req, res, next) => {
                 _id,
                 userId,
                 title: cleanTitle,
+                skill: skill ?? null,
                 source: { key, contentType, sizeBytes: size, originalName: String(fileName).slice(0, 200) },
             });
         } catch (err) {
@@ -243,9 +248,18 @@ export const confirmEditUpload = async (req, res, next) => {
     }
 };
 
+/** The editing skills a new edit can follow (Skills tab). */
+export const listEditSkills = (req, res) => ok(res, 'Skills', { skills: Object.values(SKILLS).map((s) => ({ id: s.id, name: s.name, version: s.version })) });
+
 export const listEditProjects = async (req, res, next) => {
     try {
-        const projects = await EditProject.find({ userId: req.user._id, status: { $ne: EDIT_STATUS.DELETED } })
+        // ?skill=any (Skills tab), ?skill=none (classic Editor), ?skill=<id>; no filter lists every edit.
+        const filter = { userId: req.user._id, status: { $ne: EDIT_STATUS.DELETED } };
+        const want = req.query?.skill;
+        if (want === 'any') filter.skill = { $ne: null };
+        else if (want === 'none') filter.skill = null;
+        else if (isSkill(want)) filter.skill = want;
+        const projects = await EditProject.find(filter)
             .select('-media.frameSheets -revisions')
             .sort({ createdAt: -1 })
             .limit(50)

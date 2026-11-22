@@ -1,5 +1,6 @@
 import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
+import { HOOK_VARIANTS, casualCase, hookLines, skillFor } from './skills.js';
 
 /**
  * Combine Claude's plan with the creator's review-screen changes into the exact props the Remotion
@@ -119,6 +120,7 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() 
     }
     if ('musicVolume' in input && Number.isFinite(Number(input.musicVolume))) out.musicVolume = Math.min(0.6, Math.max(0, Number(input.musicVolume)));
     if (input.framingMode === 'fill' || input.framingMode === 'fit_blur') out.framingMode = input.framingMode;
+    if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
     return out;
 }
 
@@ -180,7 +182,15 @@ export function arrangeSfx(events, durationInFrames) {
  * @param {{words:Array, silences:Array, durationSec:number, cutCandidates:Array}} media
  */
 export function buildRenderProps(rawPlan, edits = {}, media = {}) {
-    const plan = withDefaults(rawPlan);
+    const skill = skillFor(media.skill);
+    const sr = skill?.render ?? null;
+    const base = withDefaults(rawPlan);
+    // An editing skill narrows the plan to its style before anything is placed.
+    const plan = sr ? {
+        ...base,
+        graphics: base.graphics.filter((g) => !(sr.dropGraphicTypes ?? []).includes(g.type)),
+        transitions: sr.transitionStyles && !sr.transitionStyles.includes(base.transitions.style) ? { ...base.transitions, style: sr.transitionStyles[0] } : base.transitions,
+    } : base;
     const words = media.words ?? [];
     const disabled = new Set(edits.disabledSegments ?? []);
     let segments = plan.segments.filter((s) => !disabled.has(s.id));
@@ -222,7 +232,10 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
     }
 
     const preset = captionPreset(edits.captionPreset ?? plan.captions.preset);
-    const pages = captionPages(words, timeline, { emphasis: new Set(plan.captions.emphasisWordIdx), textOverrides: edits.captionText ?? {}, ...(CAPTION_PAGE[preset] ?? CAPTION_PAGE.default) });
+    const pageRules = sr?.captions
+        ? { maxWords: sr.captions.maxWords, maxChars: sr.captions.maxChars, hold: sr.captions.hold, capWordSec: sr.captions.capWordSec, tailSec: sr.captions.tailSec, transform: sr.captions.casual ? casualCase : null }
+        : (CAPTION_PAGE[preset] ?? CAPTION_PAGE.default);
+    const pages = captionPages(words, timeline, { emphasis: new Set(plan.captions.emphasisWordIdx), textOverrides: edits.captionText ?? {}, ...pageRules });
     const captions = edits.captionsOff
         ? null
         : {
@@ -266,7 +279,7 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
         const firstTop = Math.min(Infinity, ...placedGraphics.filter((g) => TOP_GRAPHICS.has(g.type)).map((g) => g.startFrame));
         const planned = Math.min(total, f(plan.hookOverlay.durationSec));
         hook = { text: hookText, startFrame: 0, durationFrames: Math.max(Math.min(planned, f(HOOK_MIN_SEC)), Math.min(planned, firstTop)) };
-        sound('hit', 0, 2);
+        if (sr?.hookSfx !== false) sound('hit', 0, 2);
     }
 
     const offZooms = new Set(edits.disabledZooms ?? []);
@@ -346,7 +359,10 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
     const sfx = edits.sfxOff ? [] : arrangeSfx(sfxEvents, total);
 
     const trackId = 'musicTrackId' in edits ? edits.musicTrackId : plan.music.trackId;
-    const music = trackId ? { trackId, volume: edits.musicVolume ?? plan.music.volume, duck: speechRanges(pages) } : null;
+    let musicVolume = edits.musicVolume ?? plan.music.volume;
+    // A skill's music level applies to the plan; a level the creator set themselves wins.
+    if (sr?.musicVolume && edits.musicVolume == null) musicVolume = Math.min(sr.musicVolume.max, Math.max(sr.musicVolume.min, musicVolume));
+    const music = trackId ? { trackId, volume: musicVolume, duck: speechRanges(pages) } : null;
 
     return {
         ...OUTPUT,
@@ -364,5 +380,6 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
         sfx,
         music,
         framing: { mode: edits.framingMode ?? plan.framing.mode, focusX: plan.framing.focusX },
+        ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [] } } : {}),
     };
 }

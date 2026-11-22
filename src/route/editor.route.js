@@ -6,6 +6,7 @@ import {
     createEditProject,
     confirmEditUpload,
     listEditProjects,
+    listEditSkills,
     getEditProject,
     updateEdits,
     regenerateEdit,
@@ -23,6 +24,7 @@ editorRoutes.use(authenticateToken);
 // Usage stays open to every signed-in user: it is how the web app learns the editor is hidden.
 editorRoutes.get('/usage', getEditorUsage);
 editorRoutes.use(requireEditorAccess);
+editorRoutes.get('/skills', listEditSkills);
 editorRoutes.get('/projects', listEditProjects);
 editorRoutes.post('/projects', createEditProject);
 editorRoutes.get('/projects/:id', getEditProject);
