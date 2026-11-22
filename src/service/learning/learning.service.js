@@ -17,13 +17,17 @@
  *   LEARNING_DEEP_DAILY=60       public videos deep-analyzed per day (Twelve Labs + measured cuts); 0 = off
  *   LEARNING_DEEP_CONCURRENCY=3  deep analyses at once (Twelve Labs is shared with users' uploads)
  *   LEARNING_DEEP_MAX_SEC=180    longest public video worth analyzing
+ *   LEARNING_READ_CONTENT=true   lyrics vs speech + scene-description tags (content-read.js), one small call per video
+ *   LEARNING_READ_LIMIT=300      older deep analyses re-read per day
  */
 import mongoose from 'mongoose';
 import { Video } from '../../model/video.model.js';
 import { User } from '../../model/user.model.js';
 import { VideoPerformanceDataset } from '../../model/VideoPerformanceDataset.model.js';
 import { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, SocialVideoAnalysis, LearningRun } from '../../model/learning.model.js';
-import { runDeepAnalysis, isDeepRunning } from './deep-analyzer.js';
+import { runDeepAnalysis, isDeepRunning, readPendingAnalyses } from './deep-analyzer.js';
+import { CONTENT_READ_VERSION, readContent } from './content-read.js';
+import { withAiContext } from '../../lib/ai-tracking.js';
 import { factorReport, measuredVideoFeatures } from './deep-features.js';
 import { labelComments, COMMENT_INTENTS } from './comments.js';
 import { refreshSoundTrends } from './trends.js';
@@ -73,6 +77,8 @@ export const learningConfig = (env = process.env) => ({
     commentLimit: intEnv('LEARNING_COMMENT_LIMIT', 300, env),
     halfLifeDays: Math.max(7, intEnv('LEARNING_HALF_LIFE_DAYS', 120, env)),
     modelEnabled: String(env.LEARNING_MODEL ?? 'true').trim().toLowerCase() !== 'false',
+    readContent: String(env.LEARNING_READ_CONTENT ?? 'true').trim().toLowerCase() !== 'false',
+    readLimit: intEnv('LEARNING_READ_LIMIT', 300, env),
 });
 
 // ---- users' videos
@@ -88,13 +94,41 @@ const nicheOfUser = async (userId) => {
     return niche;
 };
 
+/** What a content read was made from: a re-analysis with a new transcript or scene list needs a new read. */
+const readBasis = (video) => `${(video?.scenes ?? []).length}:${(video?.rawTranscript ?? []).length}`;
+
+/**
+ * The upload's content read (lyrics vs speech, scene tags), made once per analysis and stored on the Video.
+ * Returns null when there is nothing to read or reading is turned off. Never throws.
+ */
+export const ensureContentRead = async (video, { read } = {}) => {
+    const current = video.contentRead !== undefined ? video.contentRead : (await Video.findById(video._id).select('contentRead').lean())?.contentRead;
+    if (current?.version === CONTENT_READ_VERSION && current?.basis === readBasis(video)) return current;
+    if (!read && !learningConfig().readContent) return current ?? null;
+    read ??= readContent;
+    try {
+        const contentRead = await withAiContext(
+            { feature: 'learning_content_read', distinctId: video.uploader_id ? String(video.uploader_id) : 'learning-engine' },
+            () => read({ scenes: video.scenes ?? [], transcript: video.rawTranscript ?? [], soundTitle: null, caption: video.sourceDescription ?? null }),
+        );
+        if (!contentRead) return null;
+        contentRead.basis = readBasis(video);
+        await Video.updateOne({ _id: video._id }, { $set: { contentRead } });
+        return contentRead;
+    } catch {
+        return current ?? null;
+    }
+};
+
 /** Upsert the features of one analyzed upload. Keeps an existing AI/admin label. */
-export const upsertVideoFeatures = async (video) => {
+export const upsertVideoFeatures = async (video, { read } = {}) => {
     if (!video?._id || video.analysisStatus !== ANALYSIS_STATUS.COMPLETED) return null;
     const userId = video.uploader_id ?? null;
     const existing = await VideoFeatures.findOne({ subjectType: 'video', subjectId: video._id }).select('labelSource').lean();
     // The in-memory video from the analysis job may predate the upload measurement: read it if missing.
     const mediaMeasure = video.mediaMeasure !== undefined ? video.mediaMeasure : (await Video.findById(video._id).select('mediaMeasure').lean())?.mediaMeasure;
+    const contentRead = await ensureContentRead(video, read ? { read } : {});
+    video = { ...(typeof video.toObject === 'function' ? video.toObject() : video), contentRead };
     const set = {
         userId,
         creatorKey: userId ? `user:${userId}` : null,
@@ -164,7 +198,7 @@ export const removeVideoLearningData = async (videoId) => {
 
 // ---- backfill
 
-const VIDEO_FIELDS = 'uploader_id analysisStatus creatorPlatform creatorFollowers postedAt duration scenes rawTranscript analysis viralityScore sourceDescription contentProfile performanceSnapshots mediaMeasure';
+const VIDEO_FIELDS = 'uploader_id analysisStatus creatorPlatform creatorFollowers postedAt duration scenes rawTranscript analysis viralityScore sourceDescription contentProfile performanceSnapshots mediaMeasure contentRead';
 
 /**
  * Features + outcomes for completed uploads and admin examples that are missing or outdated.
@@ -317,6 +351,7 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
             ? runDeepAnalysis({ provider, limit: config.deepDaily, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, maxAgeDays: config.deepMaxAgeDays ?? 365, languages: config.languages ?? ['en'], now, deps: deps.deep, log })
             : { skipped: provider ? 'LEARNING_DEEP_DAILY=0' : 'no provider configured' }));
         run.recordsUsed += deep?.used ?? 0;
+        await step('read', () => (config.readContent ? readPendingAnalyses({ limit: config.readLimit, log }) : { skipped: 'LEARNING_READ_CONTENT=false' }));
         await step('label', () => (config.labelLimit > 0 ? labelPending({ limit: config.labelLimit, complete: deps.complete, log }) : { skipped: 'LEARNING_LABEL_LIMIT=0' }));
         await step('comments', () => (config.commentLimit > 0 ? labelComments({ limit: config.commentLimit, complete: deps.complete, log }) : { skipped: 'LEARNING_COMMENT_LIMIT=0' }));
         await step('trends', () => refreshSoundTrends({ now }));

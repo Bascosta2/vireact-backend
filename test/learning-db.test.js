@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.NODE_ENV = 'test';
+process.env.LEARNING_READ_CONTENT = 'false'; // no model calls; the read is tested with a fake below
 console.warn = () => {};
 console.log = () => {};
 
@@ -167,6 +168,35 @@ test("users' videos: features on analysis, outcomes follow logged views, deletio
     assert.equal(await VideoFeatures.countDocuments({ subjectType: 'video', subjectId: video._id }), 0);
 });
 
+test("users' videos: a content read is made once per analysis, stored on the video, and drives the features", async () => {
+    const video = await Video.create({
+        filename: 'song.mp4', fileSize: 10, uploadStatus: 'completed', analysisStatus: 'completed', duration: 20, uploader_id: new (await import('mongoose')).default.Types.ObjectId(),
+        scenes: [
+            { sceneNumber: 1, startTime: 0, endTime: 8, visualDescription: 'a man dancing in his living room', audioSummary: 'pop song with vocals' },
+            { sceneNumber: 2, startTime: 8, endTime: 20, visualDescription: 'close-up of his face laughing', audioSummary: 'song continues' },
+        ],
+        rawTranscript: [{ text: 'baby baby oh', tStart: 1, tEnd: 4 }],
+    });
+    let calls = 0;
+    const read = async ({ scenes, transcript }) => {
+        calls += 1;
+        return {
+            version: 1, source: 'model', audioType: 'music_with_lyrics', speech: transcript.map(() => 'sung'),
+            scenes: scenes.map((_, i) => ({ setting: 'home', subject: i ? 'person_talking' : 'person_doing', shot: i ? 'close_up' : 'medium', energy: 'intense', devices: i ? ['humor_or_gag'] : [] })),
+        };
+    };
+    const set = await learning.upsertVideoFeatures(video.toObject(), { read });
+    assert.equal(calls, 1);
+    assert.equal(set.features.lyricsShare, 1);
+    assert.equal(set.features.speechWpm, undefined, 'lyrics are not speech');
+    assert.equal(set.features.descSetting, 'home');
+    assert.equal(set.features.descHumor, true);
+    const stored = await Video.findById(video._id).select('contentRead').lean();
+    assert.equal(stored.contentRead.basis, '2:1');
+    await learning.upsertVideoFeatures(await Video.findById(video._id).lean(), { read });
+    assert.equal(calls, 1, 'the stored read is reused');
+});
+
 test('backfill covers existing uploads and admin examples; inventory counts labelled data', async () => {
     const user = await User.create({ name: 'B', email: `backfill-${Date.now()}@example.invalid`, password: 'pw-123456', isEmailVerified: true });
     await Video.create({
@@ -218,7 +248,7 @@ test('daily job runs every step, records the run, and refuses to overlap', async
     });
     assert.equal(result.status, 'done');
     const run = await LearningRun.findById(result.runId).lean();
-    assert.deepEqual(run.steps.map((s) => s.name), ['backfill', 'collect', 'deep', 'label', 'comments', 'trends', 'model', 'insights', 'inventory', 'report_card']);
+    assert.deepEqual(run.steps.map((s) => s.name), ['backfill', 'collect', 'deep', 'read', 'label', 'comments', 'trends', 'model', 'insights', 'inventory', 'report_card']);
     assert.match(run.steps.find((s) => s.name === 'model').counts.skipped, /needs 200 labelled videos/);
     assert.equal(run.steps.find((s) => s.name === 'deep').counts.skipped, 'LEARNING_DEEP_DAILY=0');
     assert.ok(run.steps.every((s) => s.ok), JSON.stringify(run.steps));

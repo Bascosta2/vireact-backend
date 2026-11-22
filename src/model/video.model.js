@@ -320,6 +320,14 @@ const videoSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.Mixed,
         default: undefined
     },
+    /**
+     * Lyrics vs speech per transcript line and tags per scene description (learning/content-read.js),
+     * read after the analysis finishes. Learning data only.
+     */
+    contentRead: {
+        type: mongoose.Schema.Types.Mixed,
+        default: undefined
+    },
     twelveLabsAssetId: {
         type: String,
         default: null,

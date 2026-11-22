@@ -482,7 +482,7 @@
       : h('p', { class: 'muted', text: 'Needs analyzed hits and misses with labelled comments. Comments are results, so they explain engagement but are never model inputs.' })));
     return cards;
   };
-  const fmtVal = (v) => (v == null ? '–' : Math.abs(v) >= 100 ? fmtNum(Math.round(v)) : String(Math.round(v * 100) / 100));
+  const fmtVal = (v) => (v == null ? '–' : typeof v === 'string' ? v.replace(/_/g, ' ') : Math.abs(v) >= 100 ? fmtNum(Math.round(v)) : String(Math.round(v * 100) / 100));
   const vsUsual = (o) => (o == null ? '' : `${Math.exp(o) >= 1 ? Math.exp(o).toFixed(1) : Math.exp(o).toFixed(2)}× usual`);
 
   const deepCards = (d) => {
@@ -542,12 +542,13 @@
         ['Cuts', a.cutsSource === 'ffmpeg' ? `${fmtNum(a.cuts.length)} measured from the file` : 'Estimated by Twelve Labs (file could not be measured)'],
         ['Length', fmtTime(a.media?.durationSec)], ['Language', a.language || ''],
         ['Opening frames', a.hookVision ? `${String(a.hookVision.visual || '').replace(/_/g, ' ')}; face ${a.hookVision.faceSize}; ${a.hookVision.framing?.replace(/_/g, ' ')}; ${a.hookVision.textOverlay ? `text overlay (${a.hookVision.textWords} words)` : 'no text overlay'}; ${a.hookVision.eyeContact ? 'eye contact' : 'no eye contact'}` : ''],
+        ['Soundtrack', a.contentRead ? `${String(a.contentRead.audioType || 'unknown').replace(/_/g, ' ')}; ${(a.contentRead.speech || []).filter((k) => k === 'sung').length} of ${(a.contentRead.speech || []).length} transcript lines are lyrics (${a.contentRead.source === 'model' ? 'read by model' : 'rules only'})` : 'not read yet'],
         ['Model', a.model || ''], ['Link', link],
       ])),
       card('Shot by shot', h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, ['Time', 'Said', 'On-screen text', 'What is on screen', 'Purpose'].map((t) => h('th', { text: t })))),
         h('tbody', {}, (a.timeline || []).map((r) => h('tr', {},
-          h('td', { class: 'num mono', text: `${r.start.toFixed(1)}–${r.end.toFixed(1)}s` }), h('td', { text: r.said || '' }), h('td', { text: r.onScreenText || '' }),
+          h('td', { class: 'num mono', text: `${r.start.toFixed(1)}–${r.end.toFixed(1)}s` }), h('td', {}, h('div', { text: r.said || '' }), r.sung ? h('div', { class: 'subtle', text: `♪ ${r.sung}` }) : null), h('td', { text: r.onScreenText || '' }),
           h('td', { class: 'subtle', text: [r.visual, r.action].filter(Boolean).join(' · ') }), h('td', { text: r.purpose || '' }))))))),
       card('Measured features', kv(features.map(([k, val]) => [factorName(k), typeof val === 'boolean' ? (val ? 'yes' : 'no') : fmtVal(val)]))),
       v.topComments && v.topComments.length ? card('Top comments', h('div', {}, v.topComments.slice(0, 10).map((cm) => h('div', { class: 'item' },

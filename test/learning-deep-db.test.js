@@ -10,7 +10,8 @@ console.log = () => {};
 
 const { connectTestDb, disconnectTestDb } = await import('./helpers/test-db.js');
 const { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, SocialVideoAnalysis } = await import('../src/model/learning.model.js');
-const { runDeepAnalysis, measureVideo, downloadVideo } = await import('../src/service/learning/deep-analyzer.js');
+const { runDeepAnalysis, measureVideo, downloadVideo, readPendingAnalyses } = await import('../src/service/learning/deep-analyzer.js');
+const { readContent: realReadContent } = await import('../src/service/learning/content-read.js');
 const { runCollection } = await import('../src/service/learning/social/collector.js');
 const { deepOverview, deepDetail } = await import('../src/service/learning/learning.service.js');
 
@@ -82,7 +83,17 @@ test('deep run: picks a hit and a miss per creator, analyzes them, keeps no file
     };
     const measure = async () => ({ info: { durationSec: 12, hasAudio: true, width: 720, height: 1280, fps: 30 }, cuts: [2, 5, 8], silences: [{ start: 9, end: 12 }], loudnessLufs: -13 });
 
-    const out = await runDeepAnalysis({ provider, limit: 10, concurrency: 2, now: NOW, deps: { twelveLabs: tl, download, measure } });
+    const readContent = (input) => realReadContent(input, {
+        complete: async () => ({
+            audioType: 'voice_only',
+            speech: [{ line: 1, kind: 'spoken' }],
+            scenes: [
+                { scene: 1, setting: 'kitchen', subject: 'person_talking', shot: 'close_up', energy: 'moderate', devices: ['question_to_viewer'] },
+                { scene: 2, setting: 'kitchen', subject: 'food', shot: 'medium', energy: 'calm', devices: ['demonstration'] },
+            ],
+        }),
+    });
+    const out = await runDeepAnalysis({ provider, limit: 10, concurrency: 2, now: NOW, deps: { twelveLabs: tl, download, measure, readContent } });
     assert.equal(out.picked, 4);
     assert.equal(out.used, 4);
     assert.equal(out.analyzed, 3);
@@ -100,6 +111,11 @@ test('deep run: picks a hit and a miss per creator, analyzes them, keeps no file
     assert.equal(hit.timeline[0].onScreenText, 'WAIT FOR IT');
     assert.equal(hit.features.shotCountExact, 4);
     assert.equal(hit.features.silenceShare, 0.25);
+    assert.equal(hit.contentRead.source, 'model');
+    assert.equal(hit.features.descSetting, 'kitchen', 'scene descriptions become features');
+    assert.equal(hit.features.openingSubject, 'person_talking');
+    assert.equal(hit.features.descQuestionToViewer, true);
+    assert.equal(hit.features.hasSpokenWords, true);
     assert.ok(Math.abs(hit.outperformance - Math.log(9001 / 1001)) < 0.001);
     const miss = await SocialVideoAnalysis.findOne({ externalId: 'ca-3' }).lean();
     assert.equal(miss.role, 'miss');
@@ -209,4 +225,38 @@ test('downloadVideo: refuses non-TikTok links, redirects off TikTok, non-video r
     const ok = await downloadVideo('https://v16.tiktokcdn.com/a.mp4', 'tok', dest, { fetchImpl: reply({ 'content-type': 'video/mp4' }) });
     assert.equal(ok.bytes, 20000);
     await fs.rm(dest, { force: true });
+});
+
+test('readPendingAnalyses: older analyses get a read; lyrics stop counting as speech; done ones are skipped', async () => {
+    const { creator, videos } = await seedCreator('cr', [5000, 100]);
+    await SocialVideo.updateOne({ _id: videos[0]._id }, { $set: { soundTitle: 'My Moon My Man - Edit' } });
+    const lyrics = [{ text: 'my moon my man take it easy', tStart: 1, tEnd: 6 }];
+    const scenes = [{ startTime: 0, endTime: 10, visualDescription: 'a woman exercising in a gym, wide shot', primaryAction: 'squats', audioSummary: 'pop song with female vocals', purpose: 'body' }];
+    await VideoFeatures.updateOne({ subjectType: 'social', subjectId: videos[0]._id }, { $set: { 'features.speechWpm': 36, 'features.firstSpeechSec': 1 } });
+    const doc = await SocialVideoAnalysis.create({
+        socialVideoId: videos[0]._id, externalId: 'cr-0', creatorId: creator._id, role: 'hit', via: 'download', cutsSource: 'ffmpeg',
+        media: { durationSec: 10, hasAudio: true }, cuts: [4], scenes, transcript: lyrics, features: { speechWpm: 36, firstSpeechSec: 1, softCutCount: 0 },
+    });
+    let calls = 0;
+    const failing = async () => { calls += 1; throw new Error('model down'); };
+    const readContent = (input) => realReadContent(input, { complete: failing });
+    const out = await readPendingAnalyses({ limit: 50, deps: { readContent } });
+    assert.ok(out.read >= 1);
+    assert.ok(out.heuristic >= 1, 'model down: the rules still catch the sung title');
+    const saved = await SocialVideoAnalysis.findById(doc._id).lean();
+    assert.deepEqual(saved.contentRead.speech, ['sung']);
+    assert.equal(saved.features.speechWpm, undefined);
+    assert.equal(saved.features.lyricsShare, 1);
+    assert.equal(saved.timeline[0].said, '');
+    assert.match(saved.timeline[0].sung, /moon/);
+    const vf = await VideoFeatures.findOne({ subjectType: 'social', subjectId: videos[0]._id }).lean();
+    assert.equal(vf.features.speechWpm, undefined, 'stale speech keys are removed from the training row');
+    assert.equal(vf.features.firstSpeechSec, undefined);
+    assert.equal(vf.features.lyricsShare, 1);
+    assert.equal(vf.features.captionChars, 12, 'provider features kept');
+
+    const before = calls;
+    const again = await readPendingAnalyses({ limit: 50, deps: { readContent } });
+    assert.equal(again.candidates, 0);
+    assert.equal(calls, before, 'nothing is read twice');
 });

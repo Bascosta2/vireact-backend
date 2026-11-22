@@ -20,7 +20,8 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { SocialCreator, SocialVideo, SocialVideoAnalysis, VideoFeatures } from '../../model/learning.model.js';
-import { buildTimeline, deepFeatures, pickPairs, shotsFromCuts, shotsFromScenes } from './deep-features.js';
+import { buildTimeline, deepFeatures, pickPairs, recomputeAnalysis, shotsFromCuts, shotsFromScenes } from './deep-features.js';
+import { CONTENT_READ_VERSION, SPEECH_KEYS, readContent } from './content-read.js';
 import { isMediaUrl, mediaHeaders } from './social/brightdata.js';
 import { cleanStats, usedOf } from './social/providers.js';
 import { extrasUpdate, writeOutcome } from './social/collector.js';
@@ -150,6 +151,7 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
     const download = deps.download ?? downloadVideo;
     const measure = deps.measure ?? measureVideo;
     const hookVision = deps.describeHook ?? describeHook;
+    const read = deps.readContent ?? readContent;
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'vx-deep-'));
     let assetId = null;
     try {
@@ -180,16 +182,18 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
             measured?.hookImage ? hookVision(measured.hookImage) : Promise.resolve(null),
         ]);
         if (!scenes.length && !transcript.length) throw new Error('Twelve Labs returned no scenes and no transcript');
+        // Lyrics vs speech and what the descriptions show (content-read.js). A failed call falls back to rules.
+        const contentRead = await Promise.resolve(read({ scenes, transcript, soundTitle: video.soundTitle ?? null, caption: video.caption ?? null })).catch(() => null);
 
         const durationSec = measured?.info?.durationSec ?? video.durationSec ?? scenes.at(-1)?.endTime ?? null;
         const cutsSource = measured ? 'ffmpeg' : 'pegasus';
         const shots = measured ? shotsFromCuts(measured.cuts, durationSec) : shotsFromScenes(scenes);
-        const timeline = buildTimeline({ shots, scenes, transcript });
+        const timeline = buildTimeline({ shots, scenes, transcript, read: contentRead });
         const language = detectLanguage(transcript.map((s) => s.text).join(' ')) ?? video.language ?? detectLanguage(video.caption);
         const features = deepFeatures({
             durationSec, cutsSource, shots, scenes, transcript, timeline,
             silences: measured?.silences ?? [], loudnessLufs: measured?.loudnessLufs ?? null, hasAudio: measured?.info?.hasAudio ?? null,
-            picture: measured?.picture ?? {}, rhythm: measured?.rhythm ?? {}, hook: hook?.features ?? {},
+            picture: measured?.picture ?? {}, rhythm: measured?.rhythm ?? {}, hook: hook?.features ?? {}, read: contentRead,
         });
         if (measured && Array.isArray(measured.cutsHardOnly)) features.softCutCount = Math.max(0, (measured.cuts?.length ?? 0) - measured.cutsHardOnly.length);
         const doc = {
@@ -203,6 +207,7 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
                 picture: measured.picture ?? null, rhythm: measured.rhythm ?? null, measureVersion: measured.version ?? null,
             } : { durationSec },
             hookVision: hook?.answer ?? null,
+            contentRead: contentRead ?? null,
             language: language ?? null,
             cuts: measured ? shots.slice(1).map((s) => s.start) : [],
             silences: measured?.silences ?? [],
@@ -219,6 +224,59 @@ export const analyzeOne = async ({ video, pick, creator, extra, deps = {}, maxDu
         if (assetId) await Promise.resolve(tl.deleteAsset(assetId)).catch((error) => log(`deep: Twelve Labs asset ${assetId} not deleted: ${error.message}`));
         await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
+};
+
+// ---- reading older analyses
+
+/**
+ * Deep analyses without a current content read (analyzed before lyric detection and description
+ * features existed, or under an older CONTENT_READ_VERSION): read them, then recompute their timeline
+ * and features from what is stored. Speech keys that no longer apply (all lyrics) are removed.
+ */
+export const readPendingAnalyses = async ({ limit = 300, concurrency = 4, deps = {}, log = () => {} } = {}) => {
+    const out = { candidates: 0, read: 0, model: 0, heuristic: 0, lyrics: 0, failed: 0 };
+    if (!(limit > 0)) return out;
+    const read = deps.readContent ?? readContent;
+    const docs = await SocialVideoAnalysis.find({ $or: [{ contentRead: null }, { 'contentRead.version': { $ne: CONTENT_READ_VERSION } }] })
+        .sort({ analyzedAt: -1 }).limit(limit).lean();
+    out.candidates = docs.length;
+    if (!docs.length) return out;
+    const sounds = new Map((await SocialVideo.find({ _id: { $in: docs.map((d) => d.socialVideoId) } }).select('soundTitle caption').lean()).map((v) => [String(v._id), v]));
+    const queue = [...docs];
+    const worker = async () => {
+        for (let doc = queue.shift(); doc; doc = queue.shift()) {
+            try {
+                const v = sounds.get(String(doc.socialVideoId));
+                const contentRead = await withAiContext(
+                    { feature: 'learning_content_read', distinctId: 'learning-engine' },
+                    () => read({ scenes: doc.scenes ?? [], transcript: doc.transcript ?? [], soundTitle: v?.soundTitle ?? null, caption: v?.caption ?? null }),
+                );
+                if (!contentRead) {
+                    await SocialVideoAnalysis.updateOne({ _id: doc._id }, { $set: { contentRead: { version: CONTENT_READ_VERSION, source: 'empty', speech: [], scenes: [], at: new Date() } } });
+                    continue;
+                }
+                const { timeline, features } = recomputeAnalysis(doc, contentRead);
+                await SocialVideoAnalysis.updateOne({ _id: doc._id }, { $set: { contentRead, timeline, features } });
+                const gone = SPEECH_KEYS.filter((k) => !(k in features));
+                await VideoFeatures.updateOne(
+                    { subjectType: 'social', subjectId: doc.socialVideoId },
+                    {
+                        $set: Object.fromEntries(Object.entries(features).map(([k, val]) => [`features.${k}`, val])),
+                        ...(gone.length ? { $unset: Object.fromEntries(gone.map((k) => [`features.${k}`, ''])) } : {}),
+                    },
+                );
+                out.read += 1;
+                out[contentRead.source === 'model' ? 'model' : 'heuristic'] += 1;
+                if (contentRead.speech.some((k) => k === 'sung')) out.lyrics += 1;
+            } catch (error) {
+                out.failed += 1;
+                log(`read ${doc.externalId}: ${error.message}`);
+            }
+        }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(8, concurrency)) }, worker));
+    log(`read: ${JSON.stringify(out)}`);
+    return out;
 };
 
 // ---- a run

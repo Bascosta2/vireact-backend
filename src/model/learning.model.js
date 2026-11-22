@@ -156,6 +156,8 @@ const socialVideoAnalysisSchema = new mongoose.Schema({
     features: { type: mongoose.Schema.Types.Mixed, default: {} },
     /** The hook-frame description (hook-vision.js), closed-list answers. */
     hookVision: { type: mongoose.Schema.Types.Mixed, default: null },
+    /** Lyrics vs speech per transcript line and tags per scene description (content-read.js). */
+    contentRead: { type: mongoose.Schema.Types.Mixed, default: null },
     language: { type: String, default: null },
     ms: { type: Number, default: null },
     analyzedAt: { type: Date, default: Date.now },

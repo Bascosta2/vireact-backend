@@ -79,7 +79,7 @@ test('features from a user video, an admin example and a public video share the 
     assert.equal(s.hashtagCount, 2);
     assert.equal(s.originalSound, true);
     assert.equal(s.postWeekdayUtc, 0);
-    assert.equal(FEATURE_VERSION, 1);
+    assert.equal(FEATURE_VERSION, 2);
 });
 
 test('labels: settled reading nearest 7 days; baseline from the creator, else followers', () => {

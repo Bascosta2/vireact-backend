@@ -47,14 +47,25 @@ export const FEATURE_TEXT = {
     motionFirst3s: ['motion in the first 3 seconds', ''], motionHookRatio: ['opening motion vs the rest', 'x'], brightness: ['brightness', '/255'],
     cutsOnBeatShare: ['share of cuts on a beat', '%'], tempoBpm: ['music tempo', ' BPM'], hookFaceShare: ['face size in the opening', '% of frame'],
     hookEyeContact: ['eye contact in the opening', 'yes/no'], hookTextOverlay: ['text overlay in the opening', 'yes/no'], durationSec: ['length', 's'],
+    // From the scene descriptions and lyric detection (content-read.js).
+    lyricsShare: ['share of the words that are song lyrics', '%'], hasSpokenWords: ['someone speaking (not just lyrics)', 'yes/no'],
+    descPersonShare: ['time with a person on screen', '%'], descTalkingShare: ['time with someone talking on screen', '%'],
+    descCloseUpShare: ['time in close-up shots', '%'], descWideShare: ['time in wide shots', '%'], descPovShare: ['time in point-of-view shots', '%'],
+    descIntenseShare: ['time in high-energy scenes', '%'], descSubjectChangesPerMin: ['changes of what is shown, per minute', ''],
+    descSettingChangesPerMin: ['changes of location, per minute', ''], descSettingCount: ['different locations', ''], descVariety: ['visual variety (distinct shots)', '%'],
+    descReveal: ['a reveal or result shown', 'yes/no'], descRevealSec: ['time of the reveal or result', 's'], descBeforeAfter: ['a before/after', 'yes/no'],
+    descDemonstration: ['a demonstration', 'yes/no'], descReaction: ['a reaction shot', 'yes/no'], descHumor: ['a gag or humor beat', 'yes/no'],
+    descTransformation: ['a transformation', 'yes/no'], descSteps: ['steps or a list', 'yes/no'], descQuestionToViewer: ['a question to the viewer', 'yes/no'],
+    descProductShown: ['a product showcase', 'yes/no'], descTextStory: ['a story told in on-screen text', 'yes/no'], descTension: ['tension or suspense', 'yes/no'],
+    descCallToAction: ['a call to action', 'yes/no'],
 };
 
 /** Which analyzer cares about which findings. */
 const ANALYZER_KEYS = {
-    hook: /^(firstCut|cutsInFirst3s|firstSpeech|openingWords|wordsBeforeFirstCut|textInFirst2s|hookTextAndSpeech|toCameraOpening|hookEndSec|motionFirst3s|motionHookRatio|hook[A-Z])/,
-    pacing: /(cut|Cut|Shot|shot|speechWpm|silenceShare|motion|durationSec|tempoBpm)/,
-    audio: /^(musicShare|loudnessLufs|silenceShare|speechWpm|speechCoverage|tempoBpm|cutsOnBeat|onsetRate)/,
-    caption: /^(onScreenTextShare|textShotShare|textInFirst2s|textWhileSpeakingShare|hookTextOverlay|hookTextAndSpeech)/,
+    hook: /^(firstCut|cutsInFirst3s|firstSpeech|openingWords|wordsBeforeFirstCut|textInFirst2s|hookTextAndSpeech|toCameraOpening|hookEndSec|motionFirst3s|motionHookRatio|hook[A-Z]|descReveal|descBeforeAfter|descQuestionToViewer|descTension|descTransformation)/,
+    pacing: /(cut|Cut|Shot|shot|speechWpm|silenceShare|motion|durationSec|tempoBpm|^desc(SubjectChanges|SettingChanges|SettingCount|Variety|IntenseShare|Steps|Person|Talking|CloseUp|Wide|Pov|Demonstration|Reaction|Humor|ProductShown|CallToAction))/,
+    audio: /^(musicShare|loudnessLufs|silenceShare|speechWpm|speechCoverage|tempoBpm|cutsOnBeat|onsetRate|lyricsShare|hasSpokenWords)/,
+    caption: /^(onScreenTextShare|textShotShare|textInFirst2s|textWhileSpeakingShare|hookTextOverlay|hookTextAndSpeech|descTextStory)/,
 };
 
 const fmt = (key, v) => {
@@ -132,7 +143,7 @@ export const learnedContextForVideo = async (videoId, analyzer) => {
         if (!videoId || !ANALYZER_KEYS[analyzer]) return '';
         const any = await LearningInsight.estimatedDocumentCount();
         if (!any) return '';
-        const video = await Video.findById(videoId).select('uploader_id duration scenes rawTranscript analysis viralityScore sourceDescription postedAt contentProfile mediaMeasure').lean();
+        const video = await Video.findById(videoId).select('uploader_id duration scenes rawTranscript analysis viralityScore sourceDescription postedAt contentProfile mediaMeasure contentRead').lean();
         if (!video) return '';
         const niche = await nicheOf(video.uploader_id);
         const insights = await LearningInsight.find({ niche: { $in: niche ? [niche, 'all'] : ['all'] } }).lean();

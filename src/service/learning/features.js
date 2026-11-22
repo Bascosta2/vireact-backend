@@ -10,8 +10,10 @@
  */
 import { contentSignals } from '../view-signals.js';
 import { formatFromStrategy, hookFromStrategy } from '../../constants/taxonomy.js';
+import { descriptionFeatures, spokenTranscript } from './content-read.js';
 
-export const FEATURE_VERSION = 1;
+/** 2: speech features count spoken lines only (lyrics removed), plus description features (content-read.js). */
+export const FEATURE_VERSION = 2;
 
 const MUSIC = /\bmusic\b|\bsong\b|\bbeat\b|\bsoundtrack\b|\binstrumental\b|\bmelody\b/i;
 const TO_CAMERA = /(talk|speak)(s|ing)? (directly )?(to|into) (the )?camera|address(es|ing) the (camera|viewer)|close[- ]up of (a |the |his |her )?(face|person|man|woman)|looks? (directly )?(at|into) the camera/i;
@@ -88,14 +90,19 @@ const captionFeatures = (caption) => {
     return { captionChars: text.length, hashtagCount: hashtagsIn(text).length };
 };
 
-/** A user's analyzed upload (Video document or lean object). */
+/**
+ * A user's analyzed upload (Video document or lean object). With a content read (video.contentRead), lyrics
+ * are left out of the speech features and the scene descriptions add their own features.
+ */
 export const featuresFromVideo = (video) => {
     const duration = num(video?.duration);
     const signals = contentSignals(video);
+    const read = video?.contentRead ?? null;
     return compact({
         durationSec: duration != null ? round(duration, 1) : null,
         ...sceneFeatures(video?.scenes, duration),
-        ...transcriptFeatures(video?.rawTranscript, duration),
+        ...transcriptFeatures(spokenTranscript(video?.rawTranscript, read), duration),
+        ...descriptionFeatures(read, { scenes: video?.scenes, transcript: video?.rawTranscript, durationSec: duration }),
         sfxShare: round(signals.sfxShare),
         framingIssues: Array.isArray(video?.scenes) && video.scenes.length ? signals.framingIssues : null,
         hookScore: scoreOf(video?.analysis, 'hook'),

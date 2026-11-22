@@ -12,6 +12,8 @@
  * and holds the sample picker and the hit-vs-miss factor report. No I/O here.
  */
 import { sceneFeatures, transcriptFeatures } from './features.js';
+import { descriptionFeatures, spokenTranscript, sungTranscript } from './content-read.js';
+import { hookFeatures } from './hook-vision.js';
 
 /** Cuts closer together than this are one cut (flash frames, transitions measured twice). */
 export const MIN_SHOT_SEC = 0.2;
@@ -52,21 +54,26 @@ const segmentOf = (s) => ({ start: num(s?.tStart ?? s?.start), end: num(s?.tEnd 
  * One row per shot: when it starts and ends, the words spoken during it, and what is on screen.
  * Words of a transcript segment are spread evenly over its time span, so a sentence that runs across a
  * cut is split at the cut. Screen content comes from the Pegasus scene that overlaps the shot most.
+ * With a content read, lyrics go to `sung` instead of `said`, so they never count as speech.
  */
-export const buildTimeline = ({ shots = [], scenes = [], transcript = [] } = {}) => {
-    const rows = shots.map((shot, i) => ({ i, start: shot.start, end: shot.end, words: [] }));
+export const buildTimeline = ({ shots = [], scenes = [], transcript = [], read = null } = {}) => {
+    const rows = shots.map((shot, i) => ({ i, start: shot.start, end: shot.end, words: [], sung: [] }));
     if (!rows.length) return [];
     const findShot = (t) => {
         for (let k = rows.length - 1; k >= 0; k--) if (t >= rows[k].start) return k;
         return 0;
     };
-    for (const seg of (Array.isArray(transcript) ? transcript : []).map(segmentOf)) {
-        const words = wordsOf(seg.text);
-        if (!words.length || seg.start == null) continue;
-        const end = seg.end != null && seg.end > seg.start ? seg.end : seg.start;
-        const step = (end - seg.start) / words.length;
-        words.forEach((w, k) => rows[findShot(seg.start + (k + 0.5) * step)].words.push(w));
-    }
+    const place = (list, field) => {
+        for (const seg of list.map(segmentOf)) {
+            const words = wordsOf(seg.text);
+            if (!words.length || seg.start == null) continue;
+            const end = seg.end != null && seg.end > seg.start ? seg.end : seg.start;
+            const step = (end - seg.start) / words.length;
+            words.forEach((w, k) => rows[findShot(seg.start + (k + 0.5) * step)][field].push(w));
+        }
+    };
+    place(spokenTranscript(transcript, read), 'words');
+    place(sungTranscript(transcript, read), 'sung');
     const timedScenes = (Array.isArray(scenes) ? scenes : []).filter((s) => Number.isFinite(s?.startTime) && Number.isFinite(s?.endTime));
     return rows.map((row) => {
         let best = null;
@@ -81,6 +88,7 @@ export const buildTimeline = ({ shots = [], scenes = [], transcript = [] } = {})
             end: row.end,
             durationSec: round(row.end - row.start),
             said: row.words.join(' '),
+            ...(row.sung.length ? { sung: row.sung.join(' ') } : {}),
             onScreenText: best?.onScreenText ?? '',
             visual: best?.visualDescription ?? '',
             action: best?.primaryAction ?? '',
@@ -100,13 +108,14 @@ const compact = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) =
  */
 export const deepFeatures = ({
     durationSec, cutsSource = null, shots = [], scenes = [], transcript = [], timeline = [], silences = [], loudnessLufs = null, hasAudio = null,
-    picture = {}, rhythm = {}, hook = {},
+    picture = {}, rhythm = {}, hook = {}, read = null,
 } = {}) => {
     const duration = num(durationSec);
     const base = {
         durationSec: duration != null ? round(duration, 1) : null,
         ...sceneFeatures(scenes, duration),
-        ...transcriptFeatures(transcript, duration),
+        ...transcriptFeatures(spokenTranscript(transcript, read), duration),
+        ...descriptionFeatures(read, { scenes, transcript, durationSec: duration }),
     };
     const exact = {};
     if (cutsSource === 'ffmpeg' && duration > 0 && shots.length) {
@@ -158,6 +167,26 @@ export const deepFeatures = ({
     });
 };
 
+/**
+ * Timeline and features of a stored deep analysis (SocialVideoAnalysis), recomputed with a content read.
+ * Used when a read arrives after the analysis (the daily job re-reads older analyses).
+ */
+export const recomputeAnalysis = (doc, read = doc?.contentRead ?? null) => {
+    const media = doc?.media ?? {};
+    const durationSec = num(media.durationSec);
+    const scenes = doc?.scenes ?? [];
+    const transcript = doc?.transcript ?? [];
+    const shots = doc?.cutsSource === 'ffmpeg' ? shotsFromCuts(doc?.cuts ?? [], durationSec) : shotsFromScenes(scenes);
+    const timeline = buildTimeline({ shots, scenes, transcript, read });
+    const features = deepFeatures({
+        durationSec, cutsSource: doc?.cutsSource ?? null, shots, scenes, transcript, timeline, silences: doc?.silences ?? [],
+        loudnessLufs: media.loudnessLufs ?? null, hasAudio: media.hasAudio ?? null, picture: media.picture ?? {}, rhythm: media.rhythm ?? {},
+        hook: doc?.hookVision ? hookFeatures(doc.hookVision) : {}, read,
+    });
+    if (Number.isFinite(doc?.features?.softCutCount)) features.softCutCount = doc.features.softCutCount;
+    return { timeline, features };
+};
+
 /** Keys that come only from measuring the file (or its hook frames), never from Twelve Labs alone. */
 const MEASURED_ONLY = /Exact$|^(textShotShare|textWhileSpeakingShare|wordsBeforeFirstCut|hookTextAndSpeech|silenceShare|loudnessLufs|brightness|brightnessFirst3s|saturation|motion|motionFirst3s|motionHookRatio|motionVariability|onsetRate|tempoBpm|cutsOnBeatShare|cutsOnBeatLift|hook[A-Z]\w*|softCutCount)$/;
 
@@ -171,10 +200,11 @@ export const measuredVideoFeatures = (video, mediaMeasure = video?.mediaMeasure)
     const shots = shotsFromCuts(m.cuts ?? [], m.durationSec);
     const transcript = video.rawTranscript ?? [];
     const scenes = video.scenes ?? [];
+    const read = video.contentRead ?? null;
     const all = deepFeatures({
         durationSec: m.durationSec, cutsSource: 'ffmpeg', shots, scenes, transcript,
-        timeline: buildTimeline({ shots, scenes, transcript }), silences: m.silences ?? [], loudnessLufs: m.loudnessLufs,
-        hasAudio: m.hasAudio, picture: m.picture ?? {}, rhythm: m.rhythm ?? {}, hook: m.hook ?? {},
+        timeline: buildTimeline({ shots, scenes, transcript, read }), silences: m.silences ?? [], loudnessLufs: m.loudnessLufs,
+        hasAudio: m.hasAudio, picture: m.picture ?? {}, rhythm: m.rhythm ?? {}, hook: m.hook ?? {}, read,
     });
     const out = Object.fromEntries(Object.entries(all).filter(([k]) => MEASURED_ONLY.test(k)));
     if (Number.isFinite(m.hardCuts)) out.softCutCount = Math.max(0, (m.cuts?.length ?? 0) - m.hardCuts);
