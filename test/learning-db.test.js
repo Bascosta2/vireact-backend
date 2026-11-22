@@ -248,7 +248,7 @@ test('daily job runs every step, records the run, and refuses to overlap', async
     });
     assert.equal(result.status, 'done');
     const run = await LearningRun.findById(result.runId).lean();
-    assert.deepEqual(run.steps.map((s) => s.name), ['backfill', 'collect', 'deep', 'read', 'label', 'comments', 'trends', 'model', 'insights', 'inventory', 'report_card']);
+    assert.deepEqual(run.steps.map((s) => s.name), ['accounts', 'backfill', 'collect', 'deep', 'read', 'label', 'comments', 'trends', 'model', 'insights', 'inventory', 'report_card']);
     assert.match(run.steps.find((s) => s.name === 'model').counts.skipped, /needs 200 labelled videos/);
     assert.equal(run.steps.find((s) => s.name === 'deep').counts.skipped, 'LEARNING_DEEP_DAILY=0');
     assert.ok(run.steps.every((s) => s.ok), JSON.stringify(run.steps));

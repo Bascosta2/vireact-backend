@@ -115,6 +115,40 @@ export const addSnapshot = async (userId, videoId, body = {}) => {
     return toPerformanceResponse(video);
 };
 
+/**
+ * Verified readings from a connected account (services/accounts/). Same path as a typed entry, so the
+ * report, the learning loop and the learning engine treat them alike (source tiktok/youtube/instagram
+ * counts as api_verified). A reading already stored (same source and time) is not added twice. Fills
+ * the post link, post date, platform and followers only where they are empty.
+ */
+export const recordConnectedReadings = async (videoId, userId, { source, readings = [], postUrl = null, postedAt = null, followers = null } = {}) => {
+    const video = await loadOwnedVideo(userId, videoId);
+    const have = new Set(video.performanceSnapshots.map((s) => `${s.source}:${new Date(s.capturedAt).getTime()}`));
+    let added = 0;
+    for (const r of readings) {
+        if (!Number.isFinite(r?.views) || r.views < 0 || !r.capturedAt) continue;
+        const key = `${source}:${new Date(r.capturedAt).getTime()}`;
+        if (have.has(key)) continue;
+        have.add(key);
+        const snap = { capturedAt: new Date(r.capturedAt), views: r.views, source };
+        for (const k of OPTIONAL_COUNTS) if (Number.isFinite(r[k]) && r[k] >= 0) snap[k] = r[k];
+        video.performanceSnapshots.push(snap);
+        added += 1;
+    }
+    if (!added) return 0;
+    video.performanceSnapshots = [...video.performanceSnapshots].sort(byCapturedAt).slice(-MAX_SNAPSHOTS);
+    syncActualViews(video);
+    if (!video.postUrl && postUrl) video.postUrl = normalizePostUrl(postUrl) ?? null;
+    if (!video.postedAt && postedAt) video.postedAt = new Date(postedAt);
+    const platform = normalizePlatform(source);
+    if (platform && !video.creatorPlatform) video.creatorPlatform = platform;
+    if (followers != null && video.creatorFollowers == null) video.creatorFollowers = normalizeFollowers(followers);
+    await video.save();
+    markLearningStale();
+    onPerformanceChanged(video);
+    return added;
+};
+
 export const deleteSnapshot = async (userId, videoId, snapshotId) => {
     const video = await loadOwnedVideo(userId, videoId);
     const before = video.performanceSnapshots.length;

@@ -43,6 +43,7 @@ import { getProvider } from './social/providers.js';
 import './social/brightdata.js'; // registers LEARNING_PROVIDER=brightdata
 import { runCollection, TRACK_SHARE } from './social/collector.js';
 import { labelPending } from './classifier.js';
+import { syncAllAccounts } from '../accounts/accounts.service.js';
 
 export const MILESTONES = Object.freeze([
     { at: 300, unlocks: 'Trained model runs in shadow; benchmarks for the biggest niches' },
@@ -342,6 +343,8 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
         }
     };
     try {
+        // Connected accounts first: today's verified results feed the rest of the run.
+        await step('accounts', () => (deps.syncAccounts ?? syncAllAccounts)({ now, log }));
         await step('backfill', () => backfillLearning());
         const collected = await step('collect', () => (provider
             ? runCollection({ provider, budget: config.dailyRecords, trackShare: config.trackShare ?? TRACK_SHARE, now, log })

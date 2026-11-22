@@ -25,6 +25,7 @@ import {
 import { isAllowedSocialVideoUrl } from '../lib/social-video-url.js';
 import { downloadSocialVideoForIngest } from './social-video-fetch.service.js';
 import { removeVideoLearningData } from './learning/learning.service.js';
+import { ConnectedPost } from '../model/connected-account.model.js';
 import { keepForMeasure, measureLater } from './learning/user-media.js';
 import { Readable } from 'stream';
 
@@ -418,6 +419,8 @@ export const deleteVideoService = async (videoId, userId) => {
         await Video.deleteOne({ _id: videoId, uploader_id: userId });
         console.log(`[Delete] Successfully deleted video document: ${videoId}`);
         await removeVideoLearningData(videoId).catch((err) => console.error(`[Delete] Learning data for ${videoId} not removed:`, err.message));
+        // A connected post that pointed at this upload goes back to unlinked.
+        await ConnectedPost.updateMany({ videoId }, { $set: { videoId: null, linkSource: null, milestonesSent: [] } }).catch(() => {});
 
         return true;
     } catch (error) {

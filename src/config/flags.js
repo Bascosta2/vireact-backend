@@ -24,6 +24,19 @@ export const hasEditorAccess = (user) => {
 };
 
 /**
+ * Accounts tab (connected TikTok / YouTube / Instagram accounts) private beta, same pattern as the editor:
+ * off (default) = only ACCOUNTS_BETA_EMAILS see it; ACCOUNTS_ENABLED=true opens it to everyone.
+ */
+export const isAccountsEnabled = () => isOn('ACCOUNTS_ENABLED');
+
+export const hasAccountsAccess = (user) => {
+    if (isAccountsEnabled()) return true;
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!email) return false;
+    return String(process.env.ACCOUNTS_BETA_EMAILS || '').split(',').some((e) => e.trim().toLowerCase() === email);
+};
+
+/**
  * 7-day free trial of a paid plan through Stripe Checkout (card required, $0 today). On unless
  * TRIAL_BILLING_ENABLED is exactly 'false'. One trial per account (Subscription.trialUsedAt).
  */
