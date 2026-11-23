@@ -3,6 +3,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { NODE_ENV } from "../config/index.js";
 import { getAllowedCorsOrigins } from "../config/cors-allowed-origins.js";
 import { captureError } from "../service/ops-monitoring.service.js";
+import { MAX_UPLOAD_BYTES } from './fileUpload.js';
 
 export const errorHandler = (err, req, res, next) => {
     // Ensure CORS headers are set even for error responses
@@ -26,7 +27,7 @@ export const errorHandler = (err, req, res, next) => {
         // Handle multer errors with specific messages
         if (err.code === 'LIMIT_FILE_SIZE') {
             res.status(413).json(
-                ApiResponse.error(413, "File size exceeds the maximum limit of 200MB", null)
+                ApiResponse.error(413, `File size exceeds the maximum limit of ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`, null)
             );
         } else if (err.message && err.message.includes('Invalid file type')) {
             res.status(400).json(

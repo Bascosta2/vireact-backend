@@ -321,6 +321,14 @@ const videoSchema = new mongoose.Schema({
         default: undefined
     },
     /**
+     * Uploads over Twelve Labs' 200 MB direct limit go to storage and Twelve Labs fetches them by a
+     * signed link. This is that storage key; the copy is deleted once the video is indexed.
+     */
+    analysisSourceKey: {
+        type: String,
+        default: null
+    },
+    /**
      * Lyrics vs speech per transcript line and tags per scene description (learning/content-read.js),
      * read after the analysis finishes. Learning data only.
      */

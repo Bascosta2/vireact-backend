@@ -48,7 +48,11 @@ export const TWELVELABS_DATASET_INDEX = process.env.TWELVELABS_DATASET_INDEX;
 export const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
 /** Max time for a single yt-dlp invocation (metadata + download). */
 export const YT_DLP_TIMEOUT_MS = Number(process.env.YT_DLP_TIMEOUT_MS) || 600000;
-/** Max downloaded file size for social URL ingest (default 200MB, aligned with upload cap). */
+/**
+ * Max downloaded file size for social URL ingest (default 200 MB). The download is held in memory and sent
+ * to Twelve Labs directly (200 MB is its direct-upload limit); platform files of 2-3 minute shorts are far
+ * smaller than this.
+ */
 export const SOCIAL_VIDEO_MAX_BYTES = Number(process.env.SOCIAL_VIDEO_MAX_BYTES) || 209715200;
 
 // MongoDB Vector Index for KnowledgeBase

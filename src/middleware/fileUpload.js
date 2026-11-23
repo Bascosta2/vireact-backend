@@ -7,12 +7,13 @@ import { fileTypeFromFile } from 'file-type';
 
 /**
  * User video uploads are written to a temporary file on disk instead of being held in memory.
- * Previously each upload (up to 200 MB) sat in RAM until it reached Twelve Labs, so a few large
+ * Previously each upload sat in RAM until it reached Twelve Labs, so a few large
  * uploads at once could run the server out of memory and restart it (killing other users' jobs).
  * The file is streamed from disk to Twelve Labs and deleted afterwards (see removeUploadedFile).
  */
 export const UPLOAD_TMP_DIR = path.join(os.tmpdir(), 'vireact-uploads');
-export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+/** Videos up to 3 minutes: a 2-3 minute 1080p phone recording is often 200-500 MB. Same cap as the editor. */
+export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 
 const allowedMimes = [
     'video/mp4',

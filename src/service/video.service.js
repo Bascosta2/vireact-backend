@@ -28,6 +28,49 @@ import { removeVideoLearningData } from './learning/learning.service.js';
 import { ConnectedPost } from '../model/connected-account.model.js';
 import { keepForMeasure, measureLater } from './learning/user-media.js';
 import { Readable } from 'stream';
+import path from 'path';
+import { editorKey, isStorageConfigured, storage } from '../lib/storage.js';
+
+/**
+ * Twelve Labs takes local files up to 200 MB; links up to 4 GB. Larger uploads (2-3 minute phone
+ * videos are often 200-500 MB) go to storage first, and Twelve Labs fetches them by a signed link.
+ * That also keeps big files out of server memory (the SDK buffers direct uploads).
+ */
+export const TWELVE_LABS_DIRECT_MAX_BYTES = 190 * 1024 * 1024;
+const LARGE_SOURCE_LINK_SEC = 6 * 60 * 60;
+
+/**
+ * Sends an uploaded file to Twelve Labs: directly up to TWELVE_LABS_DIRECT_MAX_BYTES, otherwise through
+ * storage and a signed link (recorded on video.analysisSourceKey for cleanup). Exported for tests.
+ */
+export const createAnalysisAsset = async ({ file, fileToUpload, fileSize, filename, userId, videoId, video }, deps = {}) => {
+    const store = deps.storage ?? storage;
+    const direct = deps.createDirect ?? ((f) => twelveLabsUploadSlots.run(() => twelveLabsCreateDirectAsset(f)));
+    const byLink = deps.createFromUrl ?? twelveLabsCreateUrlAsset;
+    if (fileSize <= TWELVE_LABS_DIRECT_MAX_BYTES) return direct(fileToUpload);
+    fileToUpload?.destroy?.();
+    const ext = (path.extname(filename) || '.mp4').toLowerCase().slice(0, 6);
+    const key = editorKey('analysis', userId, videoId, `source${ext}`);
+    await store.uploadFile(file.path, key, file.mimetype || 'video/mp4');
+    video.analysisSourceKey = key;
+    await video.save();
+    const link = await store.presignDownload(key, { expiresIn: LARGE_SOURCE_LINK_SEC });
+    const asset = await byLink(link);
+    console.log(`📦 TwelveLabs link upload (${Math.round(fileSize / 1024 / 1024)} MB via storage), asset status: ${asset?.status || 'unknown'}`);
+    return asset;
+};
+
+/** Removes the storage copy of a large upload. Never throws. */
+export const removeAnalysisSource = async (video) => {
+    if (!video?.analysisSourceKey) return;
+    try {
+        await storage.deletePrefix(`${path.posix.dirname(video.analysisSourceKey)}/`);
+        video.analysisSourceKey = null;
+        if (typeof video.save === 'function') await video.save();
+    } catch (err) {
+        console.warn(`[Upload] Storage copy of ${video._id} not removed: ${err.message}`);
+    }
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -187,6 +230,8 @@ export const ensureVideoIndexed = async (video) => {
     video.twelveLabsPendingIndexId = null;
     await video.save();
     console.log(`✅ Asset ${video.twelveLabsAssetId} indexed, video ID: ${indexedAssetId}`);
+    // Twelve Labs has its own copy now: a large upload's storage copy is no longer needed.
+    await removeAnalysisSource(video);
     return indexedAssetId;
 };
 
@@ -393,6 +438,7 @@ export const deleteVideoService = async (videoId, userId) => {
                 console.error(`[Delete] Failed to delete TwelveLabs asset ${video.twelveLabsAssetId}:`, twelveLabsAssetError.message);
             }
         }
+        await removeAnalysisSource(video);
 
         // Delete chat messages linked to this video
         try {
@@ -494,6 +540,9 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
 
         // Get file size from multer file object or buffer
         const fileSize = file.size || file.buffer?.length || 0;
+        if (fileSize > TWELVE_LABS_DIRECT_MAX_BYTES && (!file?.path || !isStorageConfigured())) {
+            throw new ApiError(413, 'Videos over 190 MB cannot be analyzed right now. Export a smaller file (720p or 1080p) and try again.');
+        }
 
         // Generate unique video ID
         const videoId = new mongoose.Types.ObjectId();
@@ -544,7 +593,7 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             if (slots.active >= slots.limit) {
                 console.log(`[Upload] ${slots.active} uploads already sending to Twelve Labs; ${filename} waits for a free slot`);
             }
-            const assetResponse = await twelveLabsUploadSlots.run(() => twelveLabsCreateDirectAsset(fileToUpload));
+            const assetResponse = await createAnalysisAsset({ file, fileToUpload, fileSize, filename, userId, videoId, video });
 
             console.log(`📦 TwelveLabs response:`, JSON.stringify(assetResponse, null, 2));
             // Learning: keep the file (hard link, instant) and measure cuts/picture/rhythm in the background.
@@ -576,6 +625,7 @@ export const uploadVideoToTwelveLabsService = async (userId, file, filename, sel
             if (twelveLabsError instanceof ApiError && twelveLabsError.statusCode === 502) {
                 throw twelveLabsError;
             }
+            await removeAnalysisSource(video);
             // If TwelveLabs upload fails, mark video as failed (both statuses, so it never shows as "analyzing")
             video.uploadStatus = UPLOAD_STATUS.FAILED;
             video.analysisStatus = ANALYSIS_STATUS.FAILED;
