@@ -9,8 +9,10 @@
 export const FPS = 30;
 export const MIN_PIECE_SEC = 0.15;
 export const SNAP_TOLERANCE_SEC = 0.15;
-const LEAD_PAD = 0.04;
-const TAIL_PAD = 0.06;
+const LEAD_PAD = 0.06;
+const EDGE_EPS = 0.01;
+/** Transcripts end words early and phrase-final consonants are quiet: keep a little more after a word. */
+const TAIL_PAD = 0.12;
 
 const round = (n) => Math.round(n * 1000) / 1000;
 
@@ -35,18 +37,20 @@ export function snapPiece(piece, { words = [], silences = [], durationSec }, tol
     // Padded edges never reach into the neighbouring word.
     const startAt = (i) => Math.max(words[i].start - LEAD_PAD, i > 0 ? words[i - 1].end + 0.01 : -Infinity);
     const endAt = (i) => Math.min(words[i].end + TAIL_PAD, i < words.length - 1 ? words[i + 1].start - 0.01 : Infinity);
-    const inside = (t) => words.findIndex((w) => t > w.start && t < w.end);
+    // Inside a word by more than a hair: transcript times carry float noise (34.880001 vs a cut at 34.88).
+    const inside = (t) => words.findIndex((w) => t > w.start + EDGE_EPS && t < w.end - EDGE_EPS);
 
     const snapStart = (t) => {
         const i = inside(t);
-        // A start inside a word keeps the word if the cut is in its first half, otherwise drops it.
-        if (i >= 0) return t <= (words[i].start + words[i].end) / 2 ? startAt(i) : words[i].end + 0.01;
+        // A start inside a word always keeps the whole word: a clipped or missing word is the worst
+        // cut there is, and transcript timings are too rough to tell which half the speaker meant.
+        if (i >= 0) return startAt(i);
         const options = [...words.map((_, k) => startAt(k)), ...silences.map((s) => s.end - LEAD_PAD)];
         return nearest(t, options, tol) ?? t;
     };
     const snapEnd = (t) => {
         const i = inside(t);
-        if (i >= 0) return t >= (words[i].start + words[i].end) / 2 ? endAt(i) : words[i].start - 0.01;
+        if (i >= 0) return endAt(i);
         const options = [...words.map((_, k) => endAt(k)), ...silences.map((s) => s.start + TAIL_PAD)];
         return nearest(t, options, tol) ?? t;
     };

@@ -1,6 +1,8 @@
 import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
 import { HOOK_VARIANTS, casualCase, hookLines, skillFor } from './skills.js';
+import { removeRepeats } from './no-repeats.js';
+import { repairWordTimings } from './cut-candidates.js';
 
 /**
  * Combine Claude's plan with the creator's review-screen changes into the exact props the Remotion
@@ -33,7 +35,6 @@ export const SFX_FOR_GRAPHIC = Object.freeze({
 });
 export const SFX_FOR_TRANSITION = Object.freeze({ punch: ['swoosh', 'swish', 'thud'], whip: ['whoosh', 'whip', 'sweep_down'], flash: ['hit', 'shutter', 'impact'], glitch: ['glitch', 'static', 'zap'] });
 export const SFX_FOR_EFFECT = Object.freeze({ shake: ['hit', 'thud', 'impact'], flash: ['shutter', 'zap'] });
-const SFX_FOR_ZOOM = ['swoosh', 'swish', 'sweep_up'];
 const SFX_FOR_COUNT_END = ['ding', 'coin', 'chime'];
 const SFX_FOR_LIST_ITEM = ['tap', 'tick', 'pop'];
 const SFX_FOR_LIST_END = ['ding', 'chime'];
@@ -62,8 +63,39 @@ const soundRotation = () => {
         return pool[n % pool.length];
     };
 };
-/** Two sounds never start closer than this; the more important one wins. */
-const SFX_MIN_GAP_FRAMES = 5;
+/** Two sounds never start closer than this (half a second); the more important one wins. */
+const SFX_MIN_GAP_FRAMES = 15;
+/** At most one sound per this many seconds of video on average; the most important are kept. */
+const SFX_BUDGET_SEC = 4;
+/** A jump between segments gets a transition only when it really jumps: back in time, or past this much footage. */
+const REAL_JUMP_SEC = 1.5;
+/** Jump-cut zooms only switch on pieces at least this long; shorter ones keep the previous framing (no flicker). */
+const JUMP_ZOOM_MIN_SEC = 1.0;
+
+/**
+ * Restraint, enforced whatever the plan asks for. A clean edit lets the creator talk: an element every
+ * second or two reads as noise. Per second of finished video, and the least time between two of a kind.
+ */
+export const DENSITY = Object.freeze({
+    graphicEverySec: 8, graphicGapSec: 3, maxSlams: 2, visualEverySec: 15,
+    zoomEverySec: 5, zoomGapSec: 3.5,
+    beatEverySec: 6, beatGapSec: 2.5,
+    effectEverySec: 10,
+});
+
+/** Keep items (sorted by frame) in time order while they respect a cap and a minimum gap. */
+const thin = (items, { cap, gapFrames, frameOf = (x) => x.startFrame, allow = () => true }) => {
+    const kept = [];
+    for (const x of [...items].sort((a, b) => frameOf(a) - frameOf(b))) {
+        if (kept.length >= cap) break;
+        if (!allow(x, kept)) continue;
+        const last = kept[kept.length - 1];
+        if (last && frameOf(x) - frameOf(last) < gapFrames) continue;
+        kept.push(x);
+    }
+    return kept;
+};
+const capFor = (totalFrames, everySec, min = 1) => Math.max(min, Math.ceil(totalFrames / FPS / everySec));
 /** An automatic sound with no alternative is dropped when the same sound played this recently. */
 const SFX_REPEAT_FRAMES = 90;
 
@@ -155,10 +187,15 @@ const withDefaults = (plan) => ({
  */
 export function arrangeSfx(events, durationInFrames) {
     const kept = [];
+    // The ticks of one list (`series`) count as one sound and may sit closer together.
+    const budget = Math.max(4, Math.ceil(durationInFrames / FPS / SFX_BUDGET_SEC));
+    let counted = 0;
     for (const e of [...events].sort((a, b) => b.priority - a.priority || a.frame - b.frame)) {
         if (e.frame < 0 || e.frame >= durationInFrames) continue;
-        if (kept.some((k) => Math.abs(k.frame - e.frame) < SFX_MIN_GAP_FRAMES)) continue;
+        if (!e.series && counted >= budget) continue;
+        if (kept.some((k) => Math.abs(k.frame - e.frame) < (k.series && e.series ? 5 : SFX_MIN_GAP_FRAMES))) continue;
         kept.push(e);
+        if (!e.series) counted += 1;
     }
     kept.sort((a, b) => a.frame - b.frame);
     const out = [];
@@ -181,7 +218,11 @@ export function arrangeSfx(events, durationInFrames) {
  * @param {object} edits sanitized creator changes
  * @param {{words:Array, silences:Array, durationSec:number, cutCandidates:Array}} media
  */
-export function buildRenderProps(rawPlan, edits = {}, media = {}) {
+/**
+ * @param {object} [options]
+ * @param {object|null} [options.density] DENSITY limits; null turns them off (tests of layout mechanics only)
+ */
+export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DENSITY } = {}) {
     const skill = skillFor(media.skill);
     const sr = skill?.render ?? null;
     const base = withDefaults(rawPlan);
@@ -191,7 +232,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
         graphics: base.graphics.filter((g) => !(sr.dropGraphicTypes ?? []).includes(g.type)),
         transitions: sr.transitionStyles && !sr.transitionStyles.includes(base.transitions.style) ? { ...base.transitions, style: sr.transitionStyles[0] } : base.transitions,
     } : base;
-    const words = media.words ?? [];
+    // Older edits stored raw transcript timings: repair squashed words here too (no-op on repaired ones).
+    const words = repairWordTimings(media.words ?? [], media.silences ?? []);
     const disabled = new Set(edits.disabledSegments ?? []);
     let segments = plan.segments.filter((s) => !disabled.has(s.id));
     if (edits.keepOriginalOrder) segments = [...segments].sort((a, b) => a.start - b.start);
@@ -200,7 +242,9 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
     const candidates = new Map((media.cutCandidates ?? []).map((c) => [c.id, c]));
     const cuts = plan.acceptedCandidateIds.filter((id) => !restored.has(id)).map((id) => candidates.get(id)).filter(Boolean);
 
-    const pieces = buildPieces(segments, cuts, { words, silences: media.silences ?? [], durationSec: media.durationSec });
+    const snapMedia = { words, silences: media.silences ?? [], durationSec: media.durationSec };
+    // Last guard: no footage, retake or moved line is heard twice (no-repeats.js).
+    const { pieces } = removeRepeats(buildPieces(segments, cuts, snapMedia), snapMedia, { roles: Object.fromEntries(plan.segments.map((s) => [s.id, s.role])) });
     const { timeline, durationFrames } = buildTimeline(pieces, FPS);
     const total = Math.max(1, durationFrames);
     const sfxEvents = [];
@@ -213,19 +257,25 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
 
     // Jump cuts: inside one segment, alternate a slight zoom so each removed pause reads as a cut.
     const transitionsOn = !edits.transitionsOff;
-    let run = 0;
+    // A real jump: the next piece is from earlier in the footage, or skips well ahead of it.
+    // A real jump: a new segment that starts earlier in the footage, or well after the last one. Removed
+    // pauses inside a segment are jump cuts, not jumps.
+    const realJump = (k) => k > 0 && timeline[k].segId !== timeline[k - 1].segId && (timeline[k].srcStart < timeline[k - 1].srcStart || timeline[k].srcStart - timeline[k - 1].srcEnd > REAL_JUMP_SEC);
+    let zoomed = false;
     const timelineOut = timeline.map((p, k) => {
-        const sameSegment = k > 0 && timeline[k - 1].segId === p.segId;
-        run = sameSegment ? run + 1 : 0;
-        const baseScale = transitionsOn && plan.transitions.jumpCutZoom && run % 2 === 1 ? JUMP_ZOOM : 1;
+        // Inside a stretch, each cut alternates a slight zoom so it reads as a cut; a piece too short to
+        // register keeps the framing it had, so the picture never flickers in and out.
+        if (k === 0 || realJump(k)) zoomed = false;
+        else if ((p.srcEnd - p.srcStart) >= JUMP_ZOOM_MIN_SEC) zoomed = !zoomed;
+        const baseScale = transitionsOn && plan.transitions.jumpCutZoom && zoomed ? JUMP_ZOOM : 1;
         return { id: p.id, segId: p.segId, srcStart: p.srcStart, srcEnd: p.srcEnd, outStartFrame: p.outStartFrame, durationFrames: p.durationFrames, baseScale };
     });
 
-    // A transition at every jump between segments.
+    // A transition only where the edit really jumps (a reorder, or a big skip); continuous speech just cuts.
     const transitions = [];
     if (transitionsOn && plan.transitions.style !== 'none') {
         for (let k = 1; k < timeline.length; k += 1) {
-            if (timeline[k].segId === timeline[k - 1].segId) continue;
+            if (!realJump(k)) continue;
             transitions.push({ type: plan.transitions.style, frame: timeline[k].outStartFrame });
             rotate('transition', SFX_FOR_TRANSITION[plan.transitions.style], Math.max(0, timeline[k].outStartFrame - 3), 1);
         }
@@ -268,7 +318,18 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
         if (g.type === 'visual' && nextTop && nextTop.startFrame - g.startFrame < f(VISUAL_MIN_SEC)) flashed.add(g);
         else nextTop = g;
     }
-    const placedGraphics = plannedGraphics.filter((g) => !flashed.has(g));
+    // Never busier than DENSITY allows: at most 2 slams, illustrations only now and then, a few seconds apart.
+    // The lower third and the closing call to action live in their own strip and are not counted.
+    const unflashed = plannedGraphics.filter((g) => !flashed.has(g));
+    const placedGraphics = [
+        ...(density ? thin(unflashed.filter((g) => !LOW_GRAPHICS.has(g.type)), {
+            cap: capFor(total, density.graphicEverySec, 2),
+            gapFrames: f(density.graphicGapSec),
+            allow: (g, kept) => (g.type !== 'slam' || kept.filter((k) => k.type === 'slam').length < density.maxSlams)
+                && (g.type !== 'visual' || kept.filter((k) => k.type === 'visual').length < capFor(total, density.visualEverySec)),
+        }) : unflashed.filter((g) => !LOW_GRAPHICS.has(g.type))),
+        ...unflashed.filter((g) => LOW_GRAPHICS.has(g.type)),
+    ].sort((a, b) => a.startFrame - b.startFrame);
     const minShown = (g, sec) => f(g.type === 'visual' ? VISUAL_MIN_SEC : sec);
 
     // The hook card and top graphics share the top of the screen: the card ends when the first top
@@ -283,7 +344,7 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
     }
 
     const offZooms = new Set(edits.disabledZooms ?? []);
-    const zooms = edits.zoomsOff ? [] : plan.zooms
+    const plannedZooms = edits.zoomsOff ? [] : plan.zooms
         .map((z, index) => ({ ...z, index }))
         .filter((z) => !offZooms.has(z.index))
         .map((z) => {
@@ -291,7 +352,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
             return range ? { index: z.index, startFrame: f(range.start), durationFrames: Math.max(1, f(range.end) - f(range.start)), scale: z.scale, focusX: z.focusX, focusY: z.focusY } : null;
         })
         .filter(Boolean);
-    for (const z of zooms) if (z.scale >= 1.12) rotate('zoom', SFX_FOR_ZOOM, z.startFrame, 0, 0.3);
+    const zooms = density ? thin(plannedZooms, { cap: capFor(total, density.zoomEverySec), gapFrames: f(density.zoomGapSec) }) : plannedZooms;
+    // Zooms are silent: a whoosh on every punch-in is the first thing that makes an edit sound cheap.
 
     // Graphics that share a place on screen take turns: one ends (with its exit) when the next one starts.
     for (const slot of [TOP_GRAPHICS, LOW_GRAPHICS]) {
@@ -343,19 +405,17 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}) {
         if (g.type === 'slam') rotate('before_slam', SFX_BEFORE_SLAM, Math.max(0, g.startFrame - 6), 0, 0.35);
     }
 
-    const effects = edits.effectsOff ? [] : plan.effects
+    const effects = edits.effectsOff ? [] : thin(plan.effects
         .map((e) => {
             const t = mapPoint(e.at, timeline);
             return t == null ? null : { type: e.type, frame: f(t) };
         })
-        .filter(Boolean);
+        .filter(Boolean), { cap: density ? capFor(total, density.effectEverySec) : Infinity, gapFrames: density ? f(2) : 0, frameOf: (e) => e.frame });
     for (const e of effects) rotate(e.type, SFX_FOR_EFFECT[e.type], e.frame, 2);
 
     // Sounds Claude placed itself (risers into reveals, drops on punchlines) outrank the automatic ones.
-    for (const s of plan.sfx) {
-        const t = mapPoint(s.at, timeline);
-        if (t != null) sound(s.type, f(t), 3);
-    }
+    const beats = plan.sfx.map((s) => ({ type: s.type, frame: mapPoint(s.at, timeline) })).filter((s) => s.frame != null).map((s) => ({ ...s, frame: f(s.frame) }));
+    for (const s of density ? thin(beats, { cap: capFor(total, density.beatEverySec), gapFrames: f(density.beatGapSec), frameOf: (x) => x.frame }) : beats) sound(s.type, s.frame, 3);
     const sfx = edits.sfxOff ? [] : arrangeSfx(sfxEvents, total);
 
     const trackId = 'musicTrackId' in edits ? edits.musicTrackId : plan.music.trackId;

@@ -192,20 +192,33 @@ test('buildRenderProps: transitions at segment jumps, jump-cut zooms inside a se
     assert.equal(props.transitions.length, 1);
     assert.equal(props.transitions[0].type, 'whip');
     assert.equal(props.transitions[0].frame, props.timeline.find((p) => p.segId === 's2').outStartFrame);
-    // Pause cuts inside s2 alternate a slight zoom.
+    // Pause cuts inside s2 alternate a slight zoom, but only on pieces long enough to register
+    // (a piece under a second keeps the framing before it, so the picture never flickers).
     const s2 = props.timeline.filter((p) => p.segId === 's2');
     assert.ok(s2.length >= 2, 'filler cuts split s2');
-    assert.deepEqual(s2.slice(0, 2).map((p) => p.baseScale), [1, 1.08]);
+    assert.equal(s2[0].baseScale, 1, 'a jump starts unzoomed');
+    for (let k = 1; k < s2.length; k += 1) {
+        if (s2[k].baseScale !== s2[k - 1].baseScale) assert.ok(s2[k].srcEnd - s2[k].srcStart >= 1, 'only pieces of 1 s or more switch the zoom');
+    }
 
     assert.equal(props.look.accent, '#FF4FA3');
-    assert.deepEqual(props.graphics.map((g) => g.type).sort(), ['counter', 'list', 'slam']);
+    // Three graphics in 3.5 s is too busy: the density limits keep the first and drop the ones crowding it.
+    assert.deepEqual(props.graphics.map((g) => g.type), ['slam']);
+    assert.deepEqual(buildRenderProps(plan, {}, media, { density: null }).graphics.map((g) => g.type).sort(), ['counter', 'list', 'slam']);
 
     const types = props.sfx.map((s) => s.type);
-    assert.ok(types.includes('whoosh'), 'whip transition has a whoosh');
+    // This plan packs more beats than its few seconds allow: the budget keeps the most important
+    // sounds (the planner's own and the graphics), and the transition's whoosh gives way.
+    const roomy = buildRenderProps(plan, { overlaysOff: true, effectsOff: true }, media).sfx.map((s) => s.type);
+    assert.ok(roomy.includes('whoosh'), 'whip transition has a whoosh when there is room');
     assert.ok(types.includes('boom'), 'slam has a boom');
-    assert.ok(types.includes('typing') && types.includes('ding'), 'the counter types and the list ends on a ding');
-    assert.ok(types.includes('riser') || types.includes('bass_drop'), 'Claude\'s own sounds are kept');
+    assert.ok(types.includes('riser') || types.includes('bass_drop'), 'Claude\'s own sounds are kept first');
+    // Each graphic on its own (in this plan they sit closer than half a second apart, so one gives way).
+    const only = (type) => buildRenderProps({ ...plan, graphics: plan.graphics.filter((g) => g.type === type), sfx: [] }, { effectsOff: true, transitionsOff: true, hookOverlayOff: true }, media).sfx.map((s) => s.type);
+    assert.ok(only('counter').includes('typing'), 'the counter types');
+    assert.ok(only('list').includes('ding'), 'the list ends on a ding');
     for (let k = 1; k < props.sfx.length; k += 1) assert.ok(props.sfx[k].frame - props.sfx[k - 1].frame >= 5, 'sounds never pile up');
+    assert.ok(props.sfx.filter((x) => x.type !== 'tap' && x.type !== 'tick').length <= Math.max(4, Math.ceil(props.durationInFrames / 30 / 2.5)), 'a sound budget per second of video');
     assert.ok(props.sfx.every((s) => s.volume > 0 && s.volume <= 1));
 });
 
@@ -334,7 +347,7 @@ test('illustrations: known names are kept with their sound, anything we cannot d
     assert.ok(plan.graphics[0].end - plan.graphics[0].start >= 1.4 - 1e-9, 'an illustration stays long enough to read');
     assert.deepEqual(plan.graphics[0].items, []);
 
-    const props = buildRenderProps(plan, {}, { words, silences: [], durationSec, cutCandidates });
+    const props = buildRenderProps(plan, {}, { words, silences: [], durationSec, cutCandidates }, { density: null });
     const shown = props.graphics.filter((g) => g.type === 'visual');
     assert.deepEqual(shown.map((g) => g.visual).sort(), ['brain', 'money']);
     const types = props.sfx.map((s) => s.type);
@@ -398,7 +411,7 @@ test('an illustration that would only flash is left out, and a slam moves under 
     const shown = (graphics, extra = {}) => {
         const { ok, plan, issues } = validateEdl({ ...rich(), ...none, ...extra, graphics }, ctx);
         assert.equal(ok, true, issues.join('; '));
-        return buildRenderProps(plan, { transitionsOff: true }, media).graphics;
+        return buildRenderProps(plan, { transitionsOff: true }, media, { density: null }).graphics;
     };
 
     // The pill arrives half a second after the brain: the brain is dropped, the pill is untouched.
@@ -439,4 +452,33 @@ test('the same sound does not play twice in a row: it switches to another from i
     const played = buildRenderProps(plan, { transitionsOff: true }, { words, silences: [], durationSec, cutCandidates }).sfx.map((s) => s.type);
     for (let k = 1; k < played.length; k += 1) assert.notEqual(played[k], played[k - 1], `no repeat in ${played.join(', ')}`);
     assert.ok(played.includes('coin'), `the counter lands on the coin when the till has just played (${played.join(', ')})`);
+});
+
+test('density limits: a busy plan comes out calm (few graphics, spaced zooms, at most 2 slams, sparse beats)', async () => {
+    const { DENSITY } = await import('../src/service/editor/compose.js');
+    // 60 s of steady speech, and a plan that asks for something every second.
+    const long = Array.from({ length: 150 }, (_, i) => ({ w: `w${i}`, start: i * 0.4, end: i * 0.4 + 0.3 }));
+    const c = buildCutCandidates({ words: long, durationSec: 61 });
+    const lctx = { durationSec: 61, wordCount: long.length, candidateIds: c.map((x) => x.id), candidateRanges: Object.fromEntries(c.map((x) => [x.id, x])), trackIds: [] };
+    const g = (type, start, extra = {}) => ({ type, start, end: start + 1.6, text: 'Big idea', subtext: '', items: '', focusX: 0.5, focusY: 0.5, ...extra });
+    const busy = {
+        ...good(),
+        segments: [{ id: 's1', start: 0, end: 60, role: 'body', reason: 'all' }],
+        acceptedCandidateIds: [],
+        graphics: Array.from({ length: 30 }, (_, k) => g(k % 3 === 0 ? 'slam' : k % 3 === 1 ? 'pill' : 'visual', 1 + k * 2, k % 3 === 2 ? { items: 'brain' } : {})),
+        zooms: Array.from({ length: 30 }, (_, k) => ({ at: 0.5 + k * 2, duration: 0.6, scale: 1.2, focusX: 0.5, focusY: 0.4, reason: 'x' })),
+        sfx: Array.from({ length: 30 }, (_, k) => ({ type: 'pop', at: 0.7 + k * 2 })),
+        hookOverlay: { enabled: false, text: '', durationSec: 2 },
+        music: { trackId: '', volume: 0.1, reason: '' },
+    };
+    const { ok, plan, issues } = validateEdl(busy, lctx);
+    assert.equal(ok, true, issues.join('; '));
+    const props = buildRenderProps(plan, {}, { words: long, silences: [], durationSec: 61, cutCandidates: c });
+    const sec = props.durationInFrames / 30;
+    assert.ok(props.graphics.length <= Math.ceil(sec / DENSITY.graphicEverySec), `${props.graphics.length} graphics in ${sec}s`);
+    assert.ok(props.graphics.filter((x) => x.type === 'slam').length <= 2);
+    for (let k = 1; k < props.graphics.length; k += 1) assert.ok(props.graphics[k].startFrame - props.graphics[k - 1].startFrame >= 90, 'graphics at least 3 s apart');
+    assert.ok(props.zooms.length <= Math.ceil(sec / DENSITY.zoomEverySec));
+    for (let k = 1; k < props.zooms.length; k += 1) assert.ok(props.zooms[k].startFrame - props.zooms[k - 1].startFrame >= 105, 'zooms at least 3.5 s apart');
+    assert.ok(props.sfx.length <= Math.ceil(sec / 2.5), `${props.sfx.length} sounds in ${sec}s`);
 });

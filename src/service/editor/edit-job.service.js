@@ -11,7 +11,7 @@ import { captureServerEvent } from '../../lib/analytics.js';
 import { createSemaphore } from '../../utils/semaphore.js';
 import { prepareMedia } from './media-prep.js';
 import { transcribeWords } from './transcribe.js';
-import { buildCutCandidates } from './cut-candidates.js';
+import { buildCutCandidates, repairWordTimings } from './cut-candidates.js';
 import { planEdit } from './edit-planner.service.js';
 import { chargeEdit } from './editor-access.service.js';
 import { resolveCreatorProfile } from '../creator-profile.service.js';
@@ -125,6 +125,7 @@ export async function runEditJob(projectId, deps = {}) {
         if (prepared.audioPath) {
             await setStage(project._id, 'transcribing', 62);
             ({ words, language } = await transcribe(prepared.audioPath));
+            words = repairWordTimings(words, prepared.silences);
         }
         const cutCandidates = buildCutCandidates({ words, silences: prepared.silences, durationSec: info.durationSec });
 

@@ -64,11 +64,12 @@ test('subtractRanges splits a segment around cuts', () => {
 
 test('snapPiece moves edges onto word boundaries within tolerance, leaves far edges alone', () => {
     const s = snapPiece({ start: 2.1, end: 4.33 }, { words, silences: [], durationSec: 8 });
-    assert.equal(s.start, 1.96); // 2.1 is in the first half of "today" (2.0-2.4): keep it, minus lead pad
-    assert.equal(s.end, 4.46); // 4.33 is in the second half of "you" (4.25-4.4): keep it, plus tail pad
-    const dropHalf = snapPiece({ start: 2.3, end: 4.28 }, { words, silences: [], durationSec: 8 });
-    assert.equal(dropHalf.start, 2.41); // past the middle of "today": start after it
-    assert.equal(dropHalf.end, 4.24); // before the middle of "you": end before it
+    assert.equal(s.start, 1.94); // 2.1 is inside "today" (2.0-2.4): keep it, minus lead pad
+    assert.equal(s.end, 4.52); // 4.33 is inside "you" (4.25-4.4): keep it, plus tail pad
+    // An edge anywhere inside a word keeps the whole word: never a clipped or missing word.
+    const late = snapPiece({ start: 2.3, end: 4.28 }, { words, silences: [], durationSec: 8 });
+    assert.equal(late.start, 1.94);
+    assert.equal(late.end, 4.52);
     // Padding never reaches into the next word ("I" starts 0.05 s after "today" ends).
     assert.equal(snapPiece({ start: 0, end: 2.42 }, { words, silences: [], durationSec: 8 }).end, 2.44);
     const far = snapPiece({ start: 7.0, end: 7.5 }, { words, silences: [], durationSec: 8 });
@@ -94,7 +95,7 @@ test('buildPieces + buildTimeline: reordered hook plays first, frames are exact 
     // The retake is gone: its middle maps to nothing.
     assert.equal(srcToOut(3.0, timeline), null);
     // The hook's first word plays at the very start.
-    assert.ok(srcToOut(5.45, timeline) < 0.1);
+    assert.ok(srcToOut(5.45, timeline) < 0.15);
 });
 
 test('captionPages: pages follow output order, break on punctuation, apply emphasis and text fixes', () => {

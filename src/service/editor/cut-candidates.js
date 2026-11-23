@@ -20,6 +20,41 @@ const RETAKE_MIN_GAP_SEC = 0.25;
 
 export const norm = (w) => String(w || '').toLowerCase().replace(/[^a-z0-9']/g, '');
 
+/** Shorter than this, a transcribed word's timing is not real: the transcriber squashed it against a pause. */
+const MIN_WORD_SEC = 0.12;
+/** How far a squashed word may borrow from the pause next to it. */
+const WORD_BORROW_SEC = 0.32;
+
+/**
+ * Repair word timings the transcriber squashed. Whisper often gives the first word after a pause, or
+ * the last word before one, almost no length ("Most" 11.74-11.74), placed against the pause. Every edge
+ * rule then treats that word as missing and cuts it. Such a word borrows time from the pause beside it:
+ * back toward where speech resumed (silencedetect), or forward into the pause after it. Idempotent.
+ * @param {Array<{w,start,end}>} words
+ * @param {Array<{start,end}>} [silences]
+ */
+export function repairWordTimings(words = [], silences = []) {
+    const out = words.map((w) => ({ ...w }));
+    for (let i = 0; i < out.length; i += 1) {
+        const w = out[i];
+        if (!(w.end - w.start < MIN_WORD_SEC)) continue;
+        const prevEnd = i > 0 ? out[i - 1].end : 0;
+        const nextStart = i < out.length - 1 ? out[i + 1].start : Infinity;
+        const need = MIN_WORD_SEC + 0.1 - (w.end - w.start);
+        const gapBefore = w.start - prevEnd;
+        const gapAfter = nextStart - w.end;
+        if (gapBefore >= gapAfter && gapBefore > 0.05) {
+            // Speech resumed where the pause before it ended: start the word there, at most WORD_BORROW_SEC back.
+            const resumed = silences.filter((s) => s.end > prevEnd && s.end <= w.start + 0.05).map((s) => s.end).pop();
+            const floor = Math.max(prevEnd + 0.02, w.start - WORD_BORROW_SEC, resumed != null ? resumed - 0.02 : -Infinity);
+            w.start = Math.round(Math.min(w.start, Math.max(floor, w.start - need)) * 1000) / 1000;
+        } else if (gapAfter > 0.05) {
+            w.end = Math.round(Math.min(nextStart - 0.02, w.end + Math.min(WORD_BORROW_SEC, Math.max(need, 0.2))) * 1000) / 1000;
+        }
+    }
+    return out;
+}
+
 const round = (n) => Math.round(n * 1000) / 1000;
 
 /** Word gaps longer than `min`, used when silencedetect found nothing (music under speech). */
@@ -65,6 +100,28 @@ const findRetakes = (words) => {
 
 const range = (a, b) => Array.from({ length: b - a }, (_, k) => a + k);
 
+/** Space kept after a word's end and before a word's start when a pause is cut around it. */
+const WORD_TAIL = 0.15;
+const WORD_LEAD = 0.08;
+
+/** The parts of a pause that do not overlap any word (with a margin on each side of each word). */
+export const clearOfWords = (pause, words) => {
+    let parts = [{ start: pause.start, end: pause.end }];
+    for (const w of words) {
+        const a = w.start - WORD_LEAD;
+        const b = w.end + WORD_TAIL;
+        if (b <= pause.start || a >= pause.end) continue;
+        parts = parts.flatMap((p) => {
+            if (b <= p.start || a >= p.end) return [p];
+            const keep = [];
+            if (a > p.start) keep.push({ start: p.start, end: a });
+            if (b < p.end) keep.push({ start: b, end: p.end });
+            return keep;
+        });
+    }
+    return parts;
+};
+
 /**
  * @returns {Array<{id:string, kind:'dead_start'|'dead_end'|'silence'|'filler'|'retake', start:number, end:number, text?:string, wordIdx?:number[]}>}
  */
@@ -87,8 +144,11 @@ export function buildCutCandidates({ words = [], silences = [], durationSec, min
     if (first.start > 0.5) add({ kind: 'dead_start', start: 0, end: first.start - 0.1 });
     if (duration && duration - last.end > 0.6) add({ kind: 'dead_end', start: last.end + 0.25, end: duration });
 
-    // Pauses inside speech. Prefer silencedetect; fall back to word gaps.
+    // Pauses inside speech. Prefer silencedetect; fall back to word gaps. A pause never reaches into a
+    // spoken word: transcripts often place a phrase's last word inside what silencedetect calls silence
+    // (a quiet final consonant), and cutting that pause would delete the word.
     const pauses = (silences.length ? silences : gapsFromWords(words, minSilence))
+        .flatMap((s) => clearOfWords(s, words))
         .filter((s) => s.end - s.start >= minSilence && s.start >= first.start && s.end <= last.end);
     for (const s of pauses) add({ kind: 'silence', start: s.start + PAD, end: s.end - PAD });
 
