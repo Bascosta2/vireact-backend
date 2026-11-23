@@ -26,7 +26,8 @@ export const researchConfig = (env = process.env) => ({
     minScore: num(env.RESEARCH_MIN_SCORE, 75),
     dailyCap: Math.max(0, Math.floor(num(env.RESEARCH_DAILY_CAP, 30))),
     maxShare: Math.min(0.9, Math.max(0, num(env.RESEARCH_MAX_SHARE, 0.35))),
-    minConfidence: 0.7,
+    // Owner decision 2026-11: 0.6 keeps well-reviewed items the old 0.7 floor dropped. Never below 0.5.
+    minConfidence: Math.min(1, Math.max(0.5, num(env.RESEARCH_MIN_CONFIDENCE, 0.6))),
     duplicateCosine: 0.92,
     metricsMaxAgeMonths: 24,
     repo: env.RESEARCH_REPO || 'Bascosta2/vireact-research',
