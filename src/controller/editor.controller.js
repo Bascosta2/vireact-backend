@@ -323,7 +323,7 @@ export const updateEdits = async (req, res, next) => {
         project.markModified('edits');
         await project.save();
         const props = buildRenderProps(project.plan, edits, mediaFor(project, brandFor(req.user)));
-        ok(res, 'Saved', { edits, props: { ...props, ...(await soundUrls(props)) } });
+        ok(res, 'Saved', { edits, props: { ...props, ...(await soundUrls(props)) }, ...(v2 ? { storyboard: buildStoryboard(project.plan, edits) } : {}) });
     } catch (error) {
         next(error);
     }
