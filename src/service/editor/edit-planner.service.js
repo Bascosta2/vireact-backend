@@ -4,7 +4,7 @@ import { storage } from '../../lib/storage.js';
 import { VOICE_RULES } from '../analyzer/voice.js';
 import { formatKnowledgeContext, retrieveKnowledge } from '../analyzer/retrieve-knowledge.js';
 import { SoundAsset } from '../../model/sound-asset.model.js';
-import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, EFFECT_TYPES, GRADES, GRAPHIC_TYPES, SFX_FAMILIES, TRANSITION_STYLES, VISUALS, toSchemaShape, validateEdl } from './edl.js';
+import { ACCENTS, CAPTION_PRESETS, edlSchemaFor, EFFECT_TYPES, GRADES, GRAPHIC_TYPES, SFX_FAMILIES, TRANSITION_STYLES, VISUALS, toSchemaShape, validateEdl } from './edl.js';
 import { selectExemplars } from './exemplars.js';
 import { activeSkillId, skillFor } from './skills.js';
 import { isEditorFeaturesV2 } from '../../config/flags.js';
@@ -163,7 +163,7 @@ export function formatTracks(tracks) {
 
 /** User-turn content: text context, then each frame sheet with its time range. */
 /** Planner rules for the split-screen framing (only sent with EDITOR_FEATURES_V2). */
-export const SPLIT_RULES = 'SPLIT SCREEN: framing.mode "split" shows the speaker in the top half and a 1.8x zoomed detail of the same take in the bottom half (a prop, a screen, the hands), centered on framing.detailX/detailY (0 to 1, read from the frames). Choose it only when the take clearly shows something worth looking at besides the face for most of the video; otherwise keep fill. Set detailX and detailY to 0.5 when unused. Everything that matters stays inside the 4:5 Instagram crop: the seam sits at the middle of the frame.';
+export const SPLIT_RULES = 'SPLIT SCREEN: framing.mode "split" shows the speaker in the top half and a 1.8x zoomed detail of the same take in the bottom half (a prop, a screen, the hands), centered on framing.detailX/detailY (0 to 1, read from the frames). Choose it only when the take clearly shows something worth looking at besides the face for most of the video; otherwise keep fill. Put detailX/detailY on the subject of interest (the hands, product or screen), never on the face or neck. Set detailX 0.5 and detailY 0.62 when unused. Everything that matters stays inside the 4:5 Instagram crop: the seam sits at the middle of the frame.';
 
 export function buildPlannerContent({ project, profile, knowledgeText, exemplarText, trackText, sheets }) {
     const src = project.source ?? {};
@@ -265,7 +265,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
     };
     const system = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
-    const first = await request({ label: 'editor_plan', system, messages, schema: EDL_SCHEMA });
+    const first = await request({ label: 'editor_plan', system, messages, schema: edlSchemaFor(isEditorFeaturesV2()) });
     let result = validateEdl(first.data, ctx);
     markGenerationValidation(first.generationId, { passed: result.ok, issues: result.issues });
     let generationId = first.generationId;
@@ -276,7 +276,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
             { role: 'assistant', content: first.message.content },
             { role: 'user', content: `That plan has problems. Fix all of them and return the full corrected plan:\n- ${result.issues.join('\n- ')}` },
         ];
-        const second = await request({ label: 'editor_plan_retry', system, messages: retryMessages, schema: EDL_SCHEMA });
+        const second = await request({ label: 'editor_plan_retry', system, messages: retryMessages, schema: edlSchemaFor(isEditorFeaturesV2()) });
         result = validateEdl(second.data, ctx);
         markGenerationValidation(second.generationId, { passed: result.ok, issues: result.issues });
         generationId = second.generationId;

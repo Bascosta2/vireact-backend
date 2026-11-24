@@ -6,6 +6,7 @@
  * Plans saved before graphics/transitions/effects/look existed are still valid: compose.js fills
  * their defaults and turns legacy `textOverlays` into pill graphics.
  */
+import { isEditorFeaturesV2 } from '../../config/flags.js';
 
 export const CAPTION_PRESETS = ['bold_pop', 'highlight', 'impact', 'clean'];
 /** Presets that were removed, and the look that plays instead (saved plans and edits keep working). */
@@ -107,7 +108,7 @@ const enumOf = (values) => ({ type: 'string', description: `One of: ${values.joi
 const obj = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const arr = (items) => ({ type: 'array', items });
 
-export const EDL_SCHEMA = obj({
+const edlSchema = (v2) => obj({
     summary: str,
     hookStrategy: str,
     segments: arr(obj({ id: str, start: num, end: num, role: enumOf(SEGMENT_ROLES), reason: str })),
@@ -136,13 +137,17 @@ export const EDL_SCHEMA = obj({
         motion: bool,
     }),
     // split (EDITOR_FEATURES_V2): speaker on top, a zoomed detail of the same take below, centered on detailX/detailY.
-    framing: obj({ mode: enumOf(['fill', 'fit_blur', 'split']), focusX: num, detailX: num, detailY: num }),
+    framing: v2 ? obj({ mode: enumOf(['fill', 'fit_blur', 'split']), focusX: num, detailX: num, detailY: num }) : obj({ mode: enumOf(['fill', 'fit_blur']), focusX: num }),
     music: obj({ trackId: str, volume: num, reason: str }),
     // Timed beats: a sound effect type or a visual effect (shake, flash).
     beats: arr(obj({ type: { type: 'string', description: 'a sound name, or shake, or flash' }, at: num })),
     changes: arr(obj({ kind: enumOf(CHANGE_KINDS), label: str, why: str, evidence: enumOf(EVIDENCE) })),
     expectedEffect: str,
 });
+
+/** The schema Claude plans against; EDITOR_FEATURES_V2 adds the split-screen framing. EDL_SCHEMA is the standard one. */
+export const EDL_SCHEMA = edlSchema(false);
+export const edlSchemaFor = (v2) => (v2 ? edlSchema(true) : EDL_SCHEMA);
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
 const r3 = (n) => Math.round(Number(n) * 1000) / 1000;
@@ -280,7 +285,7 @@ export function validateEdl(edl, ctx) {
         },
         // Legacy field; new plans put text in `graphics`.
         textOverlays: [],
-        framing: { mode: ['fit_blur', 'split'].includes(edl.framing?.mode) ? edl.framing.mode : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)), detailX: r3(clamp(edl.framing?.detailX ?? 0.5, 0, 1)), detailY: r3(clamp(edl.framing?.detailY ?? 0.5, 0, 1)) },
+        framing: { mode: edl.framing?.mode === 'fit_blur' || (edl.framing?.mode === 'split' && isEditorFeaturesV2()) ? edl.framing.mode : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)), detailX: r3(clamp(edl.framing?.detailX ?? 0.5, 0, 1)), detailY: r3(clamp(edl.framing?.detailY ?? 0.62, 0, 1)) },
         music: { trackId: musicId || null, volume: r3(clamp(edl.music?.volume ?? 0.15, 0, 0.6)), reason: clip(edl.music?.reason, 200) },
         sfx: sfxIn.filter((s) => SFX_TYPES.includes(s.type) && inSegments(s.at, kept)).slice(0, LIMITS.sfx).map((s) => ({ type: s.type, at: r3(s.at) })),
         changes: (edl.changes ?? []).slice(0, 24).map((c) => ({ kind: pick(c.kind, CHANGE_KINDS, 'cut'), label: clip(c.label, 120), why: clip(c.why, 300), evidence: pick(c.evidence, EVIDENCE, 'footage') })),

@@ -182,7 +182,7 @@ export function framingFor(mode, planFraming, enabled) {
     const focusX = planFraming.focusX;
     if (mode !== 'split') return { mode, focusX };
     if (!enabled) return { mode: 'fill', focusX };
-    return { mode: 'split', focusX, split: { detailX: planFraming.detailX ?? 0.5, detailY: planFraming.detailY ?? 0.5, zoom: SPLIT_ZOOM } };
+    return { mode: 'split', focusX, split: { detailX: planFraming.detailX ?? 0.5, detailY: planFraming.detailY ?? 0.62, zoom: SPLIT_ZOOM } };
 }
 
 /** Plans saved before graphics existed: their text overlays become pill graphics, the rest gets defaults. */

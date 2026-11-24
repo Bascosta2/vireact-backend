@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateEdl } from '../src/service/editor/edl.js';
+import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
 import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
@@ -189,7 +189,18 @@ test('split screen: only with the flag, otherwise it falls back to fill', () => 
     assert.deepEqual(buildRenderProps(raw, {}, { ...media(null), v2: true }).framing, { mode: 'fill', focusX: 0.4 });
     assert.deepEqual(framingFor('fit_blur', { focusX: 0.5 }, false), { mode: 'fit_blur', focusX: 0.5 });
     // A planned split keeps its detail point through validation.
-    const planned = validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5, detailX: 1.4, detailY: 0.25 } }, ctx).plan;
-    assert.equal(planned.framing.mode, 'split');
-    assert.equal(planned.framing.detailX, 1);
+    process.env.EDITOR_FEATURES_V2 = 'true';
+    try {
+        const planned = validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5, detailX: 1.4, detailY: 0.25 } }, ctx).plan;
+        assert.equal(planned.framing.mode, 'split');
+        assert.equal(planned.framing.detailX, 1);
+        assert.ok('detailX' in edlSchemaFor(true).properties.framing.properties);
+        assert.equal(validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5 } }, ctx).plan.framing.detailY, 0.62);
+    } finally {
+        delete process.env.EDITOR_FEATURES_V2;
+    }
+    // Flag off: the planner schema is the original one and a split plan is coerced to fill.
+    assert.equal('detailX' in edlSchemaFor(false).properties.framing.properties, false);
+    assert.ok(!edlSchemaFor(false).properties.framing.properties.mode.description.includes('split'));
+    assert.equal(validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5, detailX: 0.7, detailY: 0.3 } }, ctx).plan.framing.mode, 'fill');
 });
