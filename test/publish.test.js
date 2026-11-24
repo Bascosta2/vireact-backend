@@ -96,7 +96,8 @@ test('capabilities: canPublish only with the platform posting scope, or in dry-r
     const fb = S.platformCapability({ platform: 'facebook', account: null, providerAvailable: false });
     assert.deepEqual([fb.connected, fb.canPublish], [false, false]);
     assert.match(fb.reason, /not available yet/);
-    assert.equal(S.platformCapability({ platform: 'facebook', account: null, providerAvailable: false, dryRun: true }).canPublish, true);
+    assert.equal(S.platformCapability({ platform: 'facebook', account: null, providerAvailable: false, dryRun: true }).canPublish, false, 'no provider: refused even in test mode');
+    assert.equal(S.platformCapability({ platform: 'facebook', account: null, providerAvailable: true, dryRun: true }).canPublish, true);
 });
 
 // ---- ownership
@@ -210,19 +211,22 @@ test('state transitions: published, waiting, retry with backoff, give up, perman
 /** In-memory stand-in for mongoRepo. */
 const memoryRepo = (post) => {
     const db = { post: structuredClone(post), reauth: [] };
+    const own = (token) => { if (db.post.lockToken !== token) throw new J.LeaseLostError(); };
     return {
         db,
-        async claim(id, now) {
+        async claim(id, now, token) {
             const p = db.post;
             if (!['scheduled', 'publishing'].includes(p.status) || new Date(p.scheduledAt).getTime() > now + J.DUE_SLACK_MS) return null;
             if (p.lockedUntil && new Date(p.lockedUntil).getTime() > now) return null;
-            Object.assign(p, { status: 'publishing', lockedUntil: new Date(now + J.LEASE_MS) });
+            Object.assign(p, { status: 'publishing', lockedUntil: new Date(now + J.LEASE_MS), lockToken: token });
             return structuredClone(p);
         },
         get: async () => structuredClone(db.post),
-        saveTargetState: async (id, i, state) => { db.post.targets[i].state = structuredClone(state); },
-        saveTarget: async (id, i, t) => { db.post.targets[i] = structuredClone(t); },
-        finish: async (id, patch) => { Object.assign(db.post, patch, { lockedUntil: null }); },
+        renew: async (id, token, until) => { own(token); db.post.lockedUntil = new Date(until); },
+        saveTargetState: async (id, token, i, state) => { own(token); db.post.targets[i].state = structuredClone(state); },
+        saveTarget: async (id, token, i, t) => { own(token); db.post.targets[i] = structuredClone(t); },
+        finish: async (id, token, patch) => { own(token); Object.assign(db.post, patch, { lockedUntil: null, lockToken: null }); },
+        findOwner: async () => ({ email: 'owner@example.com' }),
         findAccount: async (aid) => ({ _id: aid, platform: aid, status: 'active', externalId: `ext-${aid}`, tokens: { scopes: ['video.publish', 'video.upload', 'https://www.googleapis.com/auth/youtube.upload', 'instagram_business_content_publish', 'pages_manage_posts'] } }),
         markReauth: async (aid) => { db.reauth.push(aid); },
     };
@@ -236,7 +240,7 @@ const basePost = (platforms, extra = {}) => ({
 
 test('job: dry-run publishes every target without platform calls', async () => {
     const repo = memoryRepo(basePost(['tiktok', 'instagram', 'youtube', 'facebook']));
-    const out = await J.runPublishJob('post1', { repo, dryRun: true, clock: () => 1_000_000, media: () => media(), schedule: async () => assert.fail('nothing to schedule') });
+    const out = await J.runPublishJob('post1', { repo, hasAccess: () => true, dryRun: true, clock: () => 1_000_000, media: () => media(), schedule: async () => assert.fail('nothing to schedule') });
     assert.equal(out.status, 'published');
     assert.ok(repo.db.post.targets.every((t) => t.status === 'published' && t.externalId.startsWith('dry-run-')));
     assert.equal(repo.db.post.lockedUntil, null);
@@ -251,7 +255,7 @@ test('job: idempotent (a published target is never sent again), retries transien
     };
     const queued = [];
     let now = 1_000_000;
-    const deps = { repo, dryRun: false, publishers, accessToken: async () => 'tok', media: () => media(), clock: () => now, schedule: async (m) => { queued.push(m); return `msg-${queued.length}`; } };
+    const deps = { repo, hasAccess: () => true, dryRun: false, publishers, accessToken: async () => 'tok', media: () => media(), clock: () => now, schedule: async (m) => { queued.push(m); return `msg-${queued.length}`; } };
     const first = await J.runPublishJob('post1', deps);
     assert.equal(first.status, 'publishing');
     assert.deepEqual(repo.db.post.targets.map((t) => t.status), ['published', 'publishing']);
@@ -272,19 +276,19 @@ test('job: locked, not yet due, stale message, reconnect and missing permission'
     const queued = [];
     const schedule = async (m) => { queued.push(m); return 'm'; };
     const locked = memoryRepo(basePost(['youtube'], { status: 'publishing', lockedUntil: new Date(1_500_000) }));
-    assert.deepEqual(await J.runPublishJob('post1', { repo: locked, clock: () => 1_000_000, schedule }), { deferred: 'locked' });
+    assert.deepEqual(await J.runPublishJob('post1', { repo: locked, hasAccess: () => true, clock: () => 1_000_000, schedule }), { deferred: 'locked' });
     assert.equal(queued.at(-1).at, 1_530_000);
     const later = memoryRepo(basePost(['youtube'], { scheduledAt: new Date(9_000_000_000), scheduleVersion: 3 }));
-    assert.deepEqual(await J.runPublishJob('post1', { repo: later, clock: () => 1_000_000, schedule, version: 3 }), { deferred: 'not_due' });
+    assert.deepEqual(await J.runPublishJob('post1', { repo: later, hasAccess: () => true, clock: () => 1_000_000, schedule, version: 3 }), { deferred: 'not_due' });
     assert.equal(queued.at(-1).at, 9_000_000_000);
-    assert.deepEqual(await J.runPublishJob('post1', { repo: later, clock: () => 1_000_000, schedule, version: 2 }), { skipped: 'stale' });
+    assert.deepEqual(await J.runPublishJob('post1', { repo: later, hasAccess: () => true, clock: () => 1_000_000, schedule, version: 2 }), { skipped: 'stale' });
     const cancelled = memoryRepo(basePost(['youtube'], { status: 'cancelled' }));
-    assert.deepEqual(await J.runPublishJob('post1', { repo: cancelled, clock: () => 1_000_000, schedule }), { skipped: 'cancelled' });
+    assert.deepEqual(await J.runPublishJob('post1', { repo: cancelled, hasAccess: () => true, clock: () => 1_000_000, schedule }), { skipped: 'cancelled' });
 
     const reauthRepo = memoryRepo(basePost(['youtube', 'instagram']));
     reauthRepo.findAccount = async (aid) => ({ _id: aid, status: 'active', tokens: { scopes: aid === 'youtube' ? ['https://www.googleapis.com/auth/youtube.upload'] : ['instagram_business_basic'] } });
     const err = Object.assign(new Error('expired'), { reauth: true });
-    const out = await J.runPublishJob('post1', { repo: reauthRepo, dryRun: false, clock: () => 1_000_000, schedule, media: () => media(), accessToken: async () => { throw err; } });
+    const out = await J.runPublishJob('post1', { repo: reauthRepo, hasAccess: () => true, dryRun: false, clock: () => 1_000_000, schedule, media: () => media(), accessToken: async () => { throw err; } });
     assert.equal(out.status, 'failed');
     assert.match(reauthRepo.db.post.targets[0].error, /Reconnect your YouTube account/);
     assert.match(reauthRepo.db.post.targets[1].error, /permission to post/);
@@ -411,13 +415,89 @@ test('Facebook: Page Reel start, upload with the Page token, finish as PUBLISHED
         ['POST', '/pg1/video_reels', (url, init) => (new URLSearchParams(init.body).get('upload_phase') === 'start' ? { video_id: 'v7', upload_url: 'https://rupload.facebook.com/video-upload/v25.0/v7' } : { success: true })],
         ['POST', 'rupload.facebook.com', { success: true }],
     ]);
-    const r = await FB.facebookPublisher.step({ post: { mode: 'publish', caption: 'hi' }, target: { state: {} }, account: { externalId: 'pg1' }, access: 'ptok', media: media(), env: {}, fetchImpl: f, save: noSave });
+    const provider = { pages: async ({ access }) => (access === 'utok' ? [{ id: 'pg1', access_token: 'ptok' }, { id: 'pg2', access_token: 'other' }] : []) };
+    const r = await FB.facebookPublisher.step({ post: { mode: 'publish', caption: 'hi' }, target: { pageId: 'pg1', state: {} }, account: { externalId: 'fbuser' }, access: 'utok', provider, media: media(), env: {}, fetchImpl: f, save: noSave });
     assert.deepEqual([r.status, r.externalId, r.url], ['published', 'v7', 'https://www.facebook.com/reel/v7']);
     const up = f.calls.find((c) => c.url.includes('rupload'));
     assert.deepEqual([up.init.headers.Authorization, up.init.headers.offset, up.init.headers.file_size], ['OAuth ptok', '0', String(3 * MB)]);
     assert.equal(new URLSearchParams(f.calls.at(-1).init.body).get('video_state'), 'PUBLISHED');
     const bad = fakeFetch([['POST', '/pg1/video_reels', { __status: 400, __body: { error: { code: 1363040, message: 'aspect' } } }]]);
-    await assert.rejects(FB.facebookPublisher.step({ post: { mode: 'publish' }, target: { state: { videoId: 'v7', uploaded: true } }, account: { externalId: 'pg1' }, access: 'p', media: media(), env: {}, fetchImpl: bad, save: noSave }), /vertical 9:16/);
+    const fb = (target, fetchImpl, extra = {}) => FB.facebookPublisher.step({ post: { mode: 'publish' }, target, account: { externalId: 'fbuser' }, access: 'utok', provider, media: media(), env: {}, fetchImpl, save: noSave, ...extra });
+    await assert.rejects(fb({ pageId: 'pg1', state: { videoId: 'v7', uploaded: true } }, bad), /vertical 9:16/);
     const expiredToken = fakeFetch([['POST', '/video_reels', { __status: 400, __body: { error: { code: 190, message: 'expired' } } }]]);
-    await assert.rejects(FB.facebookPublisher.step({ post: { mode: 'publish' }, target: { state: {} }, account: { externalId: 'pg1' }, access: 'p', media: media(), env: {}, fetchImpl: expiredToken, save: noSave }), (e) => e.reauth === true);
+    await assert.rejects(fb({ pageId: 'pg1', state: {} }, expiredToken), (e) => e.reauth === true);
+    // Never the login's own id, never without a Page, never without the provider.
+    await assert.rejects(fb({ pageId: null, state: {} }, f), /No Facebook Page was chosen/);
+    await assert.rejects(fb({ pageId: 'pg9', state: {} }, f), /can no longer post to that Facebook Page/);
+    await assert.rejects(fb({ pageId: 'pg1', state: {} }, f, { provider: null }), /not available yet/);
+    // Resume: a failed status check retries later instead of resending from byte 0.
+    const statusDown = fakeFetch([['GET', '/v7?fields=status', { __status: 503, __body: { error: { code: 2, message: 'down' } } }], ['POST', 'rupload', () => assert.fail('must not upload blindly')]]);
+    await assert.rejects(fb({ pageId: 'pg1', state: { videoId: 'v7', uploadStarted: true, uploaded: false } }, statusDown), (e) => e.retry === true);
+    const half = fakeFetch([['GET', '/v7?fields=status', { status: { uploading_phase: { status: 'in_progress', bytes_transfered: MB } } }], ['POST', 'rupload', { success: true }], ['POST', '/pg1/video_reels', { success: true }]]);
+    const m = media();
+    await fb({ pageId: 'pg1', state: { videoId: 'v7', uploadStarted: true, uploaded: false } }, half, { media: m });
+    assert.deepEqual(m.reads, [[MB, 'stream']]);
+    assert.equal(half.calls.find((c) => c.url.includes('rupload')).init.headers.offset, String(MB));
+});
+
+test('Facebook Page choice at create time: requested Page must be shared; one Page is the default', async () => {
+    const two = { pages: async () => [{ id: '111', name: 'A', access_token: 'a' }, { id: '222', name: 'B', access_token: 'b' }] };
+    const one = { pages: async () => [{ id: '111', access_token: 'a' }] };
+    const accessToken = async () => 'utok';
+    const account = { _id: 'f1' };
+    assert.equal(await S.resolveFacebookPage({ account, pageId: '222', provider: two, accessToken }), '222');
+    assert.equal(await S.resolveFacebookPage({ account, provider: one, accessToken }), '111');
+    await assert.rejects(S.resolveFacebookPage({ account, provider: two, accessToken }), (e) => e.statusCode === 400 && e.data.code === 'FACEBOOK_PAGE_REQUIRED' && e.data.pages.length === 2);
+    await assert.rejects(S.resolveFacebookPage({ account, pageId: '333', provider: two, accessToken }), /not shared/);
+    await assert.rejects(S.resolveFacebookPage({ account, provider: null, accessToken }), /not available yet/);
+    const [t] = S.buildTargets({ platforms: ['facebook'], mode: 'publish', accounts: { facebook: { _id: 'f1', tokens: { scopes: ['pages_manage_posts'] } } }, capabilities: { facebook: { canPublish: true } }, pageId: '111' });
+    assert.equal(t.pageId, '111');
+});
+
+test('TikTok: a stopped upload is checked before starting again, so it can never post twice', async () => {
+    const run = (statusReply) => {
+        const f = fakeFetch([
+            ['POST', '/status/fetch/', statusReply],
+            ['POST', '/creator_info/', { data: { privacy_level_options: ['SELF_ONLY'] }, error: { code: 'ok' } }],
+            ['POST', '/video/init/', { data: { publish_id: 'pub2', upload_url: 'https://open-upload.tiktokapis.com/u' }, error: { code: 'ok' } }],
+            ['PUT', 'open-upload', { __status: 201, __body: null }],
+        ]);
+        return TT.tiktokPublisher.step({ post: { mode: 'publish' }, target: { state: { publishId: 'pub1', uploaded: false } }, access: 't', media: media(MB), env: {}, fetchImpl: f, save: noSave }).then((r) => ({ r, f }));
+    };
+    const received = await run({ data: { status: 'PROCESSING_UPLOAD', uploaded_bytes: MB }, error: { code: 'ok' } });
+    assert.equal(received.f.calls.filter((c) => c.url.includes('/init/')).length, 0, 'all bytes arrived: only poll');
+    assert.equal(received.r.state.publishId, 'pub1');
+    const partial = await run({ data: { status: 'PROCESSING_UPLOAD', uploaded_bytes: 10 }, error: { code: 'ok' } });
+    assert.equal(partial.f.calls.filter((c) => c.url.includes('/video/init/')).length, 1, 'incomplete upload: start again');
+});
+
+test('job: test posts stay simulated, a stale pass cannot overwrite a newer one, kill switch cancels', async () => {
+    const calls = [];
+    const live = { youtube: { requiredScopes: () => [], step: async () => { calls.push('live'); return { status: 'published', externalId: 'real' }; } } };
+    const stored = memoryRepo(basePost(['youtube'], { dryRun: true }));
+    await J.runPublishJob('post1', { repo: stored, hasAccess: () => true, publishers: live, accessToken: async () => 't', media: () => media(), clock: () => 1_000_000, schedule: async () => 'm' });
+    assert.deepEqual(calls, [], 'created in test mode: never sent live');
+    assert.match(stored.db.post.targets[0].externalId, /^dry-run-/);
+
+    const raced = memoryRepo(basePost(['youtube']));
+    const slow = { youtube: { requiredScopes: () => [], step: async () => { raced.db.post.lockToken = 'someone-else'; return { status: 'published', externalId: 'x' }; } } };
+    const out = await J.runPublishJob('post1', { repo: raced, hasAccess: () => true, dryRun: false, publishers: slow, accessToken: async () => 't', media: () => media(), clock: () => 1_000_000, schedule: async () => 'm' });
+    assert.deepEqual(out, { skipped: 'lease_lost' });
+    assert.equal(raced.db.post.targets[0].status, 'pending', 'the stale pass wrote nothing');
+
+    const off = memoryRepo(basePost(['youtube', 'tiktok']));
+    const r = await J.runPublishJob('post1', { repo: off, hasAccess: () => false, publishers: live, clock: () => 1_000_000, schedule: async () => 'm' });
+    assert.equal(r.status, 'cancelled');
+    assert.ok(off.db.post.targets.every((t) => t.status === 'cancelled' && /turned off/.test(t.error)));
+    assert.deepEqual(calls, []);
+});
+
+test('Instagram polling stops after about 5 minutes; YouTube upload without an id asks for a manual check', async () => {
+    const t = { platform: 'instagram', status: 'publishing', state: { containerId: 'c', waitStartedAt: 0 } };
+    const late = J.applyOutcome(t, { type: 'waiting', state: t.state, retryInSec: 60, maxWaitMs: IG.INSTAGRAM_MAX_WAIT_MS }, IG.INSTAGRAM_MAX_WAIT_MS + 1);
+    assert.equal(late.status, 'failed');
+    assert.match(late.error, /after 6 minutes/);
+    const noId = fakeFetch([['PUT', 'upload_id=S1', { __status: 200, __body: {} }]]);
+    await assert.rejects(YT.youtubePublisher.step({ post: { mode: 'publish' }, target: { state: { uploadUri: 'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=S1' } }, access: 't', media: media(), fetchImpl: noId, save: noSave }),
+        (e) => e.retry === false && /YouTube Studio/.test(e.message));
 });

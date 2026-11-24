@@ -54,7 +54,8 @@ export const nextOffset = (range) => {
 
 const done = (res, state) => {
     const id = res.body?.id;
-    if (!id) throw transient('YouTube finished the upload without a video id. We will check again shortly.');
+    // Uploaded but no id: sending again could make a duplicate, so stop and ask for a manual check.
+    if (!id) throw permanent('YouTube received the video but did not tell us its link. Check YouTube Studio before scheduling it again.');
     return { status: 'published', externalId: String(id), url: `https://www.youtube.com/watch?v=${id}`, state };
 };
 

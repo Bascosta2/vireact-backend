@@ -28,6 +28,8 @@ const targetSchema = new mongoose.Schema({
     platform: { type: String, enum: PUBLISH_PLATFORMS, required: true },
     /** The connected account chosen when the post was scheduled (null in dry-run without an account). */
     accountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ConnectedAccount', default: null },
+    /** Facebook only: the Page to post to (one of the Pages the connected login shares). */
+    pageId: { type: String, default: null },
     status: { type: String, enum: Object.values(TARGET_STATUS), default: TARGET_STATUS.PENDING },
     externalId: { type: String, default: null },
     url: { type: String, default: null },
@@ -55,12 +57,16 @@ const scheduledPostSchema = new mongoose.Schema({
     scheduledAt: { type: Date, required: true },
     mode: { type: String, enum: PUBLISH_MODES, required: true },
     status: { type: String, enum: Object.values(POST_STATUS), default: POST_STATUS.SCHEDULED },
+    /** Created in test mode (PUBLISHING_DRY_RUN): always simulated, even if the flag is turned off later. */
+    dryRun: { type: Boolean, default: false },
     targets: { type: [targetSchema], default: [] },
     /** Bumped whenever scheduledAt changes, so an old queued message cannot start a second chain. */
     scheduleVersion: { type: Number, default: 1 },
     queueMessageId: { type: String, default: null },
     /** Lease held by the pass that is publishing right now (another delivery waits for it to expire). */
     lockedUntil: { type: Date, default: null },
+    /** Owner of the lease: every write of a pass is conditioned on it, so a stale pass cannot overwrite a newer one. */
+    lockToken: { type: String, default: null },
     completedAt: { type: Date, default: null },
 }, { timestamps: true });
 

@@ -7,13 +7,16 @@ import { call, graphFailure, permanent, transient } from './index.js';
  *   2. GET  /<CONTAINER_ID>?fields=status_code  until FINISHED (checked about once a minute, as Meta asks)
  *   3. POST /<IG_ID>/media_publish  creation_id=<CONTAINER_ID>, then read the permalink.
  * Instagram has no drafts in its API: draft mode is refused when the post is created.
- * Limit: 100 API-published posts per account per rolling 24 hours (content_publishing_limit).
+ * Limit: 50 API-published posts per account per rolling 24 hours (content_publishing_limit).
+ * Container status is checked about once a minute for at most about 5 minutes, as Meta recommends.
  */
 
 const GRAPH = 'https://graph.instagram.com';
 const NAME = 'Instagram';
 const version = (e) => String(e.INSTAGRAM_GRAPH_VERSION ?? '').trim() || 'v25.0';
 const CHECK_SEC = 60;
+/** Meta: query the container about once a minute for no more than 5 minutes. */
+export const INSTAGRAM_MAX_WAIT_MS = 6 * 60 * 1000;
 
 const failure = (res) => graphFailure(NAME, res, (code, sub) => {
     if (code === 9 || sub === 2207042) return permanent('Your Instagram account reached its limit of posts made by apps in 24 hours. Try again tomorrow.');
@@ -45,16 +48,16 @@ export const instagramPublisher = {
             if (!res.ok || !res.body?.id) throw failure(res);
             state.containerId = String(res.body.id);
             await save(state);
-            return { status: 'waiting', state, retryInSec: CHECK_SEC };
+            return { status: 'waiting', state, retryInSec: CHECK_SEC, maxWaitMs: INSTAGRAM_MAX_WAIT_MS };
         }
         if (!state.publishRequested) {
             const res = await call(`${GRAPH}/${v}/${state.containerId}?fields=status_code,status&access_token=${encodeURIComponent(access)}`, { fetchImpl, name: NAME });
             if (!res.ok) throw failure(res);
             const code = res.body?.status_code;
-            if (code === 'IN_PROGRESS') return { status: 'waiting', state, retryInSec: CHECK_SEC };
+            if (code === 'IN_PROGRESS') return { status: 'waiting', state, retryInSec: CHECK_SEC, maxWaitMs: INSTAGRAM_MAX_WAIT_MS };
             if (code === 'EXPIRED') throw transient('Instagram let the upload expire. We will upload it again shortly.', { resetState: true });
             if (code === 'ERROR') throw permanent(`Instagram could not process this video${res.body?.status ? ` (${String(res.body.status).slice(0, 120)})` : ''}. Reels need an MP4 between 3 seconds and 15 minutes.`);
-            if (code !== 'FINISHED' && code !== 'PUBLISHED') return { status: 'waiting', state, retryInSec: CHECK_SEC };
+            if (code !== 'FINISHED' && code !== 'PUBLISHED') return { status: 'waiting', state, retryInSec: CHECK_SEC, maxWaitMs: INSTAGRAM_MAX_WAIT_MS };
             if (code === 'PUBLISHED') return { status: 'published', externalId: null, url: null, state };
             // Marked before the call: a crash after Instagram published must not publish again.
             state.publishRequested = true;

@@ -5,7 +5,7 @@ import { EditProject, EDIT_STATUS, RENDER_STATUS } from '../../model/edit-projec
 import { storage } from '../../lib/storage.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { hasPublishingAccess, isPublishingDryRun } from '../../config/flags.js';
-import { PROVIDERS } from '../accounts/accounts.service.js';
+import { PROVIDERS, accessTokenFor } from '../accounts/accounts.service.js';
 import { PUBLISHERS, PLATFORM_NAMES, scheduleRun, cancelRun } from './publish-job.js';
 
 /**
@@ -38,8 +38,8 @@ const canPostAnyMode = (platform, account) => PUBLISH_MODES.some((m) => hasAll(a
 export const platformCapability = ({ platform, account = null, providerAvailable = true, dryRun = false }) => {
     const name = PLATFORM_NAMES[platform];
     const connected = Boolean(account) && providerAvailable;
-    if (dryRun) return { platform, connected, canPublish: true, reason: 'Test mode: posts are simulated and nothing is sent.' };
     if (!providerAvailable) return { platform, connected: false, canPublish: false, reason: `${name} connections are not available yet.` };
+    if (dryRun) return { platform, connected, canPublish: true, reason: 'Test mode: posts are simulated and nothing is sent.' };
     if (!account) return { platform, connected: false, canPublish: false, reason: `Connect your ${name} account in the Accounts tab first.` };
     if (account.status === ACCOUNT_STATUS.NEEDS_REAUTH) return { platform, connected, canPublish: false, reason: `Reconnect your ${name} account in the Accounts tab.` };
     if (!canPostAnyMode(platform, account)) return { platform, connected, canPublish: false, reason: `Reconnect ${name} and allow posting to schedule posts there.` };
@@ -166,7 +166,7 @@ export const validateScheduledAt = (value, now = Date.now()) => {
  * Targets for the chosen platforms, or a 400 with the reason a platform cannot be used (pure; tests).
  * `capabilities` is { [platform]: { canPublish, reason } }, `accounts` is { [platform]: account }.
  */
-export const buildTargets = ({ platforms, mode, accounts, capabilities, dryRun = false }) => {
+export const buildTargets = ({ platforms, mode, accounts, capabilities, dryRun = false, pageId = null }) => {
     if (!PUBLISH_MODES.includes(mode)) throw new ApiError(400, 'Choose whether to post now or save as a draft.');
     return platforms.map((platform) => {
         const name = PLATFORM_NAMES[platform];
@@ -181,8 +181,34 @@ export const buildTargets = ({ platforms, mode, accounts, capabilities, dryRun =
                 ? `${name} is connected without permission to save drafts. Reconnect ${name} and allow posting.`
                 : `${name} is connected for drafts only. Reconnect ${name} and allow posting, or choose "Save as draft".`);
         }
-        return { platform, accountId: account?._id ?? null, status: TARGET_STATUS.PENDING, attempts: 0, state: {} };
+        return { platform, accountId: account?._id ?? null, ...(platform === 'facebook' ? { pageId } : {}), status: TARGET_STATUS.PENDING, attempts: 0, state: {} };
     });
+};
+
+/**
+ * The Facebook Page a post goes to: the requested one if the connected login shares it, else the only Page.
+ * The facebook provider (providers/facebook.js) must exist; its pages() lists the shared Pages (up to 5).
+ */
+export const resolveFacebookPage = async ({ account, pageId, dryRun = false, provider = PROVIDERS.facebook, accessToken = accessTokenFor }) => {
+    if (!provider?.pages) throw new ApiError(400, 'Facebook connections are not available yet.');
+    const wanted = pageId != null && pageId !== '' ? String(pageId) : null;
+    if (wanted && !/^\d{1,32}$/.test(wanted)) throw new ApiError(400, 'That Facebook Page id is not valid.');
+    if (dryRun && !account) return wanted;
+    let pages;
+    try {
+        pages = await provider.pages({ access: await accessToken(account) });
+    } catch (e) {
+        if (e.reauth) throw new ApiError(400, 'Reconnect your Facebook account in the Accounts tab.');
+        throw new ApiError(502, 'We could not reach Facebook to list your Pages. Try again in a moment.');
+    }
+    const ids = (pages ?? []).map((p) => String(p.id));
+    if (wanted) {
+        if (!ids.includes(wanted)) throw new ApiError(400, 'That Facebook Page is not shared with Vireact. Reconnect Facebook and share it.');
+        return wanted;
+    }
+    if (ids.length === 1) return ids[0];
+    if (!ids.length) throw new ApiError(400, 'No Facebook Page is shared with Vireact. Reconnect Facebook and share a Page.');
+    throw new ApiError(400, 'You manage more than one Facebook Page. Choose which Page to post to.', { code: 'FACEBOOK_PAGE_REQUIRED', pages: (pages ?? []).map((p) => ({ id: String(p.id), name: p.name ?? null })) });
 };
 
 // ---- what the web app sees
@@ -202,6 +228,7 @@ export const toPublicPost = async (p, { storageImpl = storage } = {}) => ({
     mode: p.mode,
     targets: (p.targets ?? []).map((t) => ({
         platform: t.platform,
+        ...(t.pageId ? { pageId: t.pageId } : {}),
         status: t.status,
         ...(t.externalId ? { externalId: t.externalId } : {}),
         ...(t.url ? { url: t.url } : {}),
@@ -244,11 +271,13 @@ export const createScheduledPost = async (userId, body = {}, { now = Date.now(),
     const scheduledAt = validateScheduledAt(body.scheduledAt, now);
     const mode = String(body.mode ?? '');
     const { accounts, capabilities } = await readiness(userId, dryRun);
-    const targets = buildTargets({ platforms, mode, accounts, capabilities, dryRun });
+    buildTargets({ platforms, mode, accounts, capabilities, dryRun });
+    const pageId = platforms.includes('facebook') ? await resolveFacebookPage({ account: accounts.facebook, pageId: body.pageId, dryRun }) : null;
+    const targets = buildTargets({ platforms, mode, accounts, capabilities, dryRun, pageId });
     const { projectId, media } = await resolveMedia(userId, { projectId: body.projectId, mediaUrl: body.mediaUrl });
     const active = await ScheduledPost.countDocuments({ userId, status: { $in: [POST_STATUS.SCHEDULED, POST_STATUS.PUBLISHING] } });
     if (active >= MAX_ACTIVE_POSTS) throw new ApiError(429, `You can have up to ${MAX_ACTIVE_POSTS} posts waiting at once.`);
-    const post = await ScheduledPost.create({ userId, projectId, media, caption, scheduledAt, mode, targets });
+    const post = await ScheduledPost.create({ userId, projectId, media, caption, scheduledAt, mode, targets, dryRun });
     const messageId = await scheduleOrFail(post);
     if (messageId === undefined) {
         await ScheduledPost.deleteOne({ _id: post._id });
@@ -276,9 +305,13 @@ export const updateScheduledPost = async (userId, id, body = {}, { now = Date.no
     const set = {};
     const platforms = body.platforms !== undefined ? validatePlatforms(body.platforms) : post.targets.map((t) => t.platform);
     if (body.caption !== undefined || body.platforms !== undefined) set.caption = validateCaption(body.caption !== undefined ? body.caption : post.caption, platforms);
-    if (body.platforms !== undefined) {
-        const { accounts, capabilities } = await readiness(userId, dryRun);
-        set.targets = buildTargets({ platforms, mode: post.mode, accounts, capabilities, dryRun });
+    if (body.platforms !== undefined || body.pageId !== undefined) {
+        const testMode = dryRun || Boolean(post.dryRun);
+        const { accounts, capabilities } = await readiness(userId, testMode);
+        buildTargets({ platforms, mode: post.mode, accounts, capabilities, dryRun: testMode });
+        const currentPage = post.targets.find((t) => t.platform === 'facebook')?.pageId ?? null;
+        const pageId = platforms.includes('facebook') ? await resolveFacebookPage({ account: accounts.facebook, pageId: body.pageId ?? currentPage, dryRun: testMode }) : null;
+        set.targets = buildTargets({ platforms, mode: post.mode, accounts, capabilities, dryRun: testMode, pageId });
     }
     const moved = body.scheduledAt !== undefined && validateScheduledAt(body.scheduledAt, now).getTime() !== new Date(post.scheduledAt).getTime();
     if (moved) {

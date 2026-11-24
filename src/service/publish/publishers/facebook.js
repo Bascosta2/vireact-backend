@@ -1,4 +1,4 @@
-import { call, graphFailure, permanent, transient } from './index.js';
+import { call, graphFailure, permanent, reconnect, transient } from './index.js';
 
 /**
  * Facebook Page Reels (permissions pages_show_list, pages_read_engagement, pages_manage_posts),
@@ -8,8 +8,9 @@ import { call, graphFailure, permanent, transient } from './index.js';
  *      body = the file streamed from our bucket). After an interruption, GET /<video_id>?fields=status gives
  *      bytes_transfered and the upload continues from there.
  *   3. POST /<PAGE_ID>/video_reels  upload_phase=finish, video_id, video_state=PUBLISHED|DRAFT, description
- * Uses only the Page access token from accounts.service accessTokenFor (the facebook provider stores the Page
- * as the connected account: externalId = Page id). Limit: 30 API-published Reels per Page per 24 hours.
+ * The connected account is the Facebook login (accessTokenFor gives the USER token). The Page chosen when the
+ * post was scheduled (target.pageId) is looked up with the facebook provider's pages() (GET /me/accounts) and
+ * its own Page access token is used for every call. Limit: 30 API-published Reels per Page per 24 hours.
  */
 
 const GRAPH = 'https://graph.facebook.com';
@@ -25,6 +26,22 @@ const failure = (res) => graphFailure(NAME, res, (code) => {
     return null;
 });
 
+/** The Page (id + Page token) to post to, from the provider's pages(); plain-English errors otherwise. */
+export const pageFor = async ({ provider, access, pageId, env, fetchImpl }) => {
+    if (!provider?.pages) throw permanent('Facebook connections are not available yet.');
+    if (!pageId) throw permanent('No Facebook Page was chosen for this post. Schedule it again and pick a Page.');
+    let pages;
+    try {
+        pages = await provider.pages({ access, env, fetchImpl });
+    } catch (e) {
+        if (e.reauth) throw reconnect(NAME);
+        throw transient('We could not reach Facebook to find your Page. We will try again shortly.');
+    }
+    const page = (pages ?? []).find((p) => String(p.id) === String(pageId));
+    if (!page?.access_token) throw permanent('Vireact can no longer post to that Facebook Page. Reconnect Facebook and share the Page again, then schedule the post again.');
+    return { pageId: String(page.id), pageToken: page.access_token };
+};
+
 /** Form for step 3 (exported for tests). */
 export const buildReelFinish = ({ pageId, videoId, caption, mode, access, env = process.env }) => ({
     url: `${GRAPH}/${version(env)}/${pageId}/video_reels`,
@@ -36,11 +53,10 @@ export const facebookPublisher = {
     name: NAME,
     requiredScopes: () => ['pages_manage_posts'],
 
-    async step({ post, target, account, access, media, env = process.env, fetchImpl, save }) {
+    async step({ post, target, access: userToken, media, env = process.env, fetchImpl, save, provider }) {
         const state = { ...(target.state ?? {}) };
         const v = version(env);
-        const pageId = account?.pageId ?? account?.externalId;
-        if (!pageId) throw permanent('Your Facebook Page is missing its id. Reconnect Facebook in the Accounts tab.');
+        const { pageId, pageToken: access } = await pageFor({ provider, access: userToken, pageId: target.pageId, env, fetchImpl });
         if (!state.videoId) {
             const res = await call(`${GRAPH}/${v}/${pageId}/video_reels`, { method: 'POST', form: { upload_phase: 'start', access_token: access }, fetchImpl, name: NAME });
             if (!res.ok || !res.body?.video_id) throw failure(res);
@@ -50,8 +66,14 @@ export const facebookPublisher = {
         if (!state.uploaded) {
             let offset = 0;
             if (state.uploadStarted) {
+                // Resume from what Facebook confirms; if it cannot say, retry later rather than resend from 0.
                 const st = await call(`${GRAPH}/${v}/${state.videoId}?fields=status&access_token=${encodeURIComponent(access)}`, { fetchImpl, name: NAME });
-                offset = Number(st.body?.status?.uploading_phase?.bytes_transfered ?? st.body?.status?.uploading_phase?.bytes_transferred ?? 0) || 0;
+                if (!st.ok) {
+                    if (Number(st.body?.error?.code) === 100) throw transient('Facebook lost the upload. We will start it again shortly.', { resetState: true });
+                    throw failure(st);
+                }
+                const phase = st.body?.status?.uploading_phase ?? {};
+                offset = phase.status === 'complete' ? media.sizeBytes : Number(phase.bytes_transfered ?? phase.bytes_transferred ?? 0) || 0;
             }
             state.uploadStarted = true;
             await save(state);

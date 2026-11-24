@@ -106,6 +106,19 @@ export const tiktokPublisher = {
 
     async step({ post, target, account, access, media, env = process.env, fetchImpl, save }) {
         const state = { ...(target.state ?? {}) };
+        if (state.publishId && !state.uploaded) {
+            // A pass stopped mid-upload (e.g. the last chunk timed out after TikTok got it). Only an upload TikTok
+            // says failed or is missing bytes is started again; anything else may already be posting, so poll it.
+            const res = await call(`${API}/post/publish/status/fetch/`, { method: 'POST', headers: authed(access), json: { publish_id: state.publishId }, fetchImpl, name: NAME });
+            const code = res.body?.error?.code;
+            if (failed(res) && code !== 'invalid_publish_id') throw failure(res);
+            const data = res.body?.data ?? {};
+            const incomplete = code === 'invalid_publish_id' || data.status === 'FAILED' || (data.status === 'PROCESSING_UPLOAD' && Number(data.uploaded_bytes) < media.sizeBytes);
+            if (!incomplete) {
+                state.uploaded = true;
+                await save(state);
+            }
+        }
         // An upload that never completed cannot post, so starting over is safe; a completed one is only polled.
         if (!state.publishId || !state.uploaded) {
             let creator = {};

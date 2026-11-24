@@ -1,9 +1,11 @@
+import crypto from 'node:crypto';
 import { ScheduledPost, POST_STATUS, TARGET_STATUS } from '../../model/scheduled-post.model.js';
+import { User } from '../../model/user.model.js';
 import { ConnectedAccount, ACCOUNT_STATUS } from '../../model/connected-account.model.js';
 import { getQStashClient } from '../../lib/qstash.js';
 import { storage } from '../../lib/storage.js';
-import { isPublishingDryRun } from '../../config/flags.js';
-import { accessTokenFor } from '../accounts/accounts.service.js';
+import { hasPublishingAccess, isPublishingDryRun } from '../../config/flags.js';
+import { accessTokenFor, PROVIDERS } from '../accounts/accounts.service.js';
 import { PublishError, dryRunPublisher, permanent, reconnect, transient } from './publishers/index.js';
 import { tiktokPublisher } from './publishers/tiktok.js';
 import { instagramPublisher } from './publishers/instagram.js';
@@ -57,8 +59,11 @@ export const applyOutcome = (target, outcome, now = Date.now()) => {
     }
     if (outcome.type === 'waiting') {
         const waitStartedAt = t.state.waitStartedAt ?? now;
-        if (now - waitStartedAt > MAX_WAIT_MS) {
-            return { ...t, status: TARGET_STATUS.FAILED, nextAttemptAt: null, error: `${name} was still processing the video after 3 hours. Check ${name} directly; if the post is not there, schedule it again.` };
+        const maxWait = outcome.maxWaitMs ?? MAX_WAIT_MS;
+        if (now - waitStartedAt > maxWait) {
+            const mins = Math.round(maxWait / 60000);
+            const span = mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minutes`;
+            return { ...t, status: TARGET_STATUS.FAILED, nextAttemptAt: null, error: `${name} was still processing the video after ${span}. Check ${name} directly; if the post is not there, schedule it again.` };
         }
         return { ...t, status: TARGET_STATUS.PUBLISHING, error: null, nextAttemptAt: new Date(now + Math.max(5, outcome.retryInSec ?? 30) * 1000), state: { ...(outcome.state ?? t.state), waitStartedAt } };
     }
@@ -174,24 +179,40 @@ export const mediaFor = (post, { storageImpl = storage, fetchImpl = fetch } = {}
 
 // ---- persistence (Mongo by default; tests pass an in-memory repo)
 
+/** Every write of a pass is conditioned on its lock token; a pass that lost its lease changes nothing. */
+export class LeaseLostError extends Error {
+    constructor() {
+        super('publishing lease lost');
+        this.name = 'LeaseLostError';
+    }
+}
+const mine = (postId, lockToken) => ({ _id: postId, lockToken });
+const checked = async (write) => {
+    const r = await write;
+    if (!r?.matchedCount) throw new LeaseLostError();
+    return r;
+};
+
 export const mongoRepo = {
-    claim: (postId, now) => ScheduledPost.findOneAndUpdate(
+    claim: (postId, now, lockToken) => ScheduledPost.findOneAndUpdate(
         {
             _id: postId,
             status: { $in: [POST_STATUS.SCHEDULED, POST_STATUS.PUBLISHING] },
             scheduledAt: { $lte: new Date(now + DUE_SLACK_MS) },
             $or: [{ lockedUntil: null }, { lockedUntil: { $lte: new Date(now) } }],
         },
-        { $set: { status: POST_STATUS.PUBLISHING, lockedUntil: new Date(now + LEASE_MS) } },
+        { $set: { status: POST_STATUS.PUBLISHING, lockedUntil: new Date(now + LEASE_MS), lockToken } },
         { new: true, lean: true },
     ),
     get: (postId) => ScheduledPost.findById(postId).lean(),
-    saveTargetState: (postId, i, state) => ScheduledPost.updateOne({ _id: postId }, { $set: { [`targets.${i}.state`]: state, lockedUntil: new Date(Date.now() + LEASE_MS) } }),
-    saveTarget: (postId, i, t) => ScheduledPost.updateOne({ _id: postId }, {
+    renew: (postId, lockToken, until) => checked(ScheduledPost.updateOne(mine(postId, lockToken), { $set: { lockedUntil: new Date(until) } })),
+    saveTargetState: (postId, lockToken, i, state) => checked(ScheduledPost.updateOne(mine(postId, lockToken), { $set: { [`targets.${i}.state`]: state } })),
+    saveTarget: (postId, lockToken, i, t) => checked(ScheduledPost.updateOne(mine(postId, lockToken), {
         $set: Object.fromEntries(['status', 'externalId', 'url', 'error', 'attempts', 'nextAttemptAt', 'state', 'publishedAt'].map((k) => [`targets.${i}.${k}`, t[k] ?? (k === 'state' ? {} : k === 'attempts' ? 0 : null)])),
-    }),
-    finish: (postId, patch) => ScheduledPost.updateOne({ _id: postId }, { $set: { ...patch, lockedUntil: null } }),
+    })),
+    finish: (postId, lockToken, patch) => checked(ScheduledPost.updateOne(mine(postId, lockToken), { $set: { ...patch, lockedUntil: null, lockToken: null } })),
     findAccount: (id) => (id ? ConnectedAccount.findById(id).lean() : null),
+    findOwner: (userId) => User.findById(userId).select('email').lean(),
     markReauth: (id) => ConnectedAccount.updateOne({ _id: id }, { $set: { status: ACCOUNT_STATUS.NEEDS_REAUTH } }),
 };
 
@@ -218,23 +239,28 @@ const credentialsFor = async (target, mode, publisher, { repo, accessToken, env,
     }
 };
 
+const TURNED_OFF = 'Scheduled posting was turned off before this post went out, so it was not sent.';
+
 /**
  * One pass over a post. Returns a summary; never throws for platform failures (they are stored on targets).
  * @param {string} postId
- * @param {object} [deps] repo, publishers, accessToken, media, schedule, clock, env, fetchImpl, dryRun, version
+ * @param {object} [deps] repo, publishers, providers, accessToken, media, schedule, clock, env, fetchImpl, dryRun,
+ *   version, hasAccess, renewEveryMs
  */
 export async function runPublishJob(postId, deps = {}) {
     const repo = deps.repo ?? mongoRepo;
     const clock = deps.clock ?? (() => Date.now());
     const env = deps.env ?? process.env;
-    const dryRun = deps.dryRun ?? isPublishingDryRun();
     const publishers = deps.publishers ?? PUBLISHERS;
+    const providers = deps.providers ?? PROVIDERS;
     const accessToken = deps.accessToken ?? accessTokenFor;
+    const hasAccess = deps.hasAccess ?? hasPublishingAccess;
     const schedule = deps.schedule ?? ((args) => scheduleRun({ ...args, env }));
     const makeMedia = deps.media ?? ((post) => mediaFor(post, { fetchImpl: deps.mediaFetch ?? fetch }));
 
     const start = clock();
-    const post = await repo.claim(postId, start);
+    const lockToken = crypto.randomUUID();
+    const post = await repo.claim(postId, start, lockToken);
     if (!post) {
         const current = await repo.get(postId);
         if (!current) return { skipped: 'missing' };
@@ -250,48 +276,81 @@ export async function runPublishJob(postId, deps = {}) {
         return { deferred: 'not_due' };
     }
 
-    const targets = post.targets.map((t) => ({ ...t, state: { ...(t.state ?? {}) } }));
-    const media = makeMedia(post);
-    const results = [];
-    for (let i = 0; i < targets.length; i++) {
-        const target = targets[i];
-        if (!isRunnable(target, clock())) continue;
-        const publisher = dryRun ? dryRunPublisher(target.platform) : publishers[target.platform];
-        let outcome;
-        let account = null;
-        try {
-            if (!publisher) throw permanent(`Posting to ${PLATFORM_NAMES[target.platform] ?? target.platform} is not available yet.`);
-            let access = null;
-            if (!dryRun) ({ account, access } = await credentialsFor(target, post.mode, publisher, { repo, accessToken, env, fetchImpl: deps.fetchImpl }));
-            const r = await publisher.step({
-                post, target, account, access, media, env, fetchImpl: deps.fetchImpl ?? fetch, now: clock(),
-                save: async (state) => { target.state = { ...state, ...(target.state?.waitStartedAt ? { waitStartedAt: target.state.waitStartedAt } : {}) }; await repo.saveTargetState(postId, i, target.state); },
-            });
-            outcome = r.status === 'published' ? { type: 'published', ...r } : { type: 'waiting', ...r };
-        } catch (e) {
-            if (!(e instanceof PublishError)) console.error(`[publish] ${target.platform} step crashed for ${postId}:`, e.message);
-            outcome = { type: 'error', error: e instanceof PublishError ? e : transient(`Something went wrong while posting to ${PLATFORM_NAMES[target.platform] ?? target.platform}. We will try again shortly.`) };
-        }
-        targets[i] = applyOutcome(target, outcome, clock());
-        await repo.saveTarget(postId, i, targets[i]);
-        if (outcome.type === 'error' && outcome.error.reauth && account?._id) await repo.markReauth(account._id).catch(() => {});
-        results.push({ platform: target.platform, status: targets[i].status });
-    }
+    // Keep the lease while long uploads run; a pass that lost it stops at its next write.
+    const renewEvery = deps.renewEveryMs ?? Math.floor(LEASE_MS / 3);
+    let leaseLost = false;
+    const renewTimer = setInterval(() => {
+        void repo.renew(postId, lockToken, clock() + LEASE_MS).catch(() => { leaseLost = true; });
+    }, renewEvery);
+    renewTimer.unref?.();
 
-    const status = aggregateStatus(targets);
-    if (status === POST_STATUS.PUBLISHING) {
-        const at = nextWakeAt(targets, clock());
-        let queueMessageId = post.queueMessageId ?? null;
-        try {
-            queueMessageId = await schedule({ postId, version: post.scheduleVersion, at, now: clock() }) ?? queueMessageId;
-        } catch (e) {
-            // QStash retries this delivery when we answer with an error; keep the lease off so it can run.
-            await repo.finish(postId, { status });
-            throw e;
+    try {
+        const targets = post.targets.map((t) => ({ ...t, state: { ...(t.state ?? {}) } }));
+        // Kill switch: the owner lost access (PUBLISHING_ENABLED off and not in the beta list): send nothing.
+        const owner = await repo.findOwner(post.userId);
+        if (!hasAccess(owner)) {
+            for (let i = 0; i < targets.length; i++) {
+                if (![TARGET_STATUS.PENDING, TARGET_STATUS.PUBLISHING].includes(targets[i].status)) continue;
+                targets[i] = { ...targets[i], status: TARGET_STATUS.CANCELLED, nextAttemptAt: null, error: TURNED_OFF };
+                await repo.saveTarget(postId, lockToken, i, targets[i]);
+            }
+            const status = aggregateStatus(targets);
+            await repo.finish(postId, lockToken, { status, completedAt: new Date(clock()) });
+            return { status, turnedOff: true };
         }
-        await repo.finish(postId, { status, queueMessageId });
-        return { status, results, nextAt: new Date(at) };
+
+        // Test posts stay simulated forever; the flag can also force simulation for every post.
+        const dryRun = deps.dryRun ?? (Boolean(post.dryRun) || isPublishingDryRun());
+        const media = makeMedia(post);
+        const results = [];
+        for (let i = 0; i < targets.length; i++) {
+            const target = targets[i];
+            if (!isRunnable(target, clock())) continue;
+            if (leaseLost) throw new LeaseLostError();
+            const publisher = dryRun ? dryRunPublisher(target.platform) : publishers[target.platform];
+            let outcome;
+            let account = null;
+            try {
+                if (!publisher) throw permanent(`Posting to ${PLATFORM_NAMES[target.platform] ?? target.platform} is not available yet.`);
+                let access = null;
+                if (!dryRun) ({ account, access } = await credentialsFor(target, post.mode, publisher, { repo, accessToken, env, fetchImpl: deps.fetchImpl }));
+                const r = await publisher.step({
+                    post, target, account, access, media, env, fetchImpl: deps.fetchImpl ?? fetch, now: clock(), provider: providers[target.platform] ?? null,
+                    save: async (state) => { target.state = { ...state, ...(target.state?.waitStartedAt ? { waitStartedAt: target.state.waitStartedAt } : {}) }; await repo.saveTargetState(postId, lockToken, i, target.state); },
+                });
+                outcome = r.status === 'published' ? { type: 'published', ...r } : { type: 'waiting', ...r };
+            } catch (e) {
+                if (e instanceof LeaseLostError) throw e;
+                if (!(e instanceof PublishError)) console.error(`[publish] ${target.platform} step crashed for ${postId}:`, e.message);
+                outcome = { type: 'error', error: e instanceof PublishError ? e : transient(`Something went wrong while posting to ${PLATFORM_NAMES[target.platform] ?? target.platform}. We will try again shortly.`) };
+            }
+            targets[i] = applyOutcome(target, outcome, clock());
+            await repo.saveTarget(postId, lockToken, i, targets[i]);
+            if (outcome.type === 'error' && outcome.error.reauth && account?._id) await repo.markReauth(account._id).catch(() => {});
+            results.push({ platform: target.platform, status: targets[i].status });
+        }
+
+        const status = aggregateStatus(targets);
+        if (status === POST_STATUS.PUBLISHING) {
+            const at = nextWakeAt(targets, clock());
+            let queueMessageId = post.queueMessageId ?? null;
+            try {
+                queueMessageId = await schedule({ postId, version: post.scheduleVersion, at, now: clock() }) ?? queueMessageId;
+            } catch (e) {
+                // QStash retries this delivery when we answer with an error; release the lease so it can run.
+                await repo.finish(postId, lockToken, { status });
+                throw e;
+            }
+            await repo.finish(postId, lockToken, { status, queueMessageId });
+            return { status, results, nextAt: new Date(at) };
+        }
+        await repo.finish(postId, lockToken, { status, completedAt: new Date(clock()) });
+        return { status, results };
+    } catch (e) {
+        // Another pass owns the post now: it carries on from the saved progress.
+        if (e instanceof LeaseLostError) return { skipped: 'lease_lost' };
+        throw e;
+    } finally {
+        clearInterval(renewTimer);
     }
-    await repo.finish(postId, { status, completedAt: new Date(clock()) });
-    return { status, results };
 }
