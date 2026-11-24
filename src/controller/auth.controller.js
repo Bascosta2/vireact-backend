@@ -329,7 +329,7 @@ const resolveLogoutAccount = async (user, refreshTokenIn) => {
 // Logout (users and admins)
 // Always clears the auth cookies and revokes the session server-side, so a captured refresh token
 // cannot be replayed. Users sign out this device only (other devices stay signed in); admins keep a
-// single stored session, which is cleared. Any `role` in the body is ignored.
+// single stored session, which is cleared. With no refresh cookie nothing is revoked. Any `role` in the body is ignored.
 export const logout = async (req, res, next) => {
     try {
         const cookieToken = req.cookies?.refreshToken;
@@ -337,7 +337,8 @@ export const logout = async (req, res, next) => {
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
 
-        const account = await resolveLogoutAccount(req.user, cookieToken);
+        // Without the refresh cookie we cannot tell which device this is; revoking would sign out every device.
+        const account = cookieToken ? await resolveLogoutAccount(req.user, cookieToken) : null;
         if (account?.isAdmin) {
             await revokeAdminRefreshToken(account.id, cookieToken);
         } else if (account) {

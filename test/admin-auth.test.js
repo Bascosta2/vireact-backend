@@ -150,6 +150,16 @@ test('logout with no session, or a forged cookie, still clears cookies and revok
     }
 });
 
+test('logout with a valid access token but no refresh cookie clears cookies and revokes nothing (no all-devices sign-out)', async () => {
+    const user = new User({ name: 'U', email: 'n@example.invalid', password: 'pw-123456' });
+    const admin = new Admin({ name: 'A', email: 'n2@example.invalid', password: 'x' });
+    for (const account of [user, admin]) {
+        const calls = recordDb();
+        assertSignedOut(await runLogout({ user: account, cookies: {} }));
+        assert.equal(calls.length, 0);
+    }
+});
+
 test('refresh: a token in the body is ignored; only the HttpOnly cookie is accepted', async () => {
     const user = new User({ name: 'U', email: 'r@example.invalid', password: 'pw-123456' });
     const res = fakeRes();
