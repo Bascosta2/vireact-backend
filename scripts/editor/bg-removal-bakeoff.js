@@ -6,10 +6,10 @@
  *   (clips are local files, or S3 keys such as editor/sources/<user>/<project>/master.mp4 when AWS_* and
  *    AWS_S3_BUCKET_NAME are set; 1 to 5 clips)
  *
- * Each clip is cut to a 720p proxy (like the real pipeline) and sent as a data URI (local) or a presigned
+ * Each clip is cut to a 720p proxy (like the real pipeline), uploaded to S3 and sent as a presigned
  * URL (S3). Writes into --out: <clip>-<variant>.webm (open them over a coloured background to judge the
- * edges), results.json and summary.md (seconds waited, clip seconds, estimated cost). Nothing is stored in
- * our S3 and the database is not touched. Prices are estimates from the vendor pages.
+ * edges), results.json and summary.md (seconds waited, clip seconds, estimated cost). The proxy copy in S3 is
+ * deleted when the run ends; the database is not touched. Prices are estimates from the vendor pages.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -61,13 +61,19 @@ async function main() {
     await fs.promises.mkdir(outDir, { recursive: true });
     const work = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bg-bakeoff-'));
     const rows = [];
+    const uploaded = [];
     try {
         for (const clip of clips) {
             const src = await localCopy(clip, work);
             const info = await probe(src);
             const proxy = path.join(work, `${slug(clip)}-720p.mp4`);
             await makeMatteProxy(src, proxy);
-            const videoUrl = `data:video/mp4;base64,${(await fs.promises.readFile(proxy)).toString('base64')}`;
+            // Same path as the real pipeline: upload the proxy to S3 and give fal a 1-hour presigned link
+            // (fal rejects data URIs over 2083 characters). The copy is deleted after this clip's variants run.
+            const inputKey = `editor/mattes/bakeoff/${Date.now()}-${slug(clip)}/input-720p.mp4`;
+            await storage.uploadFile(proxy, inputKey, 'video/mp4');
+            const videoUrl = await storage.presignDownload(inputKey, { expiresIn: 60 * 60 });
+            uploaded.push(inputKey);
             for (const name of names) {
                 const { model, refine } = VARIANTS[name];
                 const row = { clip, variant: name, clipSeconds: Math.round(info.durationSec * 10) / 10, estCostUsd: estimateCostUsd(model, info.durationSec, { refine }) };
@@ -89,6 +95,9 @@ async function main() {
             }
         }
     } finally {
+        for (const key of uploaded) {
+            await storage.deleteObject(key).catch((err) => console.error(`Could not delete s3://${key}: ${err.message}`));
+        }
         await fs.promises.rm(work, { recursive: true, force: true }).catch(() => {});
     }
     // Only finished jobs cost anything; a rejected submit (e.g. 403 no credits) is not billed.

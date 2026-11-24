@@ -231,7 +231,7 @@ const memStorage = (existing = []) => {
         uploadFile: async (_p, k) => { keys.add(k); log.push(['file', k]); },
         uploadBuffer: async (_b, k) => { keys.add(k); log.push(['buffer', k]); },
         presignDownload: async (k) => `https://s3/${k}?sig`,
-        deletePrefix: async (k) => { log.push(['del', k]); },
+        deleteObject: async (k) => { log.push(['del', k]); },
     });
     return log;
 };

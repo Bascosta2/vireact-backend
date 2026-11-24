@@ -319,6 +319,8 @@ export async function runMatteStep({ userId, projectId, srcPath, workDir, durati
         if (rec?.sourceHash) await save(failed).catch(() => {});
         return rec?.sourceHash ? failed : { status: 'failed', reason };
     } finally {
-        if (inputKey) await storage.deletePrefix(inputKey).catch(() => {});
+        // Exact-key delete: the backend's IAM user has no s3:ListBucket, so deletePrefix would fail silently and
+        // leave the user's video copy behind (the privacy policy promises it is deleted).
+        if (inputKey) await storage.deleteObject(inputKey).catch((err) => report(err, { source: 'bg-removal', step: 'delete-input' }));
     }
 }
