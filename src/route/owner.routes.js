@@ -16,6 +16,7 @@ import {
 } from '../service/owner-auth.service.js';
 import { listVideos, getVideoDetail, listUsers, getUserDetail, overview, auditLog } from '../service/owner-data.service.js';
 import { learningOverview, deepDetail, startDeepRun, startModelRun } from '../service/learning/learning.service.js';
+import { shadowReport } from '../service/learning/model/shadow.js';
 
 export const OWNER_HEADER = 'x-vireact-owner';
 const COOKIE_SECURE = '__Host-vx_owner';
@@ -117,6 +118,8 @@ ownerRoutes.get('/users/:userId', wrap(async (req, res) => {
 }));
 ownerRoutes.get('/audit', wrap(async (req, res) => ok(res, await auditLog({ limit: req.query.limit }))));
 ownerRoutes.get('/learning', wrap(async (req, res) => ok(res, await learningOverview())));
+// Read-only: the trained model's shadow predictions vs the live ones, on uploads with real results, per platform.
+ownerRoutes.get('/learning/shadow', wrap(async (req, res) => ok(res, await shadowReport())));
 ownerRoutes.get('/learning/deep/:id', wrap(async (req, res) => {
     const detail = await deepDetail(req.params.id);
     if (!detail) return deny(res, 404, 'Analysis not found.');
