@@ -99,3 +99,61 @@ test('hook variant is an edit the creator can change; the planner gets the skill
     const plain = buildPlannerContent({ project: { ...project, skill: null }, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
     assert.ok(!plain.some((c) => c.type === 'text' && /EDITING SKILL/.test(c.text)));
 });
+
+const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d'];
+
+test('the ten animation styles are skills with planner rules, render rules and built-in sounds only', async () => {
+    const { ANIMATION_STYLE_IDS, isAnimationStyle } = await import('../src/service/editor/skills.js');
+    const { SFX_TYPES } = await import('../src/service/editor/edl.js');
+    assert.deepEqual([...ANIMATION_STYLE_IDS], STYLE_IDS, 'ids match the composition (vireact-frontend/src/remotion/styles/ids.ts)');
+    for (const id of STYLE_IDS) {
+        const s = SKILLS[id];
+        assert.ok(isSkill(id) && isAnimationStyle(id), id);
+        assert.equal(s.kind, 'animation');
+        assert.match(s.plannerRules, new RegExp(`EDITING SKILL: ${s.name.toUpperCase()} ANIMATION STYLE`));
+        assert.match(s.render.accent, /^#[0-9A-F]{6}$/i);
+        const sounds = [...Object.entries(s.render.sfx).filter(([k]) => k !== 'volume' && k !== 'hook').flatMap(([, v]) => v), ...(s.render.sfx.hook ? [s.render.sfx.hook] : [])];
+        for (const type of sounds) assert.ok(SFX_TYPES.includes(type), `${id}: ${type} is a built-in sound`);
+    }
+    assert.equal(isAnimationStyle('remotion-reel'), false);
+    assert.ok(!/lego|ps2|playstation/i.test(STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked names');
+});
+
+test('an animation style sets the palette, its sounds and captions, and keeps the plan\'s structure', () => {
+    const standard = buildRenderProps(plan(), {}, media(null));
+    const pixel = buildRenderProps(plan(), {}, media('pixel-art'));
+    assert.equal(pixel.skill.id, 'pixel-art');
+    assert.deepEqual(pixel.skill.hookLines, ['I built an AI editor', 'that cuts for you']);
+    assert.equal(pixel.look.accent, SKILLS['pixel-art'].render.accent);
+    assert.equal(pixel.look.grade, 'none');
+    assert.equal(pixel.durationInFrames, standard.durationInFrames, 'the cut is the same');
+    assert.deepEqual(pixel.timeline, standard.timeline);
+    assert.ok(pixel.sfx.some((s) => s.type === 'power_up' && s.frame === 0), 'the hook lands with the style\'s sound');
+    assert.ok(!pixel.sfx.some((s) => s.type === 'hit' && s.frame === 0));
+    for (const p of pixel.captions.pages) assert.ok(p.words.length <= 2, 'pixel type is wide: 2 words a line');
+    // Graphics take the style's sounds.
+    const slamSound = pixel.sfx.find((s) => s.frame === pixel.graphics.find((g) => g.type === 'slam')?.startFrame);
+    assert.ok(slamSound && SKILLS['pixel-art'].render.sfx.slam.includes(slamSound.type), JSON.stringify(slamSound));
+
+    const minimal = buildRenderProps(plan(), {}, media('minimal-line'));
+    assert.ok(!minimal.graphics.some((g) => g.type === 'slam'), 'no slams in Minimal Line');
+    assert.ok(!minimal.sfx.some((s) => s.frame === 0 && s.type === 'hit'), 'a quiet hook');
+    assert.equal(minimal.captions.pages[0].words[0].text, 'today', 'casual lowercase');
+    const standardVol = Math.max(...standard.sfx.map((s) => s.volume));
+    assert.ok(Math.max(...minimal.sfx.map((s) => s.volume)) < standardVol, 'softer sounds');
+});
+
+test('an animation-style edit can switch to another style; other edits cannot', () => {
+    assert.equal(sanitizeEdits({ animationStyle: 'comic-art' }).animationStyle, 'comic-art');
+    assert.equal(sanitizeEdits({ animationStyle: 'remotion-reel' }).animationStyle, undefined);
+    assert.equal(sanitizeEdits({ animationStyle: 'nope' }).animationStyle, undefined);
+    const switched = buildRenderProps(plan(), { animationStyle: 'comic-art' }, media('pixel-art'));
+    assert.equal(switched.skill.id, 'comic-art');
+    assert.equal(switched.look.accent, SKILLS['comic-art'].render.accent);
+    assert.equal(buildRenderProps(plan(), { animationStyle: 'comic-art' }, media('remotion-reel')).skill.id, 'remotion-reel');
+    assert.equal(buildRenderProps(plan(), { animationStyle: 'comic-art' }, media(null)).skill, undefined);
+    // The planner follows the style the edit is in now.
+    const project = { source: { durationSec: 6, width: 1080, height: 1920 }, media: { words, cutCandidates }, skill: 'pixel-art', edits: { animationStyle: 'chalkboard' } };
+    const content = buildPlannerContent({ project, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
+    assert.ok(content.some((c) => c.type === 'text' && /EDITING SKILL: CHALKBOARD ANIMATION STYLE/.test(c.text)));
+});

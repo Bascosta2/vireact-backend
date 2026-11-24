@@ -6,7 +6,7 @@ import { formatKnowledgeContext, retrieveKnowledge } from '../analyzer/retrieve-
 import { SoundAsset } from '../../model/sound-asset.model.js';
 import { ACCENTS, CAPTION_PRESETS, EDL_SCHEMA, EFFECT_TYPES, GRADES, GRAPHIC_TYPES, SFX_FAMILIES, TRANSITION_STYLES, VISUALS, toSchemaShape, validateEdl } from './edl.js';
 import { selectExemplars } from './exemplars.js';
-import { skillFor } from './skills.js';
+import { activeSkillId, skillFor } from './skills.js';
 
 /**
  * Claude plans the edit. It sees the word-timed transcript, pause and scene data, deterministic cut
@@ -195,7 +195,8 @@ export function buildPlannerContent({ project, profile, knowledgeText, exemplarT
         content.push({ type: 'text', text: `Sheet covering ${t(s.from)}s to ${t(s.to)}s:` });
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: s.base64 } });
     }
-    const skill = skillFor(project.skill);
+    // The style the edit is in now (a regeneration after a style switch plans for the new style).
+    const skill = skillFor(activeSkillId(project.skill, project.edits));
     if (skill) content.push({ type: 'text', text: skill.plannerRules });
     content.push({ type: 'text', text: 'Plan the edit now.' });
     return content;

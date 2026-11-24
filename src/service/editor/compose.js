@@ -1,6 +1,6 @@
 import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
-import { HOOK_VARIANTS, casualCase, hookLines, skillFor } from './skills.js';
+import { HOOK_VARIANTS, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
 import { removeRepeats } from './no-repeats.js';
 import { repairWordTimings } from './cut-candidates.js';
 
@@ -153,6 +153,8 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() 
     if ('musicVolume' in input && Number.isFinite(Number(input.musicVolume))) out.musicVolume = Math.min(0.6, Math.max(0, Number(input.musicVolume)));
     if (input.framingMode === 'fill' || input.framingMode === 'fit_blur') out.framingMode = input.framingMode;
     if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
+    // Another animation style for an edit made with one (compose ignores it for every other edit).
+    if (isAnimationStyle(input.animationStyle)) out.animationStyle = input.animationStyle;
     return out;
 }
 
@@ -223,8 +225,11 @@ export function arrangeSfx(events, durationInFrames) {
  * @param {object|null} [options.density] DENSITY limits; null turns them off (tests of layout mechanics only)
  */
 export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DENSITY } = {}) {
-    const skill = skillFor(media.skill);
+    // An animation-style edit may have been switched to another style on the review page.
+    const skill = skillFor(activeSkillId(media.skill, edits));
     const sr = skill?.render ?? null;
+    /** The style's sound palette (animation styles), or null for the standard sounds. */
+    const ss = sr?.sfx ?? null;
     const base = withDefaults(rawPlan);
     // An editing skill narrows the plan to its style before anything is placed.
     const plan = sr ? {
@@ -277,7 +282,7 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         for (let k = 1; k < timeline.length; k += 1) {
             if (!realJump(k)) continue;
             transitions.push({ type: plan.transitions.style, frame: timeline[k].outStartFrame });
-            rotate('transition', SFX_FOR_TRANSITION[plan.transitions.style], Math.max(0, timeline[k].outStartFrame - 3), 1);
+            rotate('transition', ss?.transition ?? SFX_FOR_TRANSITION[plan.transitions.style], Math.max(0, timeline[k].outStartFrame - 3), 1);
         }
     }
 
@@ -340,7 +345,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         const firstTop = Math.min(Infinity, ...placedGraphics.filter((g) => TOP_GRAPHICS.has(g.type)).map((g) => g.startFrame));
         const planned = Math.min(total, f(plan.hookOverlay.durationSec));
         hook = { text: hookText, startFrame: 0, durationFrames: Math.max(Math.min(planned, f(HOOK_MIN_SEC)), Math.min(planned, firstTop)) };
-        if (sr?.hookSfx !== false) sound('hit', 0, 2);
+        // The standard hook lands with a hit; a skill may bring its own sound or none.
+        if (sr?.hookSfx !== false) sound(typeof sr?.hookSfx === 'string' ? sr.hookSfx : 'hit', 0, 2);
     }
 
     const offZooms = new Set(edits.disabledZooms ?? []);
@@ -389,16 +395,17 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
             rotate('before_visual', SFX_BEFORE_VISUAL, Math.max(0, g.startFrame - 6), 0, 0.3);
             continue;
         }
-        rotate(g.type, SFX_FOR_GRAPHIC[g.type], g.startFrame, 2);
+        rotate(g.type, (g.type === 'slam' ? ss?.slam : null) ?? ss?.graphic ?? SFX_FOR_GRAPHIC[g.type], g.startFrame, 2);
         if (g.type === 'counter') {
             // Money lands with a cash register; other numbers rotate through the bright tones.
             const money = /[$€£]/.test(g.text);
-            const landing = money ? 'cash' : next('count_end', SFX_FOR_COUNT_END);
-            sound(landing, g.startFrame + Math.min(f(COUNTER_SEC), Math.round(g.durationFrames * 0.7)), 2, undefined, money ? SFX_FOR_MONEY : SFX_FOR_COUNT_END);
+            const endPool = ss?.countEnd ?? SFX_FOR_COUNT_END;
+            const landing = money ? 'cash' : next('count_end', endPool);
+            sound(landing, g.startFrame + Math.min(f(COUNTER_SEC), Math.round(g.durationFrames * 0.7)), 2, undefined, money ? SFX_FOR_MONEY : endPool);
         }
         if (g.type === 'list') {
-            const item = next('list_item', SFX_FOR_LIST_ITEM);
-            const last = next('list_end', SFX_FOR_LIST_END);
+            const item = next('list_item', ss?.listItem ?? SFX_FOR_LIST_ITEM);
+            const last = next('list_end', ss?.listEnd ?? SFX_FOR_LIST_END);
             // The items of one list tick with the same sound on purpose (`series`), then the last one rings.
             g.items.forEach((_, k) => sound(k === g.items.length - 1 ? last : item, g.startFrame + f(LIST_FIRST_SEC + k * LIST_STEP_SEC), 2, 0.45, null, true));
         }
@@ -416,7 +423,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     // Sounds Claude placed itself (risers into reveals, drops on punchlines) outrank the automatic ones.
     const beats = plan.sfx.map((s) => ({ type: s.type, frame: mapPoint(s.at, timeline) })).filter((s) => s.frame != null).map((s) => ({ ...s, frame: f(s.frame) }));
     for (const s of density ? thin(beats, { cap: capFor(total, density.beatEverySec), gapFrames: f(density.beatGapSec), frameOf: (x) => x.frame }) : beats) sound(s.type, s.frame, 3);
-    const sfx = edits.sfxOff ? [] : arrangeSfx(sfxEvents, total);
+    // A quiet style (Minimal Line) plays every sound softer.
+    const sfx = edits.sfxOff ? [] : arrangeSfx(sfxEvents, total).map((s) => (ss?.volume ? { ...s, volume: Math.round(s.volume * ss.volume * 100) / 100 } : s));
 
     const trackId = 'musicTrackId' in edits ? edits.musicTrackId : plan.music.trackId;
     let musicVolume = edits.musicVolume ?? plan.music.volume;
@@ -436,7 +444,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         overlays: [],
         transitions,
         effects,
-        look: { grade: plan.look.grade, accent: ACCENT_HEX[plan.look.accent] ?? ACCENT_HEX.yellow, progressBar: plan.look.progressBar, motion: plan.look.motion },
+        // An animation style sets its own palette and picture treatment (the composition ignores the grade).
+        look: { grade: sr?.accent ? 'none' : plan.look.grade, accent: sr?.accent ?? ACCENT_HEX[plan.look.accent] ?? ACCENT_HEX.yellow, progressBar: plan.look.progressBar, motion: plan.look.motion },
         sfx,
         music,
         framing: { mode: edits.framingMode ?? plan.framing.mode, focusX: plan.framing.focusX },
