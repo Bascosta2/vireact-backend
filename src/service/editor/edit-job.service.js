@@ -140,6 +140,8 @@ export async function runEditJob(projectId, deps = {}) {
             frameSheets,
             cutCandidates,
             transcriptLanguage: language,
+            // Keep an in-flight or finished matte across a re-run, so fal is never asked twice for the same video.
+            ...(project.media?.matte ? { matte: project.media.matte } : {}),
         };
         const updated = await EditProject.findOneAndUpdate(
             { _id: project._id },

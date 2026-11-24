@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
 import { SPLIT_ZOOM, buildRenderProps, framingFor, needsBackgroundMatte, sanitizeEdits } from '../src/service/editor/compose.js';
-import { MODELS, buildFalInput, estimateCostUsd, extractVideoUrl, matteKey, runFalQueue, runMatteStep } from '../src/service/editor/bg-removal.service.js';
+import { MODELS, assertFalUrl, buildFalInput, estimateCostUsd, extractVideoUrl, matteKey, resetBillingLockForTests, runFalQueue, runMatteStep, spendGuard } from '../src/service/editor/bg-removal.service.js';
 import { setStorageForTests } from '../src/lib/storage.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
@@ -235,7 +235,11 @@ const memStorage = (existing = []) => {
     });
     return log;
 };
-const matteDeps = (fake, extra = {}) => ({ env: { FAL_KEY: 'k', BG_REMOVAL_MODEL: 'veed' }, hash: async () => 'abc', makeProxy: async () => {}, fetchFn: fake.fetchFn, sleepFn: async () => {}, track: () => {}, ...extra });
+const memStore = (seed = []) => {
+    const rows = [...seed];
+    return { rows, find: async (h, v) => rows.filter((r) => r.sourceHash === h && r.variant === v).pop() ?? null, save: async (r) => { rows.push({ ...r }); } };
+};
+const matteDeps = (fake, extra = {}) => ({ env: { FAL_KEY: 'k', BG_REMOVAL_MODEL: 'veed' }, hash: async () => 'abc', makeProxy: async () => {}, fetchFn: fake.fetchFn, sleepFn: async () => {}, track: () => {}, report: () => {}, store: memStore(), planOf: async () => 'pro', secondsThisMonth: async () => 0, usdToday: async () => 0, ...extra });
 const matteJob = { userId: 'u1', projectId: 'p1', srcPath: '/x.mp4', workDir: '/tmp', durationSec: 60 };
 
 test('fal request building: veed and bria inputs, auth header, submit url', async () => {
@@ -273,14 +277,16 @@ test('matte cache key uses source hash and model; cost estimates', () => {
 });
 
 test('matte step: stores the result, then a cache hit makes no fal call', async () => {
+    resetBillingLockForTests();
     const log = memStorage();
     const fake = falFake([{ status: 'COMPLETED' }]);
-    const first = await runMatteStep(matteJob, matteDeps(fake));
+    const deps = matteDeps(fake);
+    const first = await runMatteStep(matteJob, deps);
     assert.equal(first.status, 'ok');
     assert.equal(first.key, 'editor/mattes/u1/abc/veed-refine.webm');
     assert.ok(log.some(([k, key]) => k === 'buffer' && key === first.key));
-    const body = JSON.parse(fake.calls[0].body);
-    assert.equal(body.video_url, 'https://s3/editor/mattes/u1/abc/input-720p.mp4?sig');
+    assert.equal(JSON.parse(fake.calls[0].body).video_url, 'https://s3/editor/mattes/u1/abc/input-720p.mp4?sig');
+    assert.equal(deps.store.rows[1].requestId, 'r1', 'request id saved right after submit');
     const again = falFake([{ status: 'COMPLETED' }]);
     const second = await runMatteStep(matteJob, matteDeps(again));
     assert.deepEqual([second.status, second.cached], ['ok', true]);
@@ -289,15 +295,115 @@ test('matte step: stores the result, then a cache hit makes no fal call', async 
 });
 
 test('matte step falls back with a plain reason: no key, too long, provider error, timeout', async () => {
+    resetBillingLockForTests();
     memStorage();
     const fake = falFake([{ status: 'COMPLETED' }]);
     assert.deepEqual(await runMatteStep(matteJob, matteDeps(fake, { env: {} })), { status: 'skipped', reason: 'not_configured' });
     assert.equal((await runMatteStep({ ...matteJob, durationSec: 181 }, matteDeps(fake))).reason, 'too_long');
     const broken = { fetchFn: async () => jsonRes({}, false, 500) };
-    assert.deepEqual(await runMatteStep(matteJob, matteDeps(broken)), { status: 'failed', reason: 'provider_error' });
+    assert.equal((await runMatteStep(matteJob, matteDeps(broken))).reason, 'provider_error');
     const slow = falFake([{ status: 'IN_PROGRESS' }]);
     let t = 0;
-    assert.equal((await runMatteStep(matteJob, matteDeps(slow, { now: () => t, sleepFn: async () => { t += 60000; }, pollMs: 1000, timeoutMs: 120000 }))).reason, 'timeout');
+    const out = await runMatteStep(matteJob, matteDeps(slow, { now: () => t, sleepFn: async () => { t += 60000; }, pollMs: 1000, timeoutMs: 120000 }));
+    assert.equal(out.reason, 'timeout');
+    assert.ok(slow.calls.some((c) => c.url.endsWith('/cancel')), 'gave up: cancelled');
+    assert.equal(fake.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('re-run after a crash resumes the pending request and never submits twice', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const pending = { status: 'pending', model: 'veed', variant: 'veed-refine', sourceHash: 'abc', requestId: 'r1', statusUrl: 'https://queue.fal.run/veed/requests/r1/status', responseUrl: 'https://queue.fal.run/veed/requests/r1', cancelUrl: 'https://queue.fal.run/veed/requests/r1/cancel', submittedAt: new Date(), seconds: 60, estCostUsd: 1.35, updatedAt: new Date() };
+    const fake = falFake([{ status: 'IN_PROGRESS' }, { status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { store: memStore([pending]) }));
+    assert.equal(out.status, 'ok');
+    assert.equal(fake.calls.filter((c) => c.method === 'POST').length, 0);
+    // A failed download is retried from the response url, not a new submit.
+    memStorage();
+    const failedDl = { ...pending, status: 'failed', reason: 'download_failed' };
+    const fake2 = falFake([{ status: 'COMPLETED' }]);
+    const out2 = await runMatteStep(matteJob, matteDeps(fake2, { store: memStore([failedDl]) }));
+    assert.equal(out2.status, 'ok');
+    assert.equal(fake2.calls.filter((c) => c.method === 'POST').length, 0);
+    assert.equal(fake2.calls.filter((c) => c.url.endsWith('/status')).length, 0);
+    // A fresh claim by another job with no request id yet: do not submit.
+    memStorage();
+    const claim = { status: 'pending', sourceHash: 'abc', variant: 'veed-refine', requestId: null, updatedAt: new Date() };
+    const fake3 = falFake([{ status: 'COMPLETED' }]);
+    assert.equal((await runMatteStep(matteJob, matteDeps(fake3, { store: memStore([claim]) }))).reason, 'in_progress');
+    assert.equal(fake3.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('a failed matte is not retried within 24 hours', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const failed = { status: 'failed', reason: 'timeout', sourceHash: 'abc', variant: 'veed-refine', requestId: 'r1', updatedAt: new Date() };
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { store: memStore([failed]) }));
+    assert.deepEqual([out.status, out.reason], ['failed', 'timeout']);
+    assert.equal(fake.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('fal urls must be https on fal hosts before the key is sent', async () => {
+    for (const bad of ['http://queue.fal.run/x', 'https://evil.com/x', 'https://queue.fal.run.evil.com/x', 'https://evilfal.run/x', 'not a url']) assert.throws(() => assertFalUrl(bad), /untrusted/, bad);
+    for (const good of ['https://queue.fal.run/a', 'https://x.fal.run/a', 'https://rest.fal.ai/a']) assert.equal(assertFalUrl(good), good);
+    memStorage();
+    resetBillingLockForTests();
+    const sent = [];
+    const fetchFn = async (url, init = {}) => {
+        sent.push(url);
+        if (init.method === 'POST') return jsonRes({ request_id: 'r', status_url: 'https://evil.example/status', response_url: 'https://queue.fal.run/r' });
+        return jsonRes({});
+    };
+    const out = await runMatteStep(matteJob, matteDeps({ fetchFn }));
+    assert.equal(out.reason, 'provider_error');
+    assert.deepEqual(sent, ['https://queue.fal.run/veed/video-background-removal'], 'key only went to the submit endpoint');
+    setStorageForTests(null);
+});
+
+test('HTTP 403 is reported as billing, reported to the owner, and pauses all background removal', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const reported = [];
+    const fetchFn = async () => jsonRes({}, false, 403);
+    const out = await runMatteStep(matteJob, matteDeps({ fetchFn }, { report: (e, ctx) => reported.push(ctx.stage) }));
+    assert.equal(out.reason, 'billing');
+    assert.deepEqual(reported, ['bg_removal_billing']);
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    assert.equal((await runMatteStep({ ...matteJob, userId: 'u2' }, matteDeps(fake))).reason, 'billing');
+    assert.equal(fake.calls.length, 0);
+    resetBillingLockForTests();
+    setStorageForTests(null);
+});
+
+test('status errors after submit cancel the request', async () => {
+    const fake = falFake([{ status: 'IN_PROGRESS' }]);
+    const base = fake.fetchFn;
+    const fetchFn = async (url, init = {}) => (url.endsWith('/status') ? jsonRes({}, false, 500) : base(url, init));
+    await assert.rejects(runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn, sleepFn: async () => {} }), /status failed/);
+    assert.ok(fake.calls.some((c) => c.method === 'PUT' && c.url.endsWith('/cancel')));
+});
+
+test('spend guards: paid plan only, monthly seconds per user, daily USD cap', async () => {
+    const ok = { planOf: async () => 'pro', secondsThisMonth: async () => 0, usdToday: async () => 0 };
+    const g = (deps, env = {}) => spendGuard({ userId: 'u', durationSec: 60, estCostUsd: 1.35 }, deps, env);
+    assert.equal(await g(ok), null);
+    assert.equal(await g({ ...ok, planOf: async () => 'free' }), 'plan');
+    assert.equal(await g({ ...ok, planOf: async () => 'premium' }), 'plan');
+    assert.equal(await g({ ...ok, planOf: async () => 'premium' }, { BG_REMOVAL_PLANS: 'pro,premium' }), null);
+    assert.equal(await g({ ...ok, secondsThisMonth: async () => 541 }), 'cap');
+    assert.equal(await g({ ...ok, secondsThisMonth: async () => 540 }), null);
+    assert.equal(await g({ ...ok, secondsThisMonth: async () => 540 }, { BG_REMOVAL_MONTHLY_SEC_PER_USER: '590' }), 'cap');
+    assert.equal(await g({ ...ok, usdToday: async () => 8.7 }), 'cap');
+    assert.equal(await g({ ...ok, usdToday: async () => 8.6 }), null);
+    memStorage();
+    resetBillingLockForTests();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { planOf: async () => 'free' }));
+    assert.deepEqual([out.status, out.reason], ['skipped', 'plan']);
     assert.equal(fake.calls.length, 0);
     setStorageForTests(null);
 });
