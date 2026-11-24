@@ -151,7 +151,7 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() 
         else if (typeof id === 'string' && trackIds.has(id)) out.musicTrackId = id;
     }
     if ('musicVolume' in input && Number.isFinite(Number(input.musicVolume))) out.musicVolume = Math.min(0.6, Math.max(0, Number(input.musicVolume)));
-    if (input.framingMode === 'fill' || input.framingMode === 'fit_blur') out.framingMode = input.framingMode;
+    if (['fill', 'fit_blur', 'split'].includes(input.framingMode)) out.framingMode = input.framingMode;
     if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
     // Another animation style for an edit made with one (compose ignores it for every other edit).
     if (isAnimationStyle(input.animationStyle)) out.animationStyle = input.animationStyle;
@@ -170,6 +170,20 @@ const speechRanges = (pages) => {
     }
     return ranges;
 };
+
+/** Zoom of the detail pane in a split screen. */
+export const SPLIT_ZOOM = 1.8;
+
+/**
+ * The picture framing. A split screen (speaker on top, zoomed detail below, both from the one take) needs
+ * EDITOR_FEATURES_V2 (`enabled`); otherwise it falls back to fill, so a saved edit never breaks with the flag off.
+ */
+export function framingFor(mode, planFraming, enabled) {
+    const focusX = planFraming.focusX;
+    if (mode !== 'split') return { mode, focusX };
+    if (!enabled) return { mode: 'fill', focusX };
+    return { mode: 'split', focusX, split: { detailX: planFraming.detailX ?? 0.5, detailY: planFraming.detailY ?? 0.5, zoom: SPLIT_ZOOM } };
+}
 
 /** Plans saved before graphics existed: their text overlays become pill graphics, the rest gets defaults. */
 const withDefaults = (plan) => ({
@@ -451,7 +465,7 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         sfx,
         music,
         ...(brand ? { brand } : {}),
-        framing: { mode: edits.framingMode ?? plan.framing.mode, focusX: plan.framing.focusX },
+        framing: framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true),
         ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [] } } : {}),
     };
 }

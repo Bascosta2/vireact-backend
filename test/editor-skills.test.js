@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateEdl } from '../src/service/editor/edl.js';
-import { buildRenderProps, sanitizeEdits } from '../src/service/editor/compose.js';
+import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
 import { BRAND_FONTS, brandProblem, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
@@ -178,4 +178,18 @@ test('brand sheet save names the first invalid field instead of dropping it', ()
     assert.equal(brandProblem({ accent: '#FF5A36', bodyFont: 'Comic Sans' }), 'bodyFont');
     assert.equal(brandProblem({ evil: 1 }), 'evil');
     assert.equal(brandProblem('x'), 'brand');
+});
+
+test('split screen: only with the flag, otherwise it falls back to fill', () => {
+    assert.equal(sanitizeEdits({ framingMode: 'split' }).framingMode, 'split');
+    const raw = { ...plan(), framing: { mode: 'fill', focusX: 0.4, detailX: 0.7, detailY: 0.3 } };
+    const on = buildRenderProps(raw, { framingMode: 'split' }, { ...media(null), v2: true });
+    assert.deepEqual(on.framing, { mode: 'split', focusX: 0.4, split: { detailX: 0.7, detailY: 0.3, zoom: SPLIT_ZOOM } });
+    assert.deepEqual(buildRenderProps(raw, { framingMode: 'split' }, media(null)).framing, { mode: 'fill', focusX: 0.4 });
+    assert.deepEqual(buildRenderProps(raw, {}, { ...media(null), v2: true }).framing, { mode: 'fill', focusX: 0.4 });
+    assert.deepEqual(framingFor('fit_blur', { focusX: 0.5 }, false), { mode: 'fit_blur', focusX: 0.5 });
+    // A planned split keeps its detail point through validation.
+    const planned = validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5, detailX: 1.4, detailY: 0.25 } }, ctx).plan;
+    assert.equal(planned.framing.mode, 'split');
+    assert.equal(planned.framing.detailX, 1);
 });

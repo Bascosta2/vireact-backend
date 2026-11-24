@@ -135,7 +135,8 @@ export const EDL_SCHEMA = obj({
         progressBar: bool,
         motion: bool,
     }),
-    framing: obj({ mode: enumOf(['fill', 'fit_blur']), focusX: num }),
+    // split (EDITOR_FEATURES_V2): speaker on top, a zoomed detail of the same take below, centered on detailX/detailY.
+    framing: obj({ mode: enumOf(['fill', 'fit_blur', 'split']), focusX: num, detailX: num, detailY: num }),
     music: obj({ trackId: str, volume: num, reason: str }),
     // Timed beats: a sound effect type or a visual effect (shake, flash).
     beats: arr(obj({ type: { type: 'string', description: 'a sound name, or shake, or flash' }, at: num })),
@@ -279,7 +280,7 @@ export function validateEdl(edl, ctx) {
         },
         // Legacy field; new plans put text in `graphics`.
         textOverlays: [],
-        framing: { mode: edl.framing?.mode === 'fit_blur' ? 'fit_blur' : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)) },
+        framing: { mode: ['fit_blur', 'split'].includes(edl.framing?.mode) ? edl.framing.mode : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)), detailX: r3(clamp(edl.framing?.detailX ?? 0.5, 0, 1)), detailY: r3(clamp(edl.framing?.detailY ?? 0.5, 0, 1)) },
         music: { trackId: musicId || null, volume: r3(clamp(edl.music?.volume ?? 0.15, 0, 0.6)), reason: clip(edl.music?.reason, 200) },
         sfx: sfxIn.filter((s) => SFX_TYPES.includes(s.type) && inSegments(s.at, kept)).slice(0, LIMITS.sfx).map((s) => ({ type: s.type, at: r3(s.at) })),
         changes: (edl.changes ?? []).slice(0, 24).map((c) => ({ kind: pick(c.kind, CHANGE_KINDS, 'cut'), label: clip(c.label, 120), why: clip(c.why, 300), evidence: pick(c.evidence, EVIDENCE, 'footage') })),
