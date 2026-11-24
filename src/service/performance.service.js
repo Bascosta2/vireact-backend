@@ -9,7 +9,7 @@ import { Video } from '../model/video.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { normalizeFollowers, normalizePlatform } from './view-prediction.service.js';
 import { markLearningStale } from './view-learning.service.js';
-import { onPerformanceChanged } from './learning/learning.service.js';
+import { onPerformanceChanged, syncUserOutcomes } from './learning/learning.service.js';
 
 export const MAX_SNAPSHOTS = 20;
 const MAX_URL_LENGTH = 500;
@@ -147,6 +147,35 @@ export const recordConnectedReadings = async (videoId, userId, { source, reading
     markLearningStale();
     onPerformanceChanged(video);
     return added;
+};
+
+/**
+ * Takes back what a connected account copied onto an upload (recordConnectedReadings): every snapshot with
+ * this source, and the post link, post date and followers only where they still hold the values the platform
+ * gave (a link or date the user typed stays). Typed entries (source manual) always stay. The learning copies
+ * of the removed snapshots (OutcomeSnapshot) are removed before this returns. Used by Meta data deletion and
+ * by "disconnect and delete data". Returns the number of snapshots removed (0 when the upload is gone).
+ */
+export const removeConnectedReadings = async (videoId, userId, { source, postUrl = null, postedAt = null, followers = null } = {}) => {
+    if (!source || source === 'manual' || !mongoose.isValidObjectId(videoId)) return 0;
+    const video = await Video.findOne({ _id: videoId, uploader_id: userId });
+    if (!video) return 0;
+    const before = video.performanceSnapshots.length;
+    video.performanceSnapshots = video.performanceSnapshots.filter((s) => s.source !== source);
+    const removed = before - video.performanceSnapshots.length;
+    const sameUrl = postUrl && video.postUrl && video.postUrl === normalizePostUrl(postUrl);
+    const sameDate = postedAt && video.postedAt && new Date(video.postedAt).getTime() === new Date(postedAt).getTime();
+    const sameFollowers = followers != null && video.creatorFollowers != null && video.creatorFollowers === normalizeFollowers(followers);
+    if (!removed && !sameUrl && !sameDate && !sameFollowers) return 0;
+    if (sameUrl) video.postUrl = null;
+    if (sameDate) video.postedAt = null;
+    if (sameFollowers) video.creatorFollowers = null;
+    syncActualViews(video);
+    await video.save();
+    await syncUserOutcomes(video);
+    markLearningStale();
+    onPerformanceChanged(video);
+    return removed;
 };
 
 export const deleteSnapshot = async (userId, videoId, snapshotId) => {

@@ -1,17 +1,20 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import mongoose from 'mongoose';
 
 process.env.NODE_ENV = 'test';
 process.env.LEARNING_READ_CONTENT = 'false';
 console.warn = () => {};
 console.log = () => {};
 
-const { connectTestDb, disconnectTestDb } = await import('./helpers/test-db.js');
+const { connectTestDb, disconnectTestDb, fakeRes } = await import('./helpers/test-db.js');
 const { User } = await import('../src/model/user.model.js');
 const { Video } = await import('../src/model/video.model.js');
-const { OutcomeSnapshot } = await import('../src/model/learning.model.js');
-const { ConnectedAccount, ConnectedPost, AccountOAuthState } = await import('../src/model/connected-account.model.js');
+const { OutcomeSnapshot, VideoFeatures } = await import('../src/model/learning.model.js');
+const { ConnectedAccount, ConnectedPost, AccountOAuthState, MetaDeletionRequest } = await import('../src/model/connected-account.model.js');
+const Meta = await import('../src/service/accounts/meta-data-deletion.js');
+const AccountsController = await import('../src/controller/accounts.controller.js');
 const A = await import('../src/service/accounts/accounts.service.js');
 const { encryptToken, decryptToken, tokenKey } = await import('../src/service/accounts/token-crypto.js');
 const { isoDurationSec } = await import('../src/service/accounts/providers/youtube.js');
@@ -28,12 +31,15 @@ const ENV = {
     INSTAGRAM_APP_ID: 'ig-id', INSTAGRAM_APP_SECRET: 'ig-secret',
 };
 
+// Provider and Meta callback tests need no database: the hooks only connect when DB_URL is set.
+const HAS_DB = Boolean(process.env.DB_URL);
 before(async () => {
+    if (!HAS_DB) return;
     Object.assign(process.env, { ACCOUNTS_TOKEN_KEY: ENV.ACCOUNTS_TOKEN_KEY });
     await connectTestDb();
-    await Promise.all([ConnectedAccount, ConnectedPost, AccountOAuthState, Video, OutcomeSnapshot].map((m) => m.syncIndexes()));
+    await Promise.all([ConnectedAccount, ConnectedPost, AccountOAuthState, MetaDeletionRequest, Video, OutcomeSnapshot].map((m) => m.syncIndexes()));
 });
-after(disconnectTestDb);
+after(async () => { if (HAS_DB) await disconnectTestDb(); });
 
 /** Fake platform: answers by URL; records every request. */
 const fakeFetch = (routes) => {
@@ -268,4 +274,253 @@ test('callback with a denied sign-in or a bad state goes back to the tab with th
     const state = new URL(url).searchParams.get('state');
     assert.match(await A.finishConnect('youtube', { state, error: 'access_denied' }, { env: ENV }), /error=denied/);
     await assert.rejects(A.startConnect(user._id, 'youtube', { env: { ...ENV, YOUTUBE_CLIENT_ID: '' } }), /not available yet/);
+});
+
+// ---- Meta data deletion / deauthorize callbacks
+
+const META_ENV = { FACEBOOK_APP_SECRET: 'fb-app-secret', INSTAGRAM_APP_SECRET: 'ig-app-secret', FRONTEND_URL: 'https://app.example.test/' };
+const b64u = (x) => Buffer.from(x).toString('base64url');
+/** A signed_request as Meta builds it: base64url(HMAC-SHA256(encoded payload)) + '.' + base64url(JSON). */
+const signedRequest = (payload, secret) => {
+    const encoded = b64u(JSON.stringify(payload));
+    return `${crypto.createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}`;
+};
+const metaPayload = (userId = '1029384756', extra = {}) => ({ algorithm: 'HMAC-SHA256', expires: 1291840400, issued_at: 1291836800, user_id: userId, ...extra });
+
+/** Runs fn with properties swapped for fakes (process.env keys, model statics), always restoring them. */
+const withStubs = async (stubs, fn) => {
+    const saved = stubs.map(([obj, key]) => [obj, key, Object.hasOwn(obj, key), obj[key]]);
+    try {
+        for (const [obj, key, value] of stubs) {
+            if (value === undefined) delete obj[key];
+            else obj[key] = value;
+        }
+        return await fn();
+    } finally {
+        for (const [obj, key, own, value] of saved) {
+            if (own) obj[key] = value;
+            else delete obj[key];
+        }
+    }
+};
+/** A mongoose-like query: chainable, awaitable, .lean(). */
+const query = (value) => {
+    const q = { select: () => q, sort: () => q, limit: () => q, lean: async () => value, then: (ok, fail) => Promise.resolve(value).then(ok, fail) };
+    return q;
+};
+/** In-memory MetaDeletionRequest store (findOne by subjectHash / confirmationCode, create, save). */
+const fakeDeletionStore = () => {
+    const docs = [];
+    const wrap = (d) => Object.assign(d, { save: async () => d });
+    return {
+        docs,
+        stubs: [
+            [MetaDeletionRequest, 'findOne', (filter) => query(docs.find((d) => Object.entries(filter).every(([k, v]) => d[k] === v)) ?? null)],
+            [MetaDeletionRequest, 'create', async (fields) => {
+                const d = wrap({ status: 'pending', completedAt: null, attempts: 0, counts: null, ...fields });
+                docs.push(d);
+                return d;
+            }],
+            [MetaDeletionRequest, 'find', (filter) => query(docs.filter((d) => d.status === filter.status && d.metaUserId != null))],
+        ],
+    };
+};
+
+test('Meta signed_request: verified with either app secret, timing-safe; bad signature, algorithm or encoding is refused', () => {
+    const fb = Meta.parseSignedRequest(signedRequest(metaPayload(), META_ENV.FACEBOOK_APP_SECRET), META_ENV);
+    assert.deepEqual(fb, { ok: true, platform: 'facebook', userId: '1029384756' });
+    const ig = Meta.parseSignedRequest(signedRequest(metaPayload(17841400000000), META_ENV.INSTAGRAM_APP_SECRET), META_ENV);
+    assert.deepEqual(ig, { ok: true, platform: 'instagram', userId: '17841400000000' }, 'Instagram Login callbacks use the separate Instagram secret; numeric ids read as strings');
+
+    const reason = (sr, env = META_ENV) => Meta.parseSignedRequest(sr, env).reason;
+    assert.equal(reason(signedRequest(metaPayload(), META_ENV.FACEBOOK_APP_SECRET), { INSTAGRAM_APP_SECRET: 'ig-app-secret' }), 'bad_signature', 'only configured secrets count');
+    assert.equal(reason(signedRequest(metaPayload(), 'someone-else')), 'bad_signature');
+    const [sig] = signedRequest(metaPayload('1'), META_ENV.FACEBOOK_APP_SECRET).split('.');
+    assert.equal(reason(`${sig}.${b64u(JSON.stringify(metaPayload('2')))}`), 'bad_signature', 'a payload swapped under a valid signature');
+    assert.equal(reason(signedRequest(metaPayload('1', { algorithm: 'HMAC-SHA1' }), META_ENV.FACEBOOK_APP_SECRET)), 'bad_algorithm');
+    assert.equal(reason(signedRequest(metaPayload('1', { algorithm: 'hmac-sha256' }), META_ENV.FACEBOOK_APP_SECRET)), 'bad_algorithm');
+    assert.equal(reason(signedRequest({ user_id: '1' }, META_ENV.FACEBOOK_APP_SECRET)), 'bad_algorithm');
+    assert.equal(reason(signedRequest(metaPayload('abc'), META_ENV.FACEBOOK_APP_SECRET)), 'no_user');
+    assert.equal(reason(signedRequest({ algorithm: 'HMAC-SHA256' }, META_ENV.FACEBOOK_APP_SECRET)), 'no_user');
+    const notJson = b64u('not json');
+    assert.equal(reason(`${crypto.createHmac('sha256', META_ENV.FACEBOOK_APP_SECRET).update(notJson).digest('base64url')}.${notJson}`), 'malformed');
+    for (const bad of [undefined, null, '', 42, ['a.b'], 'no-dot', 'a.b.c', 'ab$c.ZGVm', `${sig}.ab+/cd`, `${b64u('short')}.${b64u('{}')}`, `${sig}.`, `.${b64u('{}')}`, `${sig}.${'A'.repeat(9000)}`]) {
+        assert.equal(reason(bad), 'malformed', `refused: ${String(bad).slice(0, 30)}`);
+    }
+    assert.equal(reason(signedRequest(metaPayload(), 'x'), {}), 'not_configured');
+    assert.equal(reason(signedRequest(metaPayload(), 'x'), { FACEBOOK_APP_SECRET: '  ', INSTAGRAM_APP_SECRET: '' }), 'not_configured');
+});
+
+test('Meta data deletion: Meta gets { url, confirmation_code }; the status page gets only { status, completedAt? }', async () => {
+    const code = 'a'.repeat(32);
+    assert.deepEqual(Meta.deletionResponse(code, META_ENV), { url: `https://app.example.test/data-deletion?code=${code}`, confirmation_code: code });
+    const pending = { status: 'pending', completedAt: null, platform: 'instagram', metaUserId: '17', confirmationCode: code, counts: null };
+    assert.deepEqual(Meta.toPublicDeletionStatus(pending), { status: 'pending' });
+    const at = new Date('2026-11-24T10:00:00Z');
+    assert.deepEqual(Meta.toPublicDeletionStatus({ ...pending, status: 'completed', completedAt: at, metaUserId: null, counts: { accounts: 1 } }), { status: 'completed', completedAt: at });
+    await withStubs([[MetaDeletionRequest, 'findOne', () => { throw new Error('no lookup for a malformed code'); }]], async () => {
+        for (const bad of ['', 'short', 'g'.repeat(32), `${code}x`, '../../etc', undefined]) assert.equal(await Meta.getMetaDeletionStatus(bad), null);
+    });
+});
+
+test('Instagram sign-in keeps the app-scoped ids Meta sends in its callbacks', async () => {
+    const { instagram } = await import('../src/service/accounts/providers/instagram.js');
+    const fetchImpl = fakeFetch([
+        ['api.instagram.com/oauth/access_token', { access_token: 'short', user_id: 9001, permissions: 'instagram_business_basic' }],
+        ['ig_exchange_token', { access_token: 'long', expires_in: 5184000 }],
+        ['/me?fields', { id: '9001', user_id: '17841400000000', username: 'reelmaker' }],
+    ]);
+    const tokens = await instagram.exchangeCode({ code: 'c', redirectUri: 'https://api.example.test/cb', env: ENV, fetchImpl });
+    assert.equal(tokens.scopedUserId, '9001');
+    const profile = await instagram.profile({ access: 'long', env: ENV, fetchImpl });
+    assert.deepEqual([profile.externalId, profile.scopedUserId], ['17841400000000', '9001'], 'media calls use the professional id; callbacks carry the app-scoped one');
+});
+
+test('Meta data deletion callback: off by default, verified, deletes only what Meta sent, same code on repeat', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    const accountId = new mongoose.Types.ObjectId();
+    const postedAt = new Date('2026-10-01T12:00:00Z');
+    const video = new Video({
+        filename: 'mine.mp4', fileSize: 10, uploader_id: userId, postUrl: 'https://www.instagram.com/reel/m1/', postedAt, creatorFollowers: 3400, creatorPlatform: 'instagram',
+        performanceSnapshots: [
+            { capturedAt: new Date('2026-10-02T12:00:00Z'), views: 500, source: 'manual' },
+            { capturedAt: new Date('2026-10-03T12:00:00Z'), views: 12000, source: 'instagram' },
+        ],
+    });
+    let videoSaves = 0;
+    video.save = async () => { videoSaves += 1; return video; };
+    const calls = { accountFind: [], postDelete: [], accountDelete: [], outcomeDelete: [] };
+    const account = { _id: accountId, userId, platform: 'instagram', externalId: '17841400000000', scopedUserIds: ['9001'], followers: 3400 };
+    const store = fakeDeletionStore();
+    const callback = async (body) => {
+        const res = fakeRes();
+        await AccountsController.metaDataDeletion({ body }, res);
+        return res;
+    };
+    const stubs = [
+        ...store.stubs,
+        [process.env, 'META_DATA_DELETION_ENABLED', 'true'],
+        [process.env, 'FACEBOOK_APP_SECRET', META_ENV.FACEBOOK_APP_SECRET],
+        [process.env, 'INSTAGRAM_APP_SECRET', META_ENV.INSTAGRAM_APP_SECRET],
+        [process.env, 'FRONTEND_URL', META_ENV.FRONTEND_URL],
+        [ConnectedAccount, 'find', (filter) => { calls.accountFind.push(filter); return query(filter.$or.some((c) => c.externalId === '9001' || c.scopedUserIds === '9001') && calls.accountDelete.length === 0 ? [account] : []); }],
+        [ConnectedAccount, 'exists', async () => null],
+        [ConnectedAccount, 'deleteOne', async (filter) => { calls.accountDelete.push(filter); return { deletedCount: 1 }; }],
+        [ConnectedPost, 'find', () => query([{ _id: new mongoose.Types.ObjectId(), videoId: video._id, url: 'https://www.instagram.com/reel/m1/', postedAt }])],
+        [ConnectedPost, 'deleteMany', async (filter) => { calls.postDelete.push(filter); return { deletedCount: 1 }; }],
+        [Video, 'find', () => query([{ _id: video._id }])],
+        [Video, 'findOne', async (filter) => (String(filter._id) === String(video._id) && String(filter.uploader_id) === String(userId) ? video : null)],
+        [OutcomeSnapshot, 'deleteMany', async (filter) => { calls.outcomeDelete.push(filter); return {}; }],
+        [OutcomeSnapshot, 'bulkWrite', async () => ({})],
+        [VideoFeatures, 'updateOne', async () => ({})],
+    ];
+    await withStubs(stubs, async () => {
+        const request = signedRequest(metaPayload('9001'), META_ENV.INSTAGRAM_APP_SECRET);
+        await withStubs([[process.env, 'META_DATA_DELETION_ENABLED', undefined]], async () => {
+            await assert.rejects(callback({ signed_request: request }), (e) => e.statusCode === 404, 'flag off: no callback');
+        });
+        await assert.rejects(callback({ signed_request: signedRequest(metaPayload('9001'), 'forged') }), (e) => e.statusCode === 400);
+        await assert.rejects(callback({}), (e) => e.statusCode === 400);
+        await withStubs([[process.env, 'FACEBOOK_APP_SECRET', undefined], [process.env, 'INSTAGRAM_APP_SECRET', undefined]], async () => {
+            await assert.rejects(callback({ signed_request: request }), (e) => e.statusCode === 503);
+        });
+        assert.equal(store.docs.length, 0, 'nothing recorded for a refused callback');
+
+        const first = await callback({ signed_request: request });
+        assert.equal(first.statusCode, 200);
+        assert.deepEqual(Object.keys(first.body).sort(), ['confirmation_code', 'url']);
+        const code = first.body.confirmation_code;
+        assert.match(code, /^[a-f0-9]{32}$/);
+        assert.equal(first.body.url, `https://app.example.test/data-deletion?code=${code}`);
+        assert.deepEqual(calls.accountFind[0], { platform: { $in: ['instagram', 'facebook'] }, $or: [{ externalId: '9001' }, { scopedUserIds: '9001' }] });
+
+        assert.deepEqual(video.performanceSnapshots.map((x) => x.source), ['manual'], 'Instagram readings go, the typed entry stays');
+        assert.equal(video.actualViews, 500);
+        assert.deepEqual([video.postUrl, video.postedAt, video.creatorFollowers], [null, null, null], 'link, date and followers Instagram gave are cleared');
+        assert.equal(video.filename, 'mine.mp4');
+        assert.equal(videoSaves, 1, 'the upload itself is kept');
+        assert.equal(calls.outcomeDelete.length >= 1, true, 'learning copies of removed readings are removed');
+        assert.deepEqual(calls.postDelete, [{ accountId }]);
+        assert.deepEqual(calls.accountDelete, [{ _id: accountId }]);
+        const [doc] = store.docs;
+        assert.deepEqual([doc.status, doc.platform, doc.metaUserId, doc.counts], ['completed', 'instagram', null, { accounts: 1, posts: 1, readings: 1 }]);
+        assert.equal(JSON.stringify(doc).includes('9001'), false, 'the Meta user id is not kept once done');
+
+        const again = await callback({ signed_request: request });
+        assert.deepEqual(again.body, first.body, 'a repeated callback gets the same code');
+        assert.equal(store.docs.length, 1);
+
+        const statusRes = fakeRes();
+        statusRes.set = () => statusRes;
+        await AccountsController.metaDataDeletionStatus({ params: { code } }, statusRes);
+        assert.deepEqual(Object.keys(statusRes.body).sort(), ['completedAt', 'status']);
+        assert.equal(statusRes.body.status, 'completed');
+        const missing = fakeRes();
+        missing.set = () => missing;
+        await assert.rejects(AccountsController.metaDataDeletionStatus({ params: { code: 'b'.repeat(32) } }, missing), (e) => e.statusCode === 404);
+    });
+});
+
+test('Meta data deletion that fails is recorded pending, answered with a code, and finished by the daily retry', async () => {
+    const store = fakeDeletionStore();
+    let down = true;
+    const log = [];
+    await withStubs([
+        ...store.stubs,
+        [ConnectedAccount, 'find', () => { if (down) throw new Error('db hiccup'); return query([]); }],
+    ], async () => {
+        const body = await Meta.requestMetaDataDeletion({ platform: 'facebook', userId: '4242' }, { env: META_ENV, log: (l) => log.push(l) });
+        assert.match(body.confirmation_code, /^[a-f0-9]{32}$/);
+        assert.deepEqual([store.docs[0].status, store.docs[0].metaUserId], ['pending', '4242'], 'kept for the retry');
+        assert.equal(log.join(' ').includes('4242'), false, 'the Meta user id is never logged');
+        assert.deepEqual(await Meta.getMetaDeletionStatus(body.confirmation_code), { status: 'pending' });
+        down = false;
+        assert.deepEqual(await Meta.finishPendingMetaDeletions({ log: (l) => log.push(l) }), { pending: 1, completed: 1 });
+        assert.deepEqual([store.docs[0].status, store.docs[0].metaUserId], ['completed', null]);
+    });
+});
+
+test('Meta deauthorize callback: accounts need reconnecting, dead tokens are wiped, no data is deleted', async () => {
+    const updates = [];
+    let deleted = 0;
+    await withStubs([
+        [process.env, 'META_DATA_DELETION_ENABLED', 'true'],
+        [process.env, 'FACEBOOK_APP_SECRET', META_ENV.FACEBOOK_APP_SECRET],
+        [process.env, 'INSTAGRAM_APP_SECRET', undefined],
+        [ConnectedAccount, 'updateMany', async (filter, update) => { updates.push([filter, update]); return { modifiedCount: 1 }; }],
+        [ConnectedAccount, 'deleteOne', async () => { deleted += 1; }],
+        [ConnectedPost, 'deleteMany', async () => { deleted += 1; }],
+    ], async () => {
+        const res = fakeRes();
+        await AccountsController.metaDeauthorize({ body: { signed_request: signedRequest(metaPayload('555'), META_ENV.FACEBOOK_APP_SECRET) } }, res);
+        assert.equal(res.statusCode, 200);
+        const [[filter, update]] = updates;
+        assert.deepEqual(filter, { platform: { $in: ['instagram', 'facebook'] }, $or: [{ externalId: '555' }, { scopedUserIds: '555' }] });
+        assert.equal(update.$set.status, 'needs_reauth');
+        assert.equal(update.$set['tokens.access'], null);
+        assert.equal(deleted, 0);
+        await assert.rejects(AccountsController.metaDeauthorize({ body: { signed_request: signedRequest(metaPayload('555'), META_ENV.INSTAGRAM_APP_SECRET) } }, fakeRes()), (e) => e.statusCode === 400, 'Instagram secret not set here');
+    });
+});
+
+test('with a database: Meta deletion and disconnect with deleteData remove Meta data and keep the user and uploads', { skip: !HAS_DB }, async () => {
+    const user = await makeUser();
+    const video = await makeVideo(user._id, { duration: 18, createdAt: new Date(Date.now() - 3 * DAY) });
+    await Video.updateOne({ _id: video._id }, { $push: { performanceSnapshots: { $each: [{ capturedAt: new Date(Date.now() - 2 * DAY), views: 10, source: 'manual' }, { capturedAt: new Date(Date.now() - DAY), views: 900, source: 'instagram' }] } } });
+    const ig = await ConnectedAccount.create({ userId: user._id, platform: 'instagram', externalId: '178414', scopedUserIds: ['9001'], tokens: { access: encryptToken('long') } });
+    await ConnectedPost.create({ accountId: ig._id, userId: user._id, platform: 'instagram', externalId: 'm1', videoId: video._id });
+    const tt = await ConnectedAccount.create({ userId: user._id, platform: 'tiktok', externalId: '9001' });
+    const body = await Meta.requestMetaDataDeletion({ platform: 'instagram', userId: '9001' }, { env: META_ENV });
+    assert.equal(await ConnectedAccount.countDocuments({ _id: ig._id }), 0);
+    assert.equal(await ConnectedPost.countDocuments({ accountId: ig._id }), 0);
+    assert.equal(await ConnectedAccount.countDocuments({ _id: tt._id }), 1, 'a TikTok account with the same number is not Meta data');
+    assert.deepEqual((await Video.findById(video._id).lean()).performanceSnapshots.map((x) => x.source), ['manual']);
+    assert.ok(await User.exists({ _id: user._id }));
+    assert.deepEqual(await Meta.getMetaDeletionStatus(body.confirmation_code), { status: 'completed', completedAt: (await MetaDeletionRequest.findOne({ confirmationCode: body.confirmation_code }).lean()).completedAt });
+
+    await Video.updateOne({ _id: video._id }, { $push: { performanceSnapshots: { capturedAt: new Date(), views: 50, source: 'tiktok' } } });
+    await ConnectedPost.create({ accountId: tt._id, userId: user._id, platform: 'tiktok', externalId: 'v1', videoId: video._id });
+    const out = await A.disconnect(user._id, String(tt._id), { env: ENV, fetchImpl: fakeFetch([]), deleteData: true });
+    assert.equal(out.deleted.readings, 1);
+    assert.deepEqual((await Video.findById(video._id).lean()).performanceSnapshots.map((x) => x.source), ['manual']);
 });
