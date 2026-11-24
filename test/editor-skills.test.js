@@ -4,7 +4,7 @@ import { validateEdl } from '../src/service/editor/edl.js';
 import { buildRenderProps, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
-import { SKILLS, casualCase, hookLines, isSkill } from '../src/service/editor/skills.js';
+import { BRAND_FONTS, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
 
 const words = [
     { w: 'Today', start: 0.4, end: 0.7 },
@@ -156,4 +156,18 @@ test('an animation-style edit can switch to another style; other edits cannot', 
     const project = { source: { durationSec: 6, width: 1080, height: 1920 }, media: { words, cutCandidates }, skill: 'pixel-art', edits: { animationStyle: 'chalkboard' } };
     const content = buildPlannerContent({ project, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
     assert.ok(content.some((c) => c.type === 'text' && /EDITING SKILL: CHALKBOARD ANIMATION STYLE/.test(c.text)));
+});
+
+test('brand sheet: only hex colors and listed fonts survive, and the accent beats a style accent', () => {
+    assert.equal(sanitizeBrand(null), null);
+    assert.equal(sanitizeBrand({ accent: 'red', displayFont: 'Comic Sans' }), null);
+    assert.deepEqual(sanitizeBrand({ accent: '#ff5a36', secondary: '#123', displayFont: 'Anton', bodyFont: 'Inter', evil: 1 }), { accent: '#FF5A36', displayFont: 'Anton', bodyFont: 'Inter' });
+    assert.ok(BRAND_FONTS.includes('Anton'));
+    const branded = buildRenderProps(plan(), {}, { ...media('comic-art'), brand: { accent: '#00AAFF', displayFont: 'Anton' } });
+    assert.equal(branded.look.accent, '#00AAFF');
+    assert.deepEqual(branded.brand, { accent: '#00AAFF', displayFont: 'Anton' });
+    // No brand: nothing changes.
+    const plain = buildRenderProps(plan(), {}, media('comic-art'));
+    assert.equal(plain.brand, undefined);
+    assert.equal(plain.look.accent, SKILLS['comic-art'].render.accent);
 });

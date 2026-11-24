@@ -16,6 +16,12 @@ export const isLifecycleEmailsEnabled = () => isOn('LIFECYCLE_EMAILS_ENABLED');
  */
 export const isEditorEnabled = () => isOn('EDITOR_ENABLED');
 
+/**
+ * Editor features V2 (brand sheet, split screen, storyboard review, screen recordings). Off (default):
+ * the editor behaves exactly as before and the new endpoints answer 404.
+ */
+export const isEditorFeaturesV2 = () => isOn('EDITOR_FEATURES_V2');
+
 export const hasEditorAccess = (user) => {
     if (isEditorEnabled()) return true;
     const email = String(user?.email || '').trim().toLowerCase();
