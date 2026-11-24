@@ -47,6 +47,11 @@ const slug = (s) => path.basename(s).replace(/\.[^.]+$/, '').replace(/[^\w-]+/g,
 /** Local path for a clip: the file itself, or a download of the S3 key. */
 async function localCopy(clip, dir) {
     if (fs.existsSync(clip)) return clip;
+    // A Windows drive path, an absolute/relative path or a backslash means a local file was meant: say so plainly
+    // instead of falling through to S3 (where a missing key surfaces as a confusing ListBucket permission error).
+    if (/^[a-zA-Z]:[\\/]/.test(clip) || /^[.~/]/.test(clip) || clip.includes('\\')) {
+        throw new Error(`Clip not found on this computer: ${clip}`);
+    }
     const p = path.join(dir, `download-${slug(clip)}${path.extname(clip) || '.mp4'}`);
     await storage.downloadToFile(clip, p);
     return p;
