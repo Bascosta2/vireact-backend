@@ -37,10 +37,14 @@ export const SEARCH_LIMIT = 30;
 export const BUDGET_SPLIT = Object.freeze({ recheck: 0.35, discover: 0.25, backfill: 0.4 });
 /** Share of the day's records Instagram Reels get when LEARNING_REELS_ENABLED is on (TikTok keeps the rest). */
 export const REELS_BUDGET_SHARE = 0.2;
+/** Reels never take more than half the budget, so TikTok always keeps at least half. */
+export const MAX_REELS_BUDGET_SHARE = 0.5;
 /** Splits the day's record budget by platform. With Reels off TikTok gets all of it, exactly as before. */
 export const splitDailyBudget = ({ budget, reels = false, reelsShare = REELS_BUDGET_SHARE }) => {
     if (!reels) return { tiktok: budget, instagram: 0 };
-    const instagram = Math.min(budget, Math.max(0, Math.floor(budget * reelsShare)));
+    const parsed = Number(reelsShare);
+    const share = Number.isFinite(parsed) ? Math.min(MAX_REELS_BUDGET_SHARE, Math.max(0, parsed)) : REELS_BUDGET_SHARE;
+    const instagram = Math.min(budget, Math.floor(budget * share));
     return { tiktok: budget - instagram, instagram };
 };
 /** Provider calls in flight at once. Provider jobs can take minutes; database writes stay sequential. */

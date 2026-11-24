@@ -245,3 +245,9 @@ test('collection budget: TikTok keeps everything unless Reels are on', () => {
     assert.deepEqual(splitDailyBudget({ budget: 1000, reels: true, reelsShare: 0 }), { tiktok: 1000, instagram: 0 });
     assert.equal(buildCollectionPlan({ now: 0 }).length, buildCollectionPlan({ now: 0 }).length);
 });
+
+test('collection budget: the Reels share is capped at half and bad values fall back to 0.2', () => {
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: true, reelsShare: 1 }), { tiktok: 500, instagram: 500 });
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: true, reelsShare: 'abc' }), { tiktok: 800, instagram: 200 });
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: false, reelsShare: 1 }), { tiktok: 1000, instagram: 0 });
+});
