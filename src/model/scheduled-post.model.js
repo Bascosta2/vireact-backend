@@ -24,12 +24,34 @@ export const TARGET_STATUS = Object.freeze({
 });
 export const PUBLISH_MODES = Object.freeze(['draft', 'publish']);
 
+/**
+ * The creator's own choices for a TikTok Direct Post (required by TikTok's content sharing guidelines):
+ * who can watch, which interactions to allow, the commercial content disclosure and the music declaration.
+ * Validated against a fresh creator_info call when saved and checked again before posting; never changed by us.
+ */
+const tiktokSettingsSchema = new mongoose.Schema({
+    privacyLevel: { type: String, required: true },
+    allowComment: { type: Boolean, default: false },
+    allowDuet: { type: Boolean, default: false },
+    allowStitch: { type: Boolean, default: false },
+    commercial: {
+        enabled: { type: Boolean, default: false },
+        yourBrand: { type: Boolean, default: false },
+        brandedContent: { type: Boolean, default: false },
+    },
+    musicConfirmed: { type: Boolean, default: false },
+    /** When the creator agreed to the Music Usage Confirmation (and Branded Content Policy when branded). */
+    confirmedAt: { type: Date, default: null },
+}, { _id: false });
+
 const targetSchema = new mongoose.Schema({
     platform: { type: String, enum: PUBLISH_PLATFORMS, required: true },
     /** The connected account chosen when the post was scheduled (null in dry-run without an account). */
     accountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ConnectedAccount', default: null },
     /** Facebook only: the Page to post to (one of the Pages the connected login shares). */
     pageId: { type: String, default: null },
+    /** TikTok Direct Post only (mode 'publish'): the creator's post settings. Drafts have none. */
+    tiktok: { type: tiktokSettingsSchema, default: undefined },
     status: { type: String, enum: Object.values(TARGET_STATUS), default: TARGET_STATUS.PENDING },
     externalId: { type: String, default: null },
     url: { type: String, default: null },
@@ -52,6 +74,8 @@ const scheduledPostSchema = new mongoose.Schema({
         key: { type: String, required: true },
         sizeBytes: { type: Number, default: null },
         contentType: { type: String, default: 'video/mp4' },
+        /** Length of the video when known (editor exports and uploads), checked against TikTok's limit. */
+        durationSec: { type: Number, default: null },
     },
     caption: { type: String, default: '', maxlength: 2200 },
     scheduledAt: { type: Date, required: true },
