@@ -12,6 +12,7 @@ import { createSemaphore } from '../../utils/semaphore.js';
 import { prepareMedia } from './media-prep.js';
 import { transcribeWords } from './transcribe.js';
 import { buildCutCandidates, repairWordTimings } from './cut-candidates.js';
+import { carryStoryboard, storyboardNote } from './storyboard.js';
 import { planEdit } from './edit-planner.service.js';
 import { chargeEdit } from './editor-access.service.js';
 import { resolveCreatorProfile } from '../creator-profile.service.js';
@@ -219,12 +220,12 @@ async function replan(project, userId, plan) {
     const revision = project.pendingRevision ?? { note: '', previousPlan: project.plan };
     const result = await withAiContext(
         { feature: 'video_editor', userId, distinctId: userId, traceId: newTraceId(`edit-${project._id}-rev`) },
-        () => plan({ project: project.toObject(), profile: resolveCreatorProfile(user ?? {}), revision })
+        () => plan({ project: project.toObject(), profile: resolveCreatorProfile(user ?? {}), revision: revision.keepEdits ? { ...revision, storyboardNote: storyboardNote(revision.previousPlan, revision.keepEdits) } : revision })
     );
     await EditProject.updateOne(
         { _id: project._id },
         {
-            $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, plan: result.plan, planGenerationId: result.generationId ?? null, edits: {}, pendingRevision: null, readyAt: new Date(), error: null },
+            $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, plan: result.plan, planGenerationId: result.generationId ?? null, edits: revision.keepEdits ? carryStoryboard(revision.previousPlan, revision.keepEdits, result.plan) : {}, pendingRevision: null, readyAt: new Date(), error: null },
             $push: { revisions: { note: revision.note, plan: revision.previousPlan, createdAt: new Date() } },
         }
     );

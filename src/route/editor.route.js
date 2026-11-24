@@ -12,6 +12,7 @@ import {
     getEditProject,
     updateEdits,
     regenerateEdit,
+    swapStoryboardBeat,
     startEditRender,
     getEditRender,
     scoreEditRender,
@@ -35,6 +36,7 @@ editorRoutes.get('/projects/:id', getEditProject);
 editorRoutes.post('/projects/:id/uploaded', confirmEditUpload);
 editorRoutes.patch('/projects/:id/edits', updateEdits);
 editorRoutes.post('/projects/:id/regenerate', regenerateEdit);
+editorRoutes.post('/projects/:id/storyboard/swap', swapStoryboardBeat);
 editorRoutes.post('/projects/:id/render', startEditRender);
 editorRoutes.get('/projects/:id/render/:renderId', getEditRender);
 editorRoutes.post('/projects/:id/score', scoreEditRender);

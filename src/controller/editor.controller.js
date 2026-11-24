@@ -7,6 +7,7 @@ import { EditProject, EDIT_STATUS, RENDER_STATUS } from '../model/edit-project.m
 import { SoundAsset } from '../model/sound-asset.model.js';
 import { storage, editorKey, editorPrefixes, isStorageConfigured } from '../lib/storage.js';
 import { isClaudeConfigured } from '../lib/anthropic.js';
+import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 import { captureServerEvent } from '../lib/analytics.js';
 import { isShuttingDown } from '../queue/analysis-runtime.js';
 import { editorUsage, accessError } from '../service/editor/editor-access.service.js';
@@ -18,6 +19,7 @@ import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
 import { hasEditorAccess, isEditorFeaturesV2 } from '../config/flags.js';
 import { User } from '../model/user.model.js';
+import { buildStoryboard, swapBeat } from '../service/editor/storyboard.js';
 import { BRAND_FONTS, SKILLS, brandProblem, isSkill, sanitizeBrand } from '../service/editor/skills.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
@@ -132,6 +134,7 @@ async function toDetail(p, brand = null) {
         const props = buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p, brand));
         // Counts with every layer switched on, so a toggle stays visible after it is turned off.
         const full = buildRenderProps(p.plan, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false }, mediaFor(p, brand));
+        if (isEditorFeaturesV2()) detail.storyboard = buildStoryboard(p.plan, p.edits ?? {});
         detail.plan = {
             summary: p.plan.summary,
             hookStrategy: p.plan.hookStrategy,
@@ -307,8 +310,11 @@ export const getEditProject = async (req, res, next) => {
 export const updateEdits = async (req, res, next) => {
     try {
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
-        const changes = sanitizeEdits(req.body ?? {}, { wordCount: project.media?.words?.length ?? 0, trackIds: await trackIdSet() });
+        const v2 = isEditorFeaturesV2();
+        const changes = sanitizeEdits(req.body ?? {}, { wordCount: project.media?.words?.length ?? 0, trackIds: await trackIdSet(), v2, segmentIds: new Set(project.plan.segments.map((x) => x.id)) });
         const edits = { ...(project.edits ?? {}), ...changes };
+        // Dropping or swapping a beat means the creator has not seen the storyboard as it is now.
+        if (v2 && ('disabledSegments' in changes || 'beatSwaps' in changes) && !('storyboardApproved' in changes)) edits.storyboardApproved = false;
         if (changes.captionText) edits.captionText = { ...(project.edits?.captionText ?? {}), ...changes.captionText };
         // Never allow removing every segment.
         const remaining = project.plan.segments.filter((s) => !(edits.disabledSegments ?? []).includes(s.id));
@@ -318,6 +324,33 @@ export const updateEdits = async (req, res, next) => {
         await project.save();
         const props = buildRenderProps(project.plan, edits, mediaFor(project, brandFor(req.user)));
         ok(res, 'Saved', { edits, props: { ...props, ...(await soundUrls(props)) } });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/** Storyboard review (EDITOR_FEATURES_V2): ask the planner for another treatment of one beat. */
+export const swapStoryboardBeat = async (req, res, next) => {
+    try {
+        if (!isEditorFeaturesV2()) throw new ApiError(404, 'Not found');
+        assertConfigured();
+        const project = await ownedProject(req, { status: EDIT_STATUS.READY });
+        const beatId = String(req.body?.beatId ?? '');
+        if (!project.plan.segments.some((x) => x.id === beatId)) throw new ApiError(400, 'Pick a beat from the storyboard.');
+        if ((project.edits?.beatSwaps?.[beatId]?.count ?? 0) >= 5) throw new ApiError(429, 'You have swapped this beat enough times. Keep one of the options or drop it.', { code: 'SWAPS_USED' });
+        const swap = await withAiContext(
+            { feature: 'video_editor', userId: String(req.user._id), distinctId: String(req.user._id), traceId: newTraceId(`swap-${project._id}`) },
+            () => swapBeat({ plan: project.plan, edits: project.edits ?? {}, words: project.media?.words ?? [], segmentId: beatId })
+        );
+        if (!swap || (!swap.graphics.length && !swap.sfx.length && !swap.effects.length)) throw new ApiError(502, 'The editor could not find another option for this beat. Try again.');
+        const { generationId: _g, ...kept } = swap;
+        const edits = { ...(project.edits ?? {}), beatSwaps: { ...(project.edits?.beatSwaps ?? {}), [beatId]: kept }, storyboardApproved: false };
+        project.edits = edits;
+        project.markModified('edits');
+        await project.save();
+        captureServerEvent(String(req.user._id), 'edit_beat_swapped', { project_id: String(project._id), beat: beatId });
+        const props = buildRenderProps(project.plan, edits, mediaFor(project, brandFor(req.user)));
+        ok(res, 'Beat swapped', { edits, storyboard: buildStoryboard(project.plan, edits), props: { ...props, ...(await soundUrls(props)) } });
     } catch (error) {
         next(error);
     }
@@ -335,7 +368,7 @@ export const regenerateEdit = async (req, res, next) => {
         }
         const res2 = await EditProject.updateOne(
             { _id: project._id, status: EDIT_STATUS.READY },
-            { $set: { status: EDIT_STATUS.QUEUED, inFlight: true, stage: 'queued', progress: 75, attempts: 0, heartbeatAt: new Date(), error: null, pendingRevision: { note, previousPlan: project.plan } } }
+            { $set: { status: EDIT_STATUS.QUEUED, inFlight: true, stage: 'queued', progress: 75, attempts: 0, heartbeatAt: new Date(), error: null, pendingRevision: { note, previousPlan: project.plan, ...(isEditorFeaturesV2() ? { keepEdits: { disabledSegments: project.edits?.disabledSegments ?? [], beatSwaps: project.edits?.beatSwaps ?? {} } } : {}) } } }
         ).catch((err) => {
             if (err?.code === 11000) throw new ApiError(409, 'You already have an edit in progress. Wait for it to finish first.', { code: 'EDIT_IN_PROGRESS' });
             throw err;
@@ -358,6 +391,8 @@ export const startEditRender = async (req, res, next) => {
     try {
         if (!isRenderConfigured()) throw new ApiError(503, 'Export is being set up and is not available yet.', { code: 'RENDER_UNAVAILABLE' });
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
+        // With the storyboard review on, the export only uses a storyboard the creator approved.
+        if (isEditorFeaturesV2() && project.edits?.storyboardApproved !== true) throw new ApiError(409, 'Approve the storyboard before exporting.', { code: 'STORYBOARD_NOT_APPROVED' });
         const active = (project.renders ?? []).find((r) => r.status === RENDER_STATUS.RENDERING && Date.now() - new Date(r.createdAt).getTime() < 15 * 60 * 1000);
         if (active) return ok(res, 'Already exporting', { renderId: active.id });
         if ((project.renders ?? []).length >= 10) throw new ApiError(429, 'This edit has been exported 10 times. Download an earlier export instead.');
