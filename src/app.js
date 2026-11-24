@@ -16,6 +16,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 import { NODE_ENV, SESSION_SECRET, DB_URL } from './config/index.js';
 import { getAllowedCorsOrigins } from './config/cors-allowed-origins.js';
+import { AUTH_RATE_LIMITS } from './constants.js';
 import mongoose from 'mongoose';
 
 // route imports
@@ -77,20 +78,11 @@ app.use(cors({
 
 // Rate limiting: auth + video uploads only (in-memory; never global — QStash/Stripe webhooks are not limited).
 // Upstash REST Redis does not support Lua SCRIPT used by rate-limit-redis, so no external store here.
-const authRateLimit = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
+/** One limiter per credential/email endpoint (limits in AUTH_RATE_LIMITS), keyed by client IP. */
+const authRateLimiters = new Map(Object.entries(AUTH_RATE_LIMITS).map(([path, limit]) => [path, rateLimit({
+    ...limit,
     message: { error: 'Too many attempts, please try again later' },
-});
-/** Endpoints that take credentials or send emails. Refresh, /me, logout and Google round-trips are not limited. */
-const CREDENTIAL_AUTH_PATHS = new Set([
-    '/api/v1/auth/login',
-    '/api/v1/auth/signup',
-    '/api/v1/auth/verify-email',
-    '/api/v1/auth/resend-verification',
-    '/api/v1/auth/forgot-password',
-    '/api/v1/auth/reset-password',
-]);
+})]));
 const videoUploadRateLimit = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
@@ -194,8 +186,10 @@ app.use(passport.session());
 // Scoped rate limits: /api/v1/auth/* and /api/v1/videos/upload* only
 app.use((req, res, next) => {
     const p = req.path || '';
-    if (CREDENTIAL_AUTH_PATHS.has(p)) {
-        return authRateLimit(req, res, next);
+    // Express routes match case-insensitively and with a trailing slash, so the limiter must too.
+    const authLimiter = authRateLimiters.get(p.toLowerCase().replace(/\/+$/, ''));
+    if (authLimiter) {
+        return authLimiter(req, res, next);
     }
     if (p.startsWith('/api/v1/videos/upload')) {
         return videoUploadRateLimit(req, res, next);

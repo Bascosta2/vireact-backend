@@ -69,9 +69,19 @@ const userSchema = new mongoose.Schema({
         default: ROLES.USER,
         required: true
     },
+    /**
+     * The token in verification emails. Reused by every resend and kept after verification, so earlier
+     * links keep working and a second click answers "already verified" (see auth.service verifyEmailService).
+     */
     emailVerificationToken: {
         type: String,
         default: null
+    },
+    /** When the verification link stops working (7 days after the latest email). Null on older tokens: no expiry. */
+    emailVerificationTokenExpiresAt: {
+        type: Date,
+        default: null,
+        select: false
     },
     isEmailVerified: {
         type: Boolean,
@@ -176,6 +186,7 @@ userSchema.set("toJSON", {
         delete ret.password;
         delete ret.refreshToken;
         delete ret.emailVerificationToken;
+        delete ret.emailVerificationTokenExpiresAt;
         delete ret.refreshSessions;
         delete ret.passwordResetTokenHash;
         delete ret.passwordResetExpires;

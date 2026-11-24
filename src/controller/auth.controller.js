@@ -97,6 +97,8 @@ export const signupUser = async (req, res, next) => {
         });
         await linkFunnelSafely(user._id, req.body.funnelSessionId);
 
+        // verificationEmailSent (boolean) is the original field; verificationEmail is the detailed outcome
+        // ('sent' | 'recent' | 'bad_address' | 'unavailable') so the app can say what happened.
         const verificationEmailSent = verificationEmail === VERIFICATION_EMAIL.SENT;
 
         // Email is down for everyone, so the user could never verify. Sign them in now, exactly as
@@ -110,7 +112,7 @@ export const signupUser = async (req, res, next) => {
                     ApiResponse.success(
                         201,
                         "Account created. You're signed in.",
-                        { user, accessToken, verificationEmailSent }
+                        { user, accessToken, verificationEmailSent, verificationEmail }
                     )
                 );
         }
@@ -119,7 +121,7 @@ export const signupUser = async (req, res, next) => {
             ApiResponse.success(
                 201,
                 "User Created Successfully",
-                { user, verificationEmailSent }
+                { user, verificationEmailSent, verificationEmail }
             )
         );
 
@@ -158,6 +160,12 @@ export const loginUser = async (req, res, next) => {
         res.clearCookie("accessToken", COOKIE_OPTIONS)
         res.clearCookie("refreshToken", COOKIE_OPTIONS)
 
+        // loginUserService lets an unverified user in only when verification email is unavailable for
+        // everyone; say so, so the app can show a "verify your email" banner.
+        const verificationEmailOutcome = loggedInUser && !loggedInUser.isEmailVerified
+            ? { verificationEmail: VERIFICATION_EMAIL.UNAVAILABLE }
+            : {};
+
         // The refresh token is set as an HttpOnly cookie above and intentionally
         // not echoed in the JSON body. Email/password clients still receive the
         // access token in the body for Bearer-header use; the refresh token must
@@ -171,7 +179,8 @@ export const loginUser = async (req, res, next) => {
                     "Login Successful",
                     {
                         user: loggedInUser,
-                        accessToken
+                        accessToken,
+                        ...verificationEmailOutcome
                     }
                 )
             )
@@ -294,9 +303,10 @@ export const verifyEmail = async (req, res, next) => {
             throw new ApiError(400, "Verification token is required.");
         }
 
-        const result = await verifyEmailService(token);
+        const { status, message } = await verifyEmailService(token);
 
-        res.status(200).json(result);
+        // { success: true, message, data: { status: 'verified' | 'already_verified' } }
+        res.status(200).json(ApiResponse.success(200, message, { status }));
     } catch (error) {
         next(error)
     }
