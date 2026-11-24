@@ -18,7 +18,7 @@ import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
 import { hasEditorAccess, isEditorFeaturesV2 } from '../config/flags.js';
 import { User } from '../model/user.model.js';
-import { BRAND_FONTS, SKILLS, isSkill, sanitizeBrand } from '../service/editor/skills.js';
+import { BRAND_FONTS, SKILLS, brandProblem, isSkill, sanitizeBrand } from '../service/editor/skills.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
@@ -262,8 +262,9 @@ export const getBrand = (req, res, next) => {
 export const saveBrand = async (req, res, next) => {
     try {
         if (!isEditorFeaturesV2()) throw new ApiError(404, 'Not found');
-        const brand = req.body?.brand === null ? null : sanitizeBrand(req.body?.brand);
-        if (req.body?.brand !== null && !brand) throw new ApiError(400, 'Pick a color like #FF5A36 or one of the listed fonts.');
+        const bad = req.body?.brand === null ? null : brandProblem(req.body?.brand);
+        if (bad) throw new ApiError(400, `Your brand sheet has an invalid "${bad}": use a color like #FF5A36 and one of the listed fonts.`);
+        const brand = sanitizeBrand(req.body.brand);
         await User.updateOne({ _id: req.user._id }, brand ? { $set: { editorBrand: brand } } : { $unset: { editorBrand: '' } });
         ok(res, 'Brand sheet saved', { brand });
     } catch (error) {

@@ -4,7 +4,7 @@ import { validateEdl } from '../src/service/editor/edl.js';
 import { buildRenderProps, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
-import { BRAND_FONTS, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
+import { BRAND_FONTS, brandProblem, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
 
 const words = [
     { w: 'Today', start: 0.4, end: 0.7 },
@@ -170,4 +170,12 @@ test('brand sheet: only hex colors and listed fonts survive, and the accent beat
     const plain = buildRenderProps(plan(), {}, media('comic-art'));
     assert.equal(plain.brand, undefined);
     assert.equal(plain.look.accent, SKILLS['comic-art'].render.accent);
+});
+
+test('brand sheet save names the first invalid field instead of dropping it', () => {
+    assert.equal(brandProblem({ accent: '#FF5A36', displayFont: 'Anton' }), null);
+    assert.equal(brandProblem({ accent: 'red' }), 'accent');
+    assert.equal(brandProblem({ accent: '#FF5A36', bodyFont: 'Comic Sans' }), 'bodyFont');
+    assert.equal(brandProblem({ evil: 1 }), 'evil');
+    assert.equal(brandProblem('x'), 'brand');
 });
