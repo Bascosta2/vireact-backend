@@ -13,6 +13,9 @@
  *
  * The engine runs in a worker thread; results are stored as a LearningModel (status 'candidate'). Nothing is
  * served to users from here: serving needs the promotion gates on users' own results (section 16.6).
+ * With LEARNING_SHADOW_PREDICTIONS=true the new model is checked against those gates (shadow.js
+ * promoteAfterTraining, evaluate.js promotionDecision) and, if it passes, runs in shadow: its predictions are
+ * stored next to the live ones for comparison, never shown.
  */
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
@@ -21,12 +24,13 @@ import { baselineFor, median, outcomeAtHorizon } from '../labels.js';
 import { OUTLIER_LOG } from '../deep-features.js';
 import { buildSoundIndex, usesBefore } from '../trends.js';
 import { runEngine } from './engine.js';
+import { MATRIX_KIND, SHADOW_STATUS, promoteAfterTraining, rowFeatures, shadowEnabled } from './shadow.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CREATOR_WEIGHT_CAP = 8;
 const SOURCE_WEIGHT = { provider: 1, api_verified: 1, dataset: 0.5, user_reported: 0.6 };
 const KEEP_MODELS = 30;
-export const MODEL_KIND = 'matrix_engine';
+export const MODEL_KIND = MATRIX_KIND;
 
 const cap = (y) => Math.max(-OUTLIER_LOG, Math.min(OUTLIER_LOG, y));
 const label = (views, baseline) => cap(Math.log((views + 1) / (baseline + 1)));
@@ -46,12 +50,7 @@ export const capCreatorWeights = (rows, limit = CREATOR_WEIGHT_CAP) => {
     });
 };
 
-const extraFeatures = (vf) => ({
-    ...(vf.features ?? {}),
-    ...(vf.niche ? { niche: vf.niche } : {}),
-    ...(vf.format ? { format: vf.format } : {}),
-    ...(vf.hookPattern ? { hookPattern: vf.hookPattern } : {}),
-});
+const extraFeatures = rowFeatures;
 
 /** Public videos: settled readings, leave-one-out creator medians. */
 export const socialRows = async ({ now = Date.now(), halfLifeDays = 120 } = {}) => {
@@ -97,7 +96,7 @@ export const socialRows = async ({ now = Date.now(), halfLifeDays = 120 } = {}) 
 
 /** Users' own uploads with a settled real result. */
 export const userRows = async ({ now = Date.now(), halfLifeDays = 120 } = {}) => {
-    const vfs = await VideoFeatures.find({ subjectType: 'video' }).select('subjectId creatorKey features niche format hookPattern followers postedAt').lean();
+    const vfs = await VideoFeatures.find({ subjectType: 'video' }).select('subjectId creatorKey platform features niche format hookPattern followers postedAt').lean();
     if (!vfs.length) return [];
     const snaps = await OutcomeSnapshot.find({ subjectType: 'video', subjectId: { $in: vfs.map((v) => v.subjectId) } }).lean();
     const bySubject = new Map();
@@ -116,6 +115,8 @@ export const userRows = async ({ now = Date.now(), halfLifeDays = 120 } = {}) =>
                 group: creator,
                 features: extraFeatures(r.vf),
                 source: 'video',
+                // For the promotion check only (never a model input).
+                meta: { subjectId: String(r.vf.subjectId), actual: r.out.views, baseline: base.views, platform: r.vf.platform ?? null },
             });
         }
     }
@@ -134,12 +135,14 @@ export const runEngineInWorker = (rows, opts = {}, { timeoutMs = 10 * 60_000 } =
  * Loads rows, trains, stores a LearningModel. Returns a summary for the run log.
  * deps.inline = true runs in this thread (tests).
  */
-export const trainMatrixEngine = async ({ now = Date.now(), halfLifeDays = 120, minRows = 200, deps = {}, log = () => {} } = {}) => {
+export const trainMatrixEngine = async ({ now = Date.now(), halfLifeDays = 120, minRows = 200, deps = {}, log = () => {}, shadow = shadowEnabled() } = {}) => {
     const rows = capCreatorWeights([...(await socialRows({ now, halfLifeDays })), ...(await userRows({ now, halfLifeDays }))]);
     const bySource = rows.reduce((m, r) => ({ ...m, [r.source]: (m[r.source] ?? 0) + 1 }), {});
     if (rows.length < minRows) return { skipped: `needs ${minRows} labelled videos, has ${rows.length}`, rows: rows.length, bySource };
     const plain = rows.map(({ y, w, group, features }) => ({ y, w, group, features }));
-    const result = deps.inline ? runEngine(plain) : await runEngineInWorker(plain);
+    // Flag on: also return out-of-fold predictions for users' videos, to score the model where it would serve.
+    const opts = shadow ? { evalRows: rows.flatMap((r, i) => (r.meta ? [i] : [])) } : {};
+    const result = deps.inline ? runEngine(plain, opts) : await runEngineInWorker(plain, opts);
     if (result.skipped) return { skipped: result.skipped, rows: rows.length, bySource };
     const last = await LearningModel.findOne({ kind: MODEL_KIND }).sort({ version: -1 }).select('version').lean();
     const m = result.ridge.metrics;
@@ -156,7 +159,7 @@ export const trainMatrixEngine = async ({ now = Date.now(), halfLifeDays = 120, 
         standardization: result.spec,
         lambda: result.lambda,
         coefficients: { top: result.ridge.coefficients.slice(0, 60), beta: result.ridge.beta },
-        metrics: { ridge: result.ridge.metrics, cv: result.ridge.cv, neural: result.neural ? { ...result.neural, weights: undefined } : null, rows: rows.length, bySource },
+        metrics: { ridge: result.ridge.metrics, cv: result.ridge.cv, neural: result.neural ? { ...result.neural, weights: undefined } : null, rows: rows.length, bySource, spread: result.spread ?? null },
         network: result.network,
         components: result.components,
         weights: result.neural?.weights ?? null,
@@ -167,8 +170,16 @@ export const trainMatrixEngine = async ({ now = Date.now(), halfLifeDays = 120, 
             reason: 'Learns what beats a creator\'s own usual. Serving to users waits for the gates in PLAN.md 16.6 (users\' real results, owner cases, 7-day shadow).',
         },
     });
-    const old = await LearningModel.find({ kind: MODEL_KIND }).sort({ version: -1 }).skip(KEEP_MODELS).select('_id').lean();
+    let promotion = null;
+    if (shadow) {
+        promotion = await promoteAfterTraining({ id: doc._id, result, rows, now, deps: deps.promotion })
+            .catch((error) => ({ status: 'candidate', promote: false, reasons: [`promotion check failed: ${error.message}`] }));
+        log(`matrix engine v${doc.version}: ${promotion.promote ? 'promoted to shadow' : `stays candidate (${promotion.reasons.join('; ')})`}`);
+    }
+    // Never prune the model running in shadow (or serving).
+    const old = await LearningModel.find({ kind: MODEL_KIND, status: { $nin: [SHADOW_STATUS, 'champion'] } }).sort({ version: -1 }).skip(KEEP_MODELS).select('_id').lean();
     if (old.length) await LearningModel.deleteMany({ _id: { $in: old.map((o) => o._id) } });
     log(`matrix engine v${doc.version}: n=${result.n} p=${result.p} skill=${m.skill} pairAccuracy=${m.pairAccuracy}`);
-    return { version: doc.version, n: result.n, p: result.p, creators: result.creators, lambda: result.lambda, skill: m.skill, pairAccuracy: m.pairAccuracy, beatsCreatorUsual: beatsBaseline, neuralBeatsRidge: result.neural?.beatsRidge ?? null, bySource };
+    return { version: doc.version, n: result.n, p: result.p, creators: result.creators, lambda: result.lambda, skill: m.skill, pairAccuracy: m.pairAccuracy, beatsCreatorUsual: beatsBaseline, neuralBeatsRidge: result.neural?.beatsRidge ?? null, bySource,
+        ...(promotion ? { promotion: { status: promotion.status, promote: promotion.promote, reasons: promotion.reasons } } : {}) };
 };

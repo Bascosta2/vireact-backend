@@ -40,6 +40,13 @@ const videoFeaturesSchema = new mongoose.Schema({
     extractedAt: { type: Date, default: Date.now },
     /** Set when a public video's features include the deep (Twelve Labs + measured cuts) analysis. */
     deepAt: { type: Date, default: null },
+    /**
+     * Users' uploads only, with LEARNING_SHADOW_PREDICTIONS=true (model/shadow.js): what the shadow model
+     * predicted at analysis time, next to the live band the user saw. Never shown to users.
+     * { modelId, modelVersion, low, expected, high, logDeviation, baseline: { views, method, n },
+     *   formula: { low, expected, high }, formulaMethod, platform, at }
+     */
+    shadowPrediction: { type: mongoose.Schema.Types.Mixed, default: undefined },
 }, { timestamps: true });
 videoFeaturesSchema.index({ subjectType: 1, subjectId: 1 }, { unique: true });
 videoFeaturesSchema.index({ niche: 1, format: 1 });
@@ -225,6 +232,8 @@ learningInsightSchema.index({ niche: 1, feature: 1 }, { unique: true });
 /**
  * One trained model or analysis run of the matrix engine (model/trainer.js): metrics on held-out creators,
  * coefficients, the partial-correlation network, style components. status: candidate | shadow | champion | retired.
+ * 'shadow' = passed the promotion gate (model/shadow.js); its predictions are recorded, never shown.
+ * promotion.decision holds the gate's verdict for each run trained with LEARNING_SHADOW_PREDICTIONS=true.
  */
 const learningModelSchema = new mongoose.Schema({
     kind: { type: String, required: true },
