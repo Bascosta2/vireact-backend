@@ -72,6 +72,8 @@ const editProjectSchema = new mongoose.Schema({
         frameSheets: { type: [new mongoose.Schema({ key: String, from: Number, to: Number, cols: Number, rows: Number, intervalSec: Number }, { _id: false })], default: undefined },
         cutCandidates: { type: [mongoose.Schema.Types.Mixed], default: undefined },
         transcriptLanguage: String,
+        /** Background matte (graphics behind the speaker): ok with an S3 key, or failed/skipped with a plain reason. */
+        matte: { type: new mongoose.Schema({ status: String, key: String, model: String, reason: String, seconds: Number, cached: Boolean }, { _id: false }), default: undefined },
     },
 
     /** Validated edit decision list from the planner (see service/editor/edl-validator.js). */

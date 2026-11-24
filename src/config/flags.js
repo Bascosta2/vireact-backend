@@ -74,3 +74,9 @@ export const getTrialConfig = () => ({
     videoLimit: positiveInt('TRIAL_VIDEO_LIMIT', 5),
     chatMessageLimit: positiveInt('TRIAL_CHAT_MESSAGE_LIMIT', 60),
 });
+
+/**
+ * Background removal ("graphics behind you"): sends a 720p copy of the video to fal.ai to cut the speaker
+ * out. Off (default): nothing is sent anywhere and graphics stay in front. Needs FAL_KEY.
+ */
+export const isBgRemovalEnabled = () => isOn('EDITOR_BG_REMOVAL_ENABLED');
