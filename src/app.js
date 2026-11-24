@@ -29,7 +29,7 @@ import chatRoutes from './route/chat.route.js';
 import profileRoutes from './route/profile.route.js';
 import subscriptionRoutes from './route/subscription.route.js';
 import subscribeRoutes from './route/subscribe.route.js';
-import adminRoutes from './route/admin.routes.js';
+import adminRoutes, { adminAppRoutes } from './route/admin.routes.js';
 import { postClientError } from './controller/client-error.controller.js';
 import libraryRoutes from './route/library.route.js';
 import funnelRoutes from './route/funnel.route.js';
@@ -292,6 +292,7 @@ app.use('/api/v1/accounts', accountsRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
+app.use('/api/v1/admin-app', adminRateLimit, adminAppRoutes);
 app.use('/api/v1/admin', adminRateLimit, adminRoutes);
 // Private AI response review page (data still needs ADMIN_API_KEY on every request).
 app.use('/admin', adminRateLimit, adminUiRoutes);
