@@ -3,7 +3,7 @@ import { adminAuth } from '../middleware/adminAuth.js';
 import { authenticateToken, requireAdminUser } from '../middleware/auth.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { overview, listUsers } from '../service/owner-data.service.js';
-import { PROMO_CODES } from '../config/promo-codes.js';
+import { PROMO_CODES, getPromoCode } from '../config/promo-codes.js';
 import { SKILLS, ANIMATION_STYLES } from '../service/editor/skills.js';
 import { learningOverview } from '../service/learning/learning.service.js';
 import { getResearchStats } from '../service/research-ingest/ingest.service.js';
@@ -90,9 +90,9 @@ adminAppRoutes.get('/users', async (req, res, next) => {
 adminAppRoutes.get('/promo-codes', async (req, res, next) => {
     try {
         const { promos } = await overview();
-        const disabled = String(process.env.PROMO_CODES_DISABLED || '').split(',').map((c) => c.trim().toLowerCase());
         send(res, Object.entries(PROMO_CODES).map(([code, p]) => ({
-            code, plan: p.plan, label: p.label, days: p.days, disabled: disabled.includes(code), redemptions: promos[code] ?? 0,
+            code, plan: p.plan, label: p.label, days: p.days, disabled: getPromoCode(code) === null,
+            maxRedemptions: getPromoCode(code)?.maxRedemptions ?? null, redemptions: promos[code] ?? 0,
         })));
     } catch (error) {
         next(error);
