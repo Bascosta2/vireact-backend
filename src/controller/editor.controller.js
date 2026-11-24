@@ -344,7 +344,8 @@ export const startEditRender = async (req, res, next) => {
         const id = crypto.randomBytes(6).toString('hex');
         const outKey = editorKey('renders', project.userId, project._id, `${id}.mp4`);
         const { remotionRenderId, bucketName } = await startRender({ inputProps, outKey });
-        project.renders.push({ id, status: RENDER_STATUS.RENDERING, progress: 0, remotionRenderId, bucketName, key: outKey });
+        const durationSec = props.fps > 0 ? Math.round((props.durationInFrames / props.fps) * 100) / 100 : undefined;
+        project.renders.push({ id, status: RENDER_STATUS.RENDERING, progress: 0, remotionRenderId, bucketName, key: outKey, durationSec });
         await project.save();
         captureServerEvent(String(req.user._id), 'edit_exported', { project_id: String(project._id), frames: props.durationInFrames });
         ok(res, 'Export started', { renderId: id }, 202);
