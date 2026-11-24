@@ -85,7 +85,10 @@ export const metaDataDeletion = async (req, res) => {
     }
 };
 
-/** GET /meta/data-deletion/:code: the public status page's lookup. Only { status, completedAt? }. */
+/**
+ * GET /meta/data-deletion/:code: the public status page's lookup. Only { status, completedAt? }. Not behind
+ * META_DATA_DELETION_ENABLED, so codes already given out stay checkable when the flag is off.
+ */
 export const metaDataDeletionStatus = async (req, res) => {
     const status = await getMetaDeletionStatus(req.params.code);
     res.set('Cache-Control', 'no-store');

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { ConnectedAccount, MetaDeletionRequest, META_DELETION_STATUS, ACCOUNT_STATUS } from '../../model/connected-account.model.js';
 import { deleteAccountData } from './accounts.service.js';
+import { captureError } from '../ops-monitoring.service.js';
 
 /**
  * Meta's user-data callbacks (required for Meta App Review), for the Facebook and Instagram connections:
@@ -14,14 +15,23 @@ import { deleteAccountData } from './accounts.service.js';
  *
  * Both carry a signed_request: "<base64url HMAC-SHA256 signature>.<base64url JSON payload>", signed with the
  * app secret. Facebook Login callbacks are signed with FACEBOOK_APP_SECRET, Instagram Login callbacks with the
- * separate INSTAGRAM_APP_SECRET; we try each configured secret and reject when none matches.
+ * separate INSTAGRAM_APP_SECRET; we try each configured secret and reject when none matches. The secret that
+ * matched decides the platform, and the id is only looked up on that platform's accounts (Instagram:
+ * externalId or scopedUserIds; Facebook: externalId, its app-scoped user id): ids of one never match the other.
+ * issued_at / expires are not checked (Meta's sample does not either): a replayed request only repeats an
+ * idempotent deletion or deauthorization for the same person.
+ *
+ * The META_DATA_DELETION_ENABLED flag gates only the two POST callbacks. The status lookup and the daily
+ * finisher of pending deletions always run, so requests already accepted finish and stay checkable when the
+ * flag is turned off again.
  *
  * What "data received from Meta" covers (deleteAccountData in accounts.service.js), for every connected
- * Instagram / Facebook account with that Meta user id (on any Vireact user):
+ * account on that platform with that Meta user id (on any Vireact user):
  *   deleted: the connected account (encrypted tokens, handle, name, avatar, followers), its synced posts
- *     (captions, thumbnails, links, daily readings), the readings copied onto the user's uploads (snapshots
- *     with source instagram / facebook, and their learning copies), and the post link / date / followers on
- *     an upload where they are still the values Meta gave.
+ *     (captions, thumbnails, links, daily readings), the readings it copied onto the user's uploads (and their
+ *     learning copies), and the post link / date / platform / followers it filled in on an upload (recorded in
+ *     video.connectedCopies). Residue from copies made before that record existed: creatorPlatform, and a link
+ *     or date whose post has left the synced list, stay on the upload (see removeConnectedReadings).
  *   kept: the Vireact account, the user's own uploaded videos and their analyses, chats, and anything the
  *     user typed themselves (manual result entries, links or dates they entered). Model weights trained on
  *     many users' results hold no per-person data and are retrained daily without the removed readings.
@@ -30,9 +40,9 @@ import { deleteAccountData } from './accounts.service.js';
  */
 
 export const META_SECRETS = Object.freeze({ facebook: 'FACEBOOK_APP_SECRET', instagram: 'INSTAGRAM_APP_SECRET' });
-/** Platforms a Meta user id is looked up on. Ids are app-scoped numbers; both are checked so a callback is
- * honoured whichever Meta secret signed it. */
-export const META_PLATFORMS = Object.freeze(['instagram', 'facebook']);
+/** Deletions that failed this many times are reported (captureError) once. */
+export const ALERT_AFTER_ATTEMPTS = 3;
+const STALLED_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SIGNED_REQUEST = 8192;
 const B64URL = /^[A-Za-z0-9_-]+={0,2}$/;
 const META_USER_ID = /^\d{1,32}$/;
@@ -92,16 +102,20 @@ export const toPublicDeletionStatus = (request) => (request.status === META_DELE
     ? { status: META_DELETION_STATUS.COMPLETED, completedAt: request.completedAt ?? null }
     : { status: META_DELETION_STATUS.PENDING });
 
-/** Connected Instagram / Facebook accounts (any Vireact user) for a Meta app-scoped user id. */
-const metaAccountsFor = (metaUserId) => ConnectedAccount.find({
-    platform: { $in: META_PLATFORMS },
-    $or: [{ externalId: metaUserId }, { scopedUserIds: metaUserId }],
-});
+/**
+ * Which connected accounts a verified callback is about: only the signing app's platform. Instagram matches
+ * the stored professional id or the app-scoped ids; Facebook's externalId is its app-scoped id.
+ */
+export const metaAccountFilter = (platform, metaUserId) => {
+    if (platform === 'instagram') return { platform, $or: [{ externalId: metaUserId }, { scopedUserIds: metaUserId }] };
+    if (platform === 'facebook') return { platform, externalId: metaUserId };
+    throw new Error(`not a Meta platform: ${platform}`);
+};
 
-/** Deletes the Meta data of every connected account with this Meta user id. Returns counts. */
-export const deleteMetaUserData = async (metaUserId) => {
+/** Deletes the data of every connected account (any Vireact user) on this platform with this Meta user id. */
+export const deleteMetaUserData = async (platform, metaUserId) => {
     const counts = { accounts: 0, posts: 0, readings: 0 };
-    for (const account of await metaAccountsFor(metaUserId)) {
+    for (const account of await ConnectedAccount.find(metaAccountFilter(platform, metaUserId))) {
         const c = await deleteAccountData(account);
         counts.accounts += 1;
         counts.posts += c.posts;
@@ -111,14 +125,18 @@ export const deleteMetaUserData = async (metaUserId) => {
 };
 
 /** Runs the deletion for a recorded request; on success marks it completed and forgets the Meta user id. */
-const runDeletion = async (request, { now = Date.now(), log = (l) => console.warn(`[meta] ${l}`) } = {}) => {
+const runDeletion = async (request, { now = Date.now(), log = (l) => console.warn(`[meta] ${l}`), report = captureError } = {}) => {
     try {
-        const counts = await deleteMetaUserData(request.metaUserId);
+        const counts = await deleteMetaUserData(request.platform, request.metaUserId);
         Object.assign(request, { status: META_DELETION_STATUS.COMPLETED, completedAt: new Date(now), metaUserId: null, counts, attempts: (request.attempts ?? 0) + 1 });
     } catch (error) {
         // Pending (again) with the id; finishPendingMetaDeletions retries it daily.
         log(`${request.platform} data deletion failed, will retry: ${error.message}`);
         Object.assign(request, { status: META_DELETION_STATUS.PENDING, attempts: (request.attempts ?? 0) + 1 });
+        if (request.attempts === ALERT_AFTER_ATTEMPTS) {
+            // No ids, no tokens, no message text (a database error can quote the query): the kind of error only.
+            report(new Error(`Meta data deletion (${request.platform}) has failed ${request.attempts} times; last error: ${error?.name ?? 'Error'}`), { route: 'meta data deletion' });
+        }
     }
     await request.save();
     return request;
@@ -144,10 +162,10 @@ const findOrCreateRequest = async (platform, metaUserId, now) => {
  * Meta's data-deletion callback, after parseSignedRequest. Idempotent: a repeated callback for the same person
  * returns the same confirmation code and deletes again (anything synced since). Returns Meta's response body.
  */
-export const requestMetaDataDeletion = async ({ platform, userId }, { env = process.env, now = Date.now(), log } = {}) => {
+export const requestMetaDataDeletion = async ({ platform, userId }, { env = process.env, now = Date.now(), log, report } = {}) => {
     const request = await findOrCreateRequest(platform, userId, now);
     request.metaUserId = userId;
-    await runDeletion(request, { now, log });
+    await runDeletion(request, { now, log, report });
     return deletionResponse(request.confirmationCode, env);
 };
 
@@ -159,14 +177,17 @@ export const getMetaDeletionStatus = async (code) => {
     return request ? toPublicDeletionStatus(request) : null;
 };
 
-/** Daily (from syncAllAccounts): finishes requests whose deletion failed. Never throws. */
-export const finishPendingMetaDeletions = async ({ now = Date.now(), log = () => {}, limit = 100 } = {}) => {
+/**
+ * Daily (from syncAllAccounts, whatever the flag): finishes requests whose deletion failed, least-tried
+ * first so a request that keeps failing cannot hold up newer ones. Never throws.
+ */
+export const finishPendingMetaDeletions = async ({ now = Date.now(), log = () => {}, report, limit = 100 } = {}) => {
     const out = { pending: 0, completed: 0 };
     try {
-        const pending = await MetaDeletionRequest.find({ status: META_DELETION_STATUS.PENDING, metaUserId: { $ne: null } }).sort({ requestedAt: 1 }).limit(limit);
+        const pending = await MetaDeletionRequest.find({ status: META_DELETION_STATUS.PENDING, metaUserId: { $ne: null } }).sort({ attempts: 1, updatedAt: 1 }).limit(limit);
         out.pending = pending.length;
         for (const request of pending) {
-            await runDeletion(request, { now, log });
+            await runDeletion(request, { now, log, report });
             if (request.status === META_DELETION_STATUS.COMPLETED) out.completed += 1;
         }
     } catch (error) {
@@ -175,14 +196,19 @@ export const finishPendingMetaDeletions = async ({ now = Date.now(), log = () =>
     return out;
 };
 
+/** For the admin health report: accepted deletions still pending after 7 days. */
+export const countStalledMetaDeletions = (now = Date.now()) => MetaDeletionRequest.countDocuments({
+    status: META_DELETION_STATUS.PENDING, requestedAt: { $lt: new Date(now - STALLED_AFTER_MS) },
+});
+
 /**
  * Meta's deauthorize callback, after parseSignedRequest: the person removed Vireact on Facebook / Instagram.
  * Marks their accounts needs_reauth and wipes the tokens Meta just revoked. Posts and readings stay (the
  * person did not ask for deletion; the data-deletion callback or disconnect with deleteData removes them).
  */
-export const deauthorizeMetaUser = async ({ userId }) => {
+export const deauthorizeMetaUser = async ({ platform, userId }) => {
     const { modifiedCount = 0 } = await ConnectedAccount.updateMany(
-        { platform: { $in: META_PLATFORMS }, $or: [{ externalId: userId }, { scopedUserIds: userId }] },
+        { ...metaAccountFilter(platform, userId), deleting: { $ne: true } },
         {
             $set: {
                 status: ACCOUNT_STATUS.NEEDS_REAUTH, lastSyncError: 'Access was removed on Meta. Connect again to keep syncing.',

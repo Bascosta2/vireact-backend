@@ -42,9 +42,18 @@ const connectedAccountSchema = new mongoose.Schema({
     lastSyncAt: { type: Date, default: null },
     lastSyncError: { type: String, default: null },
     lastSyncCounts: { type: mongoose.Schema.Types.Mixed, default: null },
+    /**
+     * Set while its data is being deleted (deleteAccountData): the sync stops writing and skips it. Once done
+     * the document stays one day as a tombstone holding no platform data (externalId "deleted:<id>"), so a
+     * sync that was mid-flight sees it and takes back what it wrote.
+     */
+    deleting: { type: Boolean, default: undefined },
+    deletedAt: { type: Date, default: undefined },
 }, { timestamps: true });
 
 connectedAccountSchema.index({ userId: 1, platform: 1, externalId: 1 }, { unique: true });
+connectedAccountSchema.index({ platform: 1, externalId: 1 });
+connectedAccountSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 });
 connectedAccountSchema.index({ status: 1, lastSyncAt: 1 });
 connectedAccountSchema.index({ scopedUserIds: 1 }, { sparse: true });
 
@@ -117,6 +126,7 @@ const metaDeletionRequestSchema = new mongoose.Schema({
     counts: { type: mongoose.Schema.Types.Mixed, default: null },
     attempts: { type: Number, default: 0 },
 }, { timestamps: true });
+metaDeletionRequestSchema.index({ status: 1, attempts: 1, updatedAt: 1 });
 metaDeletionRequestSchema.index({ status: 1, requestedAt: 1 });
 
 export const ConnectedAccount = mongoose.model('ConnectedAccount', connectedAccountSchema);
