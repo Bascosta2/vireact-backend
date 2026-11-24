@@ -91,7 +91,8 @@ async function main() {
     } finally {
         await fs.promises.rm(work, { recursive: true, force: true }).catch(() => {});
     }
-    const total = rows.reduce((n, r) => n + r.estCostUsd, 0);
+    // Only finished jobs cost anything; a rejected submit (e.g. 403 no credits) is not billed.
+    const total = rows.reduce((n, r) => n + (r.ok ? r.estCostUsd : 0), 0);
     await fs.promises.writeFile(path.join(outDir, 'results.json'), JSON.stringify({ ranAt: new Date().toISOString(), totalEstCostUsd: Math.round(total * 100) / 100, rows }, null, 2));
     const md = [
         '# Background removal bake-off',
@@ -100,7 +101,7 @@ async function main() {
         '|---|---|---|---|---|---|',
         ...rows.map((r) => `| ${slug(r.clip)} | ${r.variant} | ${r.clipSeconds} | ${r.waitedSec} | $${r.estCostUsd.toFixed(3)} | ${r.ok ? path.basename(r.file) : `failed: ${r.error}`} |`),
         '',
-        `Estimated total: $${total.toFixed(2)} (vendor list prices, not the invoice).`,
+        `Estimated total for finished jobs: $${total.toFixed(2)} (vendor list prices, not the invoice; failed jobs are not billed).`,
         '',
         'Judge: hair (curly or loose), hands in front of the body, a moving background, and flicker at the edges.',
     ].join('\n');
