@@ -28,12 +28,15 @@ const ENV = {
     INSTAGRAM_APP_ID: 'ig-id', INSTAGRAM_APP_SECRET: 'ig-secret',
 };
 
+// Provider tests need no database: the hooks only connect when DB_URL is set.
+const HAS_DB = Boolean(process.env.DB_URL);
 before(async () => {
+    if (!HAS_DB) return;
     Object.assign(process.env, { ACCOUNTS_TOKEN_KEY: ENV.ACCOUNTS_TOKEN_KEY });
     await connectTestDb();
     await Promise.all([ConnectedAccount, ConnectedPost, AccountOAuthState, Video, OutcomeSnapshot].map((m) => m.syncIndexes()));
 });
-after(disconnectTestDb);
+after(async () => { if (HAS_DB) await disconnectTestDb(); });
 
 /** Fake platform: answers by URL; records every request. */
 const fakeFetch = (routes) => {
@@ -302,4 +305,13 @@ test('Facebook provider: Page videos and Reels parse into the shared post shape 
     const video = posts.find((p) => p.externalId === 'v1');
     assert.deepEqual([video.mediaType, video.stats.views, video.stats.shares, video.stats.avgWatchSec ?? null], ['video', 800, 5, null]);
     assert.ok(fetchImpl.calls.filter((c) => c.url.includes('video_insights')).every((c) => c.url.includes('access_token=page-token')), 'insights use the Page token');
+});
+
+test('Facebook provider: login-gone answers (code 190, code 10 with a session subcode) ask the user to reconnect', async () => {
+    const F = await import('../src/service/accounts/providers/facebook.js');
+    const answer = (error) => fakeFetch([['/me?fields', { __status: 400, __body: { error } }]]);
+    for (const error of [{ message: 'The user has logged out', type: 'OAuthException', code: 190, error_subcode: 467 }, { message: 'x', code: 10, error_subcode: 460 }, { message: 'y', code: 190 }]) {
+        await assert.rejects(F.facebook.profile({ access: 't', fetchImpl: answer(error) }), (e) => e.reauth === true);
+    }
+    await assert.rejects(F.facebook.profile({ access: 't', fetchImpl: answer({ message: 'Permission denied', code: 10, error_subcode: 1 }) }), (e) => !e.reauth);
 });

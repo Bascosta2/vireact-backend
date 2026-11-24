@@ -1,4 +1,4 @@
-import { env, inSeconds, num, requestJson } from './http.js';
+import { env, inSeconds, num, requestJson as baseRequestJson, ReauthError } from './http.js';
 
 /**
  * Facebook Pages: Facebook Login + Graph API, read-only. Scopes: pages_show_list (which Pages the person
@@ -20,6 +20,27 @@ const VIDEO_METRICS = 'total_video_views,total_video_impressions_unique,total_vi
 const REEL_METRICS = 'fb_reels_total_plays,post_impressions_unique,post_video_avg_time_watched,post_video_retention_graph,post_video_social_actions';
 const VIDEO_FIELDS = 'id,description,created_time,length,permalink_url,picture,likes.limit(0).summary(true),comments.limit(0).summary(true),shares';
 const q = encodeURIComponent;
+
+/** Meta says the login is no longer valid: error 190, or error 10 with a session subcode. Often HTTP 400, so http.js misses it. */
+export const isLoginGone = (error) => error?.code === 190 || (error?.code === 10 && [459, 460, 463, 467].includes(Number(error?.error_subcode)));
+
+const requestJson = async (url, opts = {}) => {
+    // http.js keeps only the message of a failed answer, so remember the error object Meta sent.
+    let metaError = null;
+    const real = opts.fetchImpl ?? fetch;
+    const fetchImpl = async (u, init) => {
+        const res = await real(u, init);
+        const text = await res.text();
+        try { metaError = JSON.parse(text)?.error ?? null; } catch { metaError = null; }
+        return { status: res.status, ok: res.ok, text: async () => text };
+    };
+    try {
+        return await baseRequestJson(url, { ...opts, fetchImpl });
+    } catch (e) {
+        if (!e.reauth && isLoginGone(metaError)) throw new ReauthError(metaError.message || 'Facebook login expired');
+        throw e;
+    }
+};
 
 /** First value of a named insight metric, or null. */
 export const insightValue = (body, name) => (body?.data ?? []).find((d) => d.name === name)?.values?.[0]?.value ?? null;
@@ -102,7 +123,10 @@ export const facebook = {
         };
     },
 
-    async listPosts({ access, maxPosts = 60, env: e = process.env, fetchImpl }) {
+    async listPosts({ access, account, maxPosts = 60, env: e = process.env, fetchImpl }) {
+        const scopes = account?.tokens?.scopes;
+        if (Array.isArray(scopes) && scopes.length && !scopes.includes('read_insights')) console.warn('[accounts] facebook: read_insights was not granted, so views and watch time are missing; reconnect and allow it');
+        let insightsWarned = false;
         const pages = await this.pages({ access, env: e, fetchImpl });
         const perPage = Math.max(1, Math.ceil(maxPosts / Math.max(1, pages.length)));
         const out = [];
@@ -131,6 +155,10 @@ export const facebook = {
                     if (s.retention) p.retention = s.retention;
                 } catch (error) {
                     if (error.reauth) throw error;
+                    if (!insightsWarned) {
+                        insightsWarned = true;
+                        console.warn(`[accounts] facebook: insights unavailable for a video (${String(error.message).replace(/access_token=[^&\s]+/g, '').slice(0, 160)})`);
+                    }
                 }
                 delete p.pageId;
             }
