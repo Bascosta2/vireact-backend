@@ -35,6 +35,14 @@ export const BACKFILL_VIDEOS = 30;
 export const SEARCH_LIMIT = 30;
 /** Share of the day's budget per step; unused budget rolls to the next step. */
 export const BUDGET_SPLIT = Object.freeze({ recheck: 0.35, discover: 0.25, backfill: 0.4 });
+/** Share of the day's records Instagram Reels get when LEARNING_REELS_ENABLED is on (TikTok keeps the rest). */
+export const REELS_BUDGET_SHARE = 0.2;
+/** Splits the day's record budget by platform. With Reels off TikTok gets all of it, exactly as before. */
+export const splitDailyBudget = ({ budget, reels = false, reelsShare = REELS_BUDGET_SHARE }) => {
+    if (!reels) return { tiktok: budget, instagram: 0 };
+    const instagram = Math.min(budget, Math.max(0, Math.floor(budget * reelsShare)));
+    return { tiktok: budget - instagram, instagram };
+};
 /** Provider calls in flight at once. Provider jobs can take minutes; database writes stay sequential. */
 export const CONCURRENCY = 10;
 const STATS_BATCH = 20;
@@ -214,7 +222,7 @@ export const refreshBaseline = async (creatorId, now = Date.now()) => {
  * One collection run. `provider` from getProvider(); `budget` = records allowed today.
  * Never throws for a single failed call: it is counted in `errors` and the run continues.
  */
-export const runCollection = async ({ provider, budget, platform = 'tiktok', region = 'US', now = Date.now(), plan = buildCollectionPlan({ now }), trackShare = TRACK_SHARE, log = () => {} }) => {
+export const runCollection = async ({ provider, budget, platform = 'tiktok', region = 'US', now = Date.now(), plan = buildCollectionPlan({ now }), seeds = [], trackShare = TRACK_SHARE, log = () => {} }) => {
     const out = { used: 0, rechecked: 0, captions: 0, discovered: 0, newCreators: 0, backfilled: 0, baselines: 0, errors: 0 };
     if (!provider) return { ...out, skipped: 'no provider configured' };
     const providerName = provider.name;
@@ -298,6 +306,19 @@ export const runCollection = async ({ provider, budget, platform = 'tiktok', reg
 
     // 2. discover
     const discoverCap = Math.min(budget, out.used + Math.floor(budget * BUDGET_SPLIT.discover));
+    // 2a. seed accounts (platforms without keyword search, i.e. Instagram Reels): new ones become creators to backfill
+    if (seeds.length) {
+        const known = new Set((await SocialCreator.find({ platform, externalId: { $in: seeds.map((x) => x.handle) } }).select('externalId').lean()).map((c) => c.externalId));
+        const fresh = seeds.filter((x) => !known.has(x.handle)).slice(0, Math.max(0, discoverCap - out.used));
+        const nicheOf = new Map(fresh.map((x) => [x.handle, x.niche]));
+        const profiles = fresh.length && provider.creatorProfiles
+            ? await call('creatorProfiles', () => provider.creatorProfiles({ handles: fresh.map((x) => x.handle) }))
+            : { creators: fresh.map((x) => ({ externalId: x.handle, handle: x.handle })) };
+        for (const raw of profiles?.creators ?? []) {
+            const doc = await upsertCreator(raw, { platform, providerName, nicheHint: nicheOf.get(cleanCreator(raw)?.externalId) ?? null, now });
+            if (doc) out.newCreators += 1;
+        }
+    }
     await pool(plan, {
         canStart: (inFlight) => discoverCap - out.used - inFlight * SEARCH_LIMIT > 0,
         fetch: (q) => call(`search "${q.query}"`, () => provider.searchVideos({ query: q.query, region, limit: SEARCH_LIMIT })),
