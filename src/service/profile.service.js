@@ -40,6 +40,9 @@ export const updateUserProfileService = async (userId, name, email) => {
         if (!name || !email) {
             throw new ApiError(400, "Name and email are required.");
         }
+        if (typeof name !== 'string' || typeof email !== 'string') {
+            throw new ApiError(400, "Name and email must be text.");
+        }
 
         // Validate email format
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

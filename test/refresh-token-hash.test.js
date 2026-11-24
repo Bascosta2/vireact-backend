@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import { hashRefreshToken, refreshTokenMatches, isHashedRefreshToken } from '../src/utils/refresh-token-hash.js';
 import {
     verifyEmailService,
@@ -132,10 +134,11 @@ test('admin login rejects a non-string email or password with 400 before any que
     }
 });
 
-// Verification links keep working (reused token, idempotent verify) and auth emails are safe and clear.
+// Verification links keep working (reused token, idempotent verify), re-signup cannot take over an
+// unverified account, and auth emails are safe and clear.
 // A one-document in-memory stand-in for the User model: no database needed.
 
-/** Swap User.findOne/updateOne for an in-memory document; equality-only filters, $set-only updates. */
+/** Swap User.findOne/updateOne for an in-memory document; equality-only filters, $set/$unset updates. */
 const withFakeUser = async (doc, fn) => {
     const original = { findOne: User.findOne, updateOne: User.updateOne };
     const matches = (filter) => Object.entries(filter).every(([key, value]) => String(doc[key]) === String(value));
@@ -150,9 +153,9 @@ const withFakeUser = async (doc, fn) => {
         updates.push({ filter, update });
         if (!matches(filter)) return { modifiedCount: 0 };
         Object.assign(doc, update.$set);
+        for (const key of Object.keys(update.$unset || {})) delete doc[key];
         return { modifiedCount: 1 };
     };
-    doc.save ??= async () => doc;
     try {
         return await fn(updates);
     } finally {
@@ -177,33 +180,50 @@ const withSentEmails = async (fn) => {
 
 const HEX = (c) => c.repeat(64);
 const DAY = 24 * 60 * 60 * 1000;
+const tokenIn = (message) => message.text.match(/token=([a-f0-9]{64})/)?.[1];
+const passwordWorks = (doc, password) => bcrypt.compare(password, doc.password);
 
-test('verificationTokenFor reuses a live token and mints one only when there is none, it is malformed or expired', () => {
+/** An unverified account created by a first signup with password "original-pw". */
+const unverifiedAccount = async (overrides = {}) => ({
+    _id: 'u1', name: 'First', email: 'pat@example.invalid', password: await User.hashPassword('original-pw'),
+    isEmailVerified: false, emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(Date.now() + 7 * DAY),
+    verificationEmailSentAt: new Date(Date.now() - EMAIL_RESEND_COOLDOWN_MS - 1), refreshToken: 'h0:x', refreshSessions: [{ hash: 'h0:x' }],
+    ...overrides,
+});
+
+test('verificationTokenFor reuses a live link without extending it; a new 7-day link only when none, malformed, expired or under a day left', () => {
     const now = Date.now();
-    assert.equal(verificationTokenFor({ emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(now + DAY) }, now), HEX('a'));
-    assert.equal(verificationTokenFor({ emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: null }, now), HEX('a'), 'older token without expiry');
+    const live = new Date(now + 3 * DAY);
+    assert.deepEqual(verificationTokenFor({ emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: live }, now), { token: HEX('a'), expiresAt: live });
+
+    const legacy = verificationTokenFor({ emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: null }, now);
+    assert.equal(legacy.token, HEX('a'), 'link sent before expiries existed keeps working');
+    assert.equal(legacy.expiresAt.getTime(), now + EMAIL_VERIFICATION_TTL_MS, 'and gets 7 days from its first resend');
+
     for (const user of [
         {},
         { emailVerificationToken: null },
         { emailVerificationToken: 'old' },
         { emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(now - 1) },
+        { emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(now + DAY - 1) },
     ]) {
-        const token = verificationTokenFor(user, now);
+        const { token, expiresAt } = verificationTokenFor(user, now);
         assert.ok(isEmailLinkToken(token));
         assert.notEqual(token, HEX('a'));
+        assert.equal(expiresAt.getTime(), now + 7 * DAY);
     }
     assert.equal(EMAIL_VERIFICATION_TTL_MS, 7 * DAY);
 });
 
 test('verify-email is idempotent: first use verifies, a second use says already_verified', async () => {
-    const doc = { _id: 'u1', email: 'a@example.invalid', isEmailVerified: false, emailVerificationToken: HEX('b'), emailVerificationTokenExpiresAt: new Date(Date.now() + DAY) };
+    const doc = await unverifiedAccount();
     await withFakeUser(doc, async (updates) => {
-        assert.equal((await verifyEmailService(HEX('b'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+        assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
         assert.equal(doc.isEmailVerified, true);
-        assert.equal(doc.emailVerificationToken, HEX('b'), 'token kept so a second click is recognised');
-        assert.deepEqual(updates[0].filter, { _id: 'u1', emailVerificationToken: HEX('b') }, 'update is tied to the presented token');
+        assert.equal(doc.emailVerificationToken, HEX('a'), 'token kept so a second click is recognised');
+        assert.deepEqual(updates[0].filter, { _id: 'u1', emailVerificationToken: HEX('a'), isEmailVerified: false });
 
-        const again = await verifyEmailService(HEX('b'));
+        const again = await verifyEmailService(HEX('a'));
         assert.equal(again.status, EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED);
         assert.equal(updates.length, 1, 'second use changes nothing');
 
@@ -212,24 +232,22 @@ test('verify-email is idempotent: first use verifies, a second use says already_
 });
 
 test('verify-email: an expired link is a 400 and does not verify; a link without expiry (sent before this change) still works', async () => {
-    const expired = { _id: 'u2', isEmailVerified: false, emailVerificationToken: HEX('d'), emailVerificationTokenExpiresAt: new Date(Date.now() - 1) };
+    const expired = await unverifiedAccount({ emailVerificationTokenExpiresAt: new Date(Date.now() - 1) });
     await withFakeUser(expired, async (updates) => {
-        await assert.rejects(verifyEmailService(HEX('d')), (e) => e.statusCode === 400 && /expired/.test(e.message));
+        await assert.rejects(verifyEmailService(HEX('a')), (e) => e.statusCode === 400 && /expired/.test(e.message));
         assert.equal(expired.isEmailVerified, false);
         assert.equal(updates.length, 0);
     });
-    const legacy = { _id: 'u3', isEmailVerified: false, emailVerificationToken: HEX('e'), emailVerificationTokenExpiresAt: null };
+    const legacy = await unverifiedAccount({ emailVerificationTokenExpiresAt: null });
     await withFakeUser(legacy, async () => {
-        assert.equal((await verifyEmailService(HEX('e'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+        assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
         assert.equal(legacy.isEmailVerified, true);
     });
 });
 
-test('resend keeps the same link (earlier emails keep working), extends it 7 days, and sends a text part from "Vireact <...>"', async () => {
-    const doc = {
-        _id: 'u4', name: 'Pat', email: 'pat@example.invalid', isEmailVerified: false,
-        emailVerificationToken: HEX('f'), emailVerificationTokenExpiresAt: new Date(Date.now() + DAY), verificationEmailSentAt: null,
-    };
+test('resend keeps the same link without extending it, and sends a text part from "Vireact <...>"', async () => {
+    const expiresAt = new Date(Date.now() + 3 * DAY);
+    const doc = await unverifiedAccount({ emailVerificationTokenExpiresAt: expiresAt, verificationEmailSentAt: null });
     await withSentEmails(async (sent) => {
         await withFakeUser(doc, async () => {
             await resendEmailVerificationService(doc.email);
@@ -238,35 +256,101 @@ test('resend keeps the same link (earlier emails keep working), extends it 7 day
         });
         assert.equal(sent.length, 2);
         for (const message of sent) {
-            assert.ok(message.html.includes(`token=${HEX('f')}`));
-            assert.ok(message.text.includes(`token=${HEX('f')}`), 'plain-text part carries the link');
+            assert.ok(message.html.includes(`token=${HEX('a')}`));
+            assert.equal(tokenIn(message), HEX('a'), 'plain-text part carries the same link');
             assert.equal(message.from, formatFromAddress());
             assert.match(message.from, /<.+@.+>/, 'from has a display name');
             assert.equal(message.replyTo, replyToAddress());
         }
-        assert.equal(doc.emailVerificationToken, HEX('f'));
-        assert.ok(doc.emailVerificationTokenExpiresAt.getTime() > Date.now() + 6 * DAY, 'link extended to 7 days from the latest email');
+        assert.equal(doc.emailVerificationToken, HEX('a'));
+        assert.equal(doc.emailVerificationTokenExpiresAt.getTime(), expiresAt.getTime(), 'resending does not extend the link');
     });
 });
 
-test('re-signup of an unverified account keeps the link and respects the 60 s cooldown', async () => {
-    const doc = {
-        _id: 'u5', name: 'Old', email: 'sam@example.invalid', password: 'hash', isEmailVerified: false,
-        emailVerificationToken: HEX('1'), emailVerificationTokenExpiresAt: new Date(Date.now() + DAY), verificationEmailSentAt: new Date(),
-    };
+test('takeover blocked: a stranger re-signs up on an unverified address, the owner clicks their original link: the stranger\'s password does not work', async () => {
+    const doc = await unverifiedAccount();
     await withSentEmails(async (sent) => {
         await withFakeUser(doc, async () => {
-            const first = await customSignupUserService('New', doc.email, 'new-pass-1', 'local');
-            assert.equal(first.verificationEmail, VERIFICATION_EMAIL.RECENT, 'within a minute of the last email: no new send');
+            const attempt = await customSignupUserService('Attacker', doc.email, 'attacker-pw', 'local');
+            assert.equal(attempt.pendingSignup, true);
+            assert.equal(attempt.verificationEmail, VERIFICATION_EMAIL.SENT);
+            assert.ok(await passwordWorks(doc, 'original-pw'), 'stored password untouched by re-signup');
+            assert.equal(doc.name, 'First');
+            assert.equal(doc.emailVerificationToken, HEX('a'), 'original link untouched');
+            assert.ok(doc.pendingPasswordHash && !doc.pendingPasswordHash.includes('attacker-pw'), 'pending password is hashed');
+            assert.ok(!JSON.stringify(sent).includes('attacker-pw'), 'password never emailed');
+            const pendingToken = tokenIn(sent[0]);
+            assert.notEqual(pendingToken, HEX('a'));
+            assert.equal(doc.pendingVerificationTokenHash, crypto.createHash('sha256').update(pendingToken).digest('hex'), 'pending link stored hashed');
+
+            // The inbox owner opens the link from their own first email.
+            assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+            assert.equal(doc.isEmailVerified, true);
+            assert.ok(await passwordWorks(doc, 'original-pw'));
+            assert.ok(!(await passwordWorks(doc, 'attacker-pw')), 'attacker password does not work');
+            assert.equal(doc.name, 'First');
+            assert.equal(doc.pendingPasswordHash, null, 'pending re-signup dropped');
+
+            // The re-signup link (also only in the owner's inbox) now does nothing.
+            await assert.rejects(verifyEmailService(pendingToken), (e) => e.statusCode === 400);
+            assert.ok(!(await passwordWorks(doc, 'attacker-pw')));
+            // Re-signup on the now verified address is refused.
+            await assert.rejects(customSignupUserService('Attacker', doc.email, 'attacker-pw', 'local'), (e) => e.statusCode === 409);
+        });
+    });
+});
+
+test('owner forgot their password before verifying: re-signup, open the new link: the new password works and the old link retires', async () => {
+    const doc = await unverifiedAccount();
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async () => {
+            await customSignupUserService('Pat', doc.email, 'new-owner-pw', 'local');
+            const pendingToken = tokenIn(sent[0]);
+
+            assert.equal((await verifyEmailService(pendingToken)).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+            assert.equal(doc.isEmailVerified, true);
+            assert.ok(await passwordWorks(doc, 'new-owner-pw'), 'new password works');
+            assert.ok(!(await passwordWorks(doc, 'original-pw')));
+            assert.equal(doc.name, 'Pat');
+            assert.deepEqual(doc.refreshSessions, [], 'every device signed out');
+            assert.equal(doc.refreshToken, undefined);
+            assert.equal(doc.emailVerificationToken, null);
+            assert.equal(doc.pendingPasswordHash, null);
+
+            assert.equal((await verifyEmailService(pendingToken)).status, EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED, 'second click is fine');
+            await assert.rejects(verifyEmailService(HEX('a')), (e) => e.statusCode === 400, 'original link retired');
+        });
+    });
+});
+
+test('owner re-signs up but opens the old link instead: verified with the original password', async () => {
+    const doc = await unverifiedAccount();
+    await withSentEmails(async () => {
+        await withFakeUser(doc, async () => {
+            await customSignupUserService('Pat', doc.email, 'new-owner-pw', 'local');
+            assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+            assert.ok(await passwordWorks(doc, 'original-pw'));
+            assert.ok(!(await passwordWorks(doc, 'new-owner-pw')));
+        });
+    });
+});
+
+test('re-signup inside the 60 s cooldown is a 429 and changes nothing; an expired pending link does not verify', async () => {
+    const doc = await unverifiedAccount({ verificationEmailSentAt: new Date() });
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async (updates) => {
+            await assert.rejects(customSignupUserService('X', doc.email, 'other-pw-1', 'local'), (e) => e.statusCode === 429);
+            assert.equal(updates.length, 0);
             assert.equal(sent.length, 0);
+            assert.equal(doc.pendingPasswordHash, undefined);
 
             doc.verificationEmailSentAt = new Date(Date.now() - EMAIL_RESEND_COOLDOWN_MS - 1);
-            const second = await customSignupUserService('New', doc.email, 'new-pass-1', 'local');
-            assert.equal(second.verificationEmail, VERIFICATION_EMAIL.SENT);
+            await customSignupUserService('X', doc.email, 'other-pw-1', 'local');
+            doc.pendingVerificationTokenExpiresAt = new Date(Date.now() - 1);
+            await assert.rejects(verifyEmailService(tokenIn(sent[0])), (e) => e.statusCode === 400 && /expired/.test(e.message));
+            assert.equal(doc.isEmailVerified, false);
+            assert.ok(await passwordWorks(doc, 'original-pw'));
         });
-        assert.equal(sent.length, 1);
-        assert.ok(sent[0].text.includes(`token=${HEX('1')}`), 'same link as the first email');
-        assert.equal(doc.emailVerificationToken, HEX('1'));
     });
 });
 

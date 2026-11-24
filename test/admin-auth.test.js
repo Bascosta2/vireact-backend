@@ -186,23 +186,60 @@ test('login of an unverified user while email is down: signed in, with isEmailVe
 });
 
 test('signup reports the email outcome: verificationEmail (detail) next to verificationEmailSent (boolean)', async () => {
-    // Re-signup inside the 60 s cooldown: no new email, the earlier link still works.
+    const body = { role: 'user', name: 'Second', email: 'pat@example.invalid', password: 'pw-123456' };
+    // Re-signup on an unverified address inside the 60 s cooldown: 429, nothing changes.
     await withFakeUserModel(unverifiedDoc({ verificationEmailSentAt: new Date() }), async () => {
-        const res = fakeRes();
-        await signup({ body: { role: 'user', name: 'Pat', email: 'pat@example.invalid', password: 'pw-123456' } }, res, assert.ifError);
-        assert.equal(res.statusCode, 201);
-        assert.equal(res.body.data.verificationEmail, 'recent');
-        assert.equal(res.body.data.verificationEmailSent, false);
-        assert.equal(res.body.data.accessToken, undefined, 'not signed in');
+        let err;
+        await signup({ body }, fakeRes(), (e) => { err = e; });
+        assert.equal(err?.statusCode, 429);
     });
-    // Email down for everyone: signed in, still unverified, and the app is told why.
+    // Re-signup after the cooldown: pending, not signed in, and the existing account is not revealed.
+    const sentBefore = { send: resend.emails.send };
+    resend.emails.send = async () => ({ data: { id: 'test' }, error: null });
+    try {
+        await withFakeUserModel(unverifiedDoc(), async () => {
+            const res = fakeRes();
+            await signup({ body }, res, assert.ifError);
+            assert.equal(res.statusCode, 201);
+            assert.equal(res.body.data.verificationEmail, 'sent');
+            assert.equal(res.body.data.verificationEmailSent, true);
+            assert.equal(res.body.data.accessToken, undefined, 'not signed in');
+            assert.deepEqual(res.body.data.user, { name: 'Second', email: 'pat@example.invalid', isEmailVerified: false });
+        });
+    } finally {
+        resend.emails.send = sentBefore.send;
+    }
+    // Re-signup while email is down: still never signed in to someone else's account.
     await withEmailDown(() => withFakeUserModel(unverifiedDoc(), async () => {
         const res = fakeRes();
-        await signup({ body: { role: 'user', name: 'Pat', email: 'pat@example.invalid', password: 'pw-123456' } }, res, assert.ifError);
-        assert.equal(res.statusCode, 201);
+        await signup({ body }, res, assert.ifError);
         assert.equal(res.body.data.verificationEmail, 'unavailable');
-        assert.equal(res.body.data.verificationEmailSent, false);
-        assert.equal(res.body.data.user.isEmailVerified, false);
-        assert.ok(res.body.data.accessToken);
+        assert.equal(res.body.data.accessToken, undefined);
+        assert.deepEqual(res.cookies, {});
     }));
+    // Brand-new account while email is down: signed in, still unverified, and the app is told why.
+    const save = User.prototype.save;
+    User.prototype.save = async function () { return this; };
+    try {
+        await withEmailDown(() => withFakeUserModel(unverifiedDoc({ email: 'someone-else@example.invalid' }), async () => {
+            User.findById = () => Promise.resolve({ _id: 'new', generateAccessToken: () => 'access', generateRefreshToken: () => 'refresh' });
+            const res = fakeRes();
+            await signup({ body: { ...body, email: 'new@example.invalid' } }, res, assert.ifError);
+            assert.equal(res.statusCode, 201);
+            assert.equal(res.body.data.verificationEmail, 'unavailable');
+            assert.equal(res.body.data.verificationEmailSent, false);
+            assert.equal(res.body.data.user.isEmailVerified, false);
+            assert.equal(res.body.data.accessToken, 'access');
+        }));
+    } finally {
+        User.prototype.save = save;
+    }
+});
+
+test('signup rejects non-text fields with 400', async () => {
+    for (const body of [{ name: { $ne: null }, email: 'a@example.invalid', password: 'pw-123456' }, { name: 'A', email: ['a@example.invalid'], password: 'pw-123456' }]) {
+        let err;
+        await signup({ body: { role: 'user', ...body } }, fakeRes(), (e) => { err = e; });
+        assert.equal(err?.statusCode, 400);
+    }
 });

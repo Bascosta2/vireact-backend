@@ -15,8 +15,10 @@ export const MAX_REFRESH_SESSIONS = 10;
 export const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 /** Minimum gap between automatic verification or reset emails to the same address. */
 export const EMAIL_RESEND_COOLDOWN_MS = 60 * 1000;
-/** Verification links work for 7 days after the most recent email that carried them. */
+/** Verification links work for 7 days after they are issued. Resending the same link does not extend it. */
 export const EMAIL_VERIFICATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** A resend reuses the current link only if it still has this long left; otherwise a new link is issued. */
+export const EMAIL_VERIFICATION_MIN_REMAINING_MS = 24 * 60 * 60 * 1000;
 export const PASSWORD_MIN_LENGTH = 6;
 export const PASSWORD_MAX_LENGTH = 128;
 
@@ -39,15 +41,21 @@ export const EMAIL_VERIFICATION_STATUS = Object.freeze({
 
 const isPast = (date, now) => Boolean(date) && new Date(date).getTime() <= now;
 
+const newEmailLinkToken = () => crypto.randomBytes(32).toString('hex');
+
 /**
- * The token to put in the next verification email: the user's current one while it still works, so every
- * link we have sent keeps working; a new one only when there is none (or it is malformed or expired).
- * Tokens issued before expiry existed (no expiry stored) are reused.
+ * The { token, expiresAt } for the next verification email: the user's current link with its original
+ * expiry while it has at least a day left, so every link we have sent keeps working; otherwise a new link
+ * that works for 7 days. A token from before expiries existed is reused and gets 7 days from now.
  */
 export const verificationTokenFor = (user, now = Date.now()) => {
     const current = user?.emailVerificationToken;
-    if (isEmailLinkToken(current) && !isPast(user?.emailVerificationTokenExpiresAt, now)) return current;
-    return crypto.randomBytes(32).toString('hex');
+    const expiresAt = user?.emailVerificationTokenExpiresAt ? new Date(user.emailVerificationTokenExpiresAt) : null;
+    if (isEmailLinkToken(current)) {
+        if (!expiresAt) return { token: current, expiresAt: new Date(now + EMAIL_VERIFICATION_TTL_MS) };
+        if (expiresAt.getTime() - now >= EMAIL_VERIFICATION_MIN_REMAINING_MS) return { token: current, expiresAt };
+    }
+    return { token: newEmailLinkToken(), expiresAt: new Date(now + EMAIL_VERIFICATION_TTL_MS) };
 };
 
 /** Hash variants a stored session hash may use (peppered and unpeppered), so adding a pepper later never signs users out. */
@@ -109,15 +117,17 @@ export const buildVerificationEmail = (verificationUrl) => ({
     subject: 'Verify your Vireact email',
     html: `<div>
                 <p>Hi there, welcome to Vireact.</p>
-                <p><a href="${escapeHtml(verificationUrl)}">Verify your email</a> to finish setting up your account. The link works for 7 days.</p>
+                <p><a href="${escapeHtml(verificationUrl)}">Verify your email</a> to finish setting up your account. If the link has expired, log in to get a new one.</p>
                 <p>If you didn't create a Vireact account, ignore this email.</p>
                 <p>The Vireact Team</p>
                </div>`,
     text: [
         'Hi there, welcome to Vireact.',
         '',
-        'Verify your email to finish setting up your account (the link works for 7 days):',
+        'Verify your email to finish setting up your account:',
         verificationUrl,
+        '',
+        'If the link has expired, log in to get a new one.',
         '',
         "If you didn't create a Vireact account, ignore this email.",
         '',
@@ -180,20 +190,31 @@ const sendVerificationEmail = async (user, token) => {
 
 /** Fields a verification resend needs (the expiry is not selected by default). */
 const VERIFICATION_FIELDS = '+emailVerificationTokenExpiresAt';
+/** Fields verifying a pending re-signup needs. */
+const PENDING_FIELDS = '+pendingPasswordHash +pendingName +pendingVerificationTokenHash +pendingVerificationTokenExpiresAt';
+/** Clears a pending re-signup. */
+const CLEAR_PENDING = Object.freeze({
+    pendingPasswordHash: null,
+    pendingName: null,
+    pendingVerificationTokenHash: null,
+    pendingVerificationTokenExpiresAt: null,
+});
+
+const isWithinCooldown = (user, now = Date.now()) =>
+    Boolean(user.verificationEmailSentAt) && now - new Date(user.verificationEmailSentAt).getTime() < EMAIL_RESEND_COOLDOWN_MS;
 
 /**
- * Email the verification link, unless one went out in the last minute. The existing token is reused
- * (see verificationTokenFor), so links in earlier emails keep working; each send gives it 7 more days.
+ * Email the verification link, unless one went out in the last minute. The current link is reused
+ * (see verificationTokenFor), so links in earlier emails keep working; resending never extends it.
  * verificationEmailSentAt is only stamped on a successful send, so RECENT always means a real link exists.
  * `user` must be loaded with VERIFICATION_FIELDS.
  */
 const resendVerificationIfDue = async (user) => {
-    const last = user.verificationEmailSentAt ? new Date(user.verificationEmailSentAt).getTime() : 0;
-    if (Date.now() - last < EMAIL_RESEND_COOLDOWN_MS) return VERIFICATION_EMAIL.RECENT;
-    const token = verificationTokenFor(user);
+    if (isWithinCooldown(user)) return VERIFICATION_EMAIL.RECENT;
+    const { token, expiresAt } = verificationTokenFor(user);
     await User.updateOne(
         { _id: user._id },
-        { $set: { emailVerificationToken: token, emailVerificationTokenExpiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS) } }
+        { $set: { emailVerificationToken: token, emailVerificationTokenExpiresAt: expiresAt } }
     );
     return sendVerificationEmail(user, token);
 };
@@ -302,11 +323,14 @@ export const loginAdminService = async (email, password) => {
 /**
  * Sign up with email + password.
  * - Existing verified account (or a Google account): 409 with what to do instead.
- * - Existing account that was never verified: treated as a fresh signup (new name/password) and the
- *   verification email goes out again with the same link (at most once a minute), so someone who lost
- *   the first email is never stuck and the link in the first email still works.
+ * - Existing account that was never verified: a pending re-signup. The account's name, password and
+ *   original link are NOT changed; the new name and (hashed) password wait on the account and a new link
+ *   for them is emailed. Opening that link applies them; opening the original link verifies with the
+ *   original password and drops the pending one. So whoever owns the inbox decides, and a stranger who
+ *   re-signs up with someone else's address never gets their password verified. At most once a minute (429).
  * The account is saved even if the verification email fails.
- * Returns { user, verificationEmail } where verificationEmail is a VERIFICATION_EMAIL value.
+ * Returns { user, verificationEmail, pendingSignup } where verificationEmail is a VERIFICATION_EMAIL value.
+ * For a pending re-signup, `user` is the existing account as it was; never show it to the caller.
  */
 export const customSignupUserService = async (
     name,
@@ -327,15 +351,30 @@ export const customSignupUserService = async (
             if (existingUser.isEmailVerified) {
                 throw new ApiError(409, "An account with this email already exists. Log in instead, or use Forgot password.");
             }
-            // Unverified: restart signup for whoever owns the inbox.
-            existingUser.name = name;
-            existingUser.password = password;
-            await existingUser.save();
-            const verificationEmail = await resendVerificationIfDue(existingUser);
-            return { user: existingUser, verificationEmail };
+            if (isWithinCooldown(existingUser)) {
+                throw new ApiError(429, "We just sent a verification link to this email. Check your inbox and spam folder, or try again in a minute.");
+            }
+            // Unverified: a pending re-signup that only the inbox owner can complete.
+            const pendingToken = newEmailLinkToken();
+            const pending = await User.updateOne(
+                { _id: existingUser._id, isEmailVerified: false },
+                {
+                    $set: {
+                        pendingPasswordHash: await User.hashPassword(password),
+                        pendingName: name,
+                        pendingVerificationTokenHash: sha256(pendingToken),
+                        pendingVerificationTokenExpiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS),
+                    },
+                }
+            );
+            if (pending.modifiedCount !== 1) {
+                throw new ApiError(409, "An account with this email already exists. Log in instead, or use Forgot password.");
+            }
+            const verificationEmail = await sendVerificationEmail(existingUser, pendingToken);
+            return { user: existingUser, verificationEmail, pendingSignup: true };
         }
 
-        const token = crypto.randomBytes(32).toString("hex");
+        const token = newEmailLinkToken();
         const user = new User({
             name,
             email: cleanEmail,
@@ -349,7 +388,7 @@ export const customSignupUserService = async (
 
         const savedUser = await user.save();
         const verificationEmail = await sendVerificationEmail(savedUser, token);
-        return { user: savedUser, verificationEmail };
+        return { user: savedUser, verificationEmail, pendingSignup: false };
 
     } catch (error) {
         if (error instanceof ApiError) throw error;
@@ -362,11 +401,64 @@ export const customSignupUserService = async (
 
 
 /**
- * Verify an email from the emailed link. Idempotent: the token stays on the account after verification,
- * so a second click (or a mail scanner that opened the link first) answers ALREADY_VERIFIED instead of an
- * error. A kept token can only ever report "already verified"; it unlocks nothing.
+ * Verify an email from the emailed link. Idempotent: a used link stays recognisable, so a second click (or a
+ * mail scanner that opened the link first) answers ALREADY_VERIFIED instead of an error. A used link can only
+ * ever report "already verified"; it unlocks nothing.
+ * - Original link: verifies with the account's original password and drops any pending re-signup.
+ * - Pending re-signup link: applies the pending name and password, verifies, retires the original link and
+ *   signs out every device.
  * Returns { status, message } with status an EMAIL_VERIFICATION_STATUS value.
  */
+const ALREADY_VERIFIED_RESULT = Object.freeze({ status: EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED, message: "Your email is already verified. You can log in." });
+const VERIFIED_RESULT = Object.freeze({ status: EMAIL_VERIFICATION_STATUS.VERIFIED, message: "Email verified successfully." });
+const LINK_NO_LONGER_WORKS = "This verification link is invalid or no longer works. Log in, or request a new link.";
+const LINK_EXPIRED = "This verification link has expired. Log in, or request a new link.";
+
+const verifyOriginalLink = async (user, token) => {
+    if (user.isEmailVerified) return ALREADY_VERIFIED_RESULT;
+    if (isPast(user.emailVerificationTokenExpiresAt, Date.now())) throw new ApiError(400, LINK_EXPIRED);
+
+    const done = await User.updateOne(
+        { _id: user._id, emailVerificationToken: token, isEmailVerified: false },
+        { $set: { isEmailVerified: true, ...CLEAR_PENDING } }
+    );
+    if (done.modifiedCount === 1) return VERIFIED_RESULT;
+    // Lost a race with another click on the same link (fine) or with a pending link (this one no longer works).
+    const stillOurs = await User.findOne({ _id: user._id, emailVerificationToken: token, isEmailVerified: true });
+    if (stillOurs) return ALREADY_VERIFIED_RESULT;
+    throw new ApiError(400, LINK_NO_LONGER_WORKS);
+};
+
+const verifyPendingLink = async (user, tokenHash) => {
+    if (user.isEmailVerified) {
+        // This link was the one that verified (pending password already applied): a repeat click.
+        // Otherwise the account was verified another way and this pending password was never applied.
+        if (!user.pendingPasswordHash) return ALREADY_VERIFIED_RESULT;
+        throw new ApiError(400, LINK_NO_LONGER_WORKS);
+    }
+    if (isPast(user.pendingVerificationTokenExpiresAt, Date.now())) throw new ApiError(400, LINK_EXPIRED);
+
+    const done = await User.updateOne(
+        { _id: user._id, pendingVerificationTokenHash: tokenHash, isEmailVerified: false },
+        {
+            $set: {
+                password: user.pendingPasswordHash,
+                name: user.pendingName || user.name,
+                isEmailVerified: true,
+                emailVerificationToken: null,
+                emailVerificationTokenExpiresAt: null,
+                pendingPasswordHash: null,
+                pendingName: null,
+                pendingVerificationTokenExpiresAt: null,
+                refreshSessions: [],
+            },
+            $unset: { refreshToken: 1 },
+        }
+    );
+    if (done.modifiedCount !== 1) throw new ApiError(400, LINK_NO_LONGER_WORKS);
+    return VERIFIED_RESULT;
+};
+
 export const verifyEmailService = async (token) => {
     try {
         if (!token) {
@@ -377,21 +469,13 @@ export const verifyEmailService = async (token) => {
         }
 
         const user = await User.findOne({ emailVerificationToken: token }).select(VERIFICATION_FIELDS);
+        if (user) return await verifyOriginalLink(user, token);
 
-        if (!user) {
-            throw new ApiError(400, "This verification link is invalid or no longer works. Log in, or request a new link.");
-        }
-        if (user.isEmailVerified) {
-            return { status: EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED, message: "Your email is already verified. You can log in." };
-        }
-        if (isPast(user.emailVerificationTokenExpiresAt, Date.now())) {
-            throw new ApiError(400, "This verification link has expired. Log in, or request a new link.");
-        }
+        const tokenHash = sha256(token);
+        const pendingUser = await User.findOne({ pendingVerificationTokenHash: tokenHash }).select(PENDING_FIELDS);
+        if (pendingUser) return await verifyPendingLink(pendingUser, tokenHash);
 
-        // Matching on the token too means a link that was replaced in the meantime cannot verify.
-        await User.updateOne({ _id: user._id, emailVerificationToken: token }, { $set: { isEmailVerified: true } });
-
-        return { status: EMAIL_VERIFICATION_STATUS.VERIFIED, message: "Email verified successfully." };
+        throw new ApiError(400, LINK_NO_LONGER_WORKS);
     } catch (error) {
         if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || "Failed to verify email.");
@@ -540,6 +624,7 @@ export const resetPasswordService = async (token, password) => {
     user.password = password;
     user.isEmailVerified = true;
     user.emailVerificationToken = null;
+    Object.assign(user, CLEAR_PENDING);
     user.passwordResetTokenHash = null;
     user.passwordResetExpires = null;
     user.refreshSessions = [];

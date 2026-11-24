@@ -81,9 +81,12 @@ export const signupUser = async (req, res, next) => {
         if (!name || !email || !password) {
             throw new ApiError(400, "All fields are required.")
         }
+        if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+            throw new ApiError(400, "Name, email and password must be text.")
+        }
 
         const attribution = sanitizeAttribution(req.body.attribution);
-        const { user, verificationEmail } = await customSignupUserService(
+        const { user, verificationEmail, pendingSignup } = await customSignupUserService(
             name,
             email,
             password,
@@ -95,11 +98,24 @@ export const signupUser = async (req, res, next) => {
             method: 'email',
             ...attributionEventProperties(attribution)
         });
-        await linkFunnelSafely(user._id, req.body.funnelSessionId);
 
         // verificationEmailSent (boolean) is the original field; verificationEmail is the detailed outcome
-        // ('sent' | 'recent' | 'bad_address' | 'unavailable') so the app can say what happened.
+        // ('sent' | 'bad_address' | 'unavailable') so the app can say what happened.
         const verificationEmailSent = verificationEmail === VERIFICATION_EMAIL.SENT;
+
+        // Signing up again on an unverified address: nothing changes until the inbox owner opens the new
+        // link, so the caller is never signed in and never sees the existing account.
+        if (pendingSignup) {
+            return res.status(201).json(
+                ApiResponse.success(
+                    201,
+                    "Check your email to finish signing up.",
+                    { user: { name, email: user.email, isEmailVerified: false }, verificationEmailSent, verificationEmail }
+                )
+            );
+        }
+
+        await linkFunnelSafely(user._id, req.body.funnelSessionId);
 
         // Email is down for everyone, so the user could never verify. Sign them in now, exactly as
         // login would (see loginUserService); the account stays unverified.
