@@ -9,6 +9,7 @@ import {
     forgotPasswordService,
     resetPasswordService,
     revokeRefreshSession,
+    revokeAdminRefreshToken,
     VERIFICATION_EMAIL
 } from "../service/auth.service.js";
 import jwt from "jsonwebtoken";
@@ -305,66 +306,47 @@ export const verifyEmail = async (req, res, next) => {
 
 
 
-// Logout Admin
-export const logoutAdmin = async (req, res, next) => {
+/**
+ * Who is signing out: the access token's account, or (when the access token has expired) the account
+ * named in the refresh cookie. Expired refresh tokens still identify the session to revoke. The role
+ * is decided by which collection the account lives in, never by anything the client sends.
+ */
+const resolveLogoutAccount = async (user, refreshTokenIn) => {
+    if (user?._id) return { id: user._id, isAdmin: user instanceof Admin };
+    if (!refreshTokenIn) return null;
+    let id;
     try {
-        res.clearCookie("accessToken", COOKIE_OPTIONS);
-        res.clearCookie("refreshToken", COOKIE_OPTIONS);
-        res.status(200).json(
-            ApiResponse.success(200, "Admin Logout Successful")
-        );
-    } catch (error) {
-        next(error)
+        id = jwt.verify(refreshTokenIn, REFRESH_TOKEN_SECRET, { ignoreExpiration: true })?._id;
+    } catch {
+        return null;
     }
+    if (!id) return null;
+    if (await User.exists({ _id: id })) return { id, isAdmin: false };
+    if (await Admin.exists({ _id: id })) return { id, isAdmin: true };
+    return null;
 };
 
-
-// Logout User
-// Server-side revocation: the persisted refresh token must be cleared so a
-// captured/stolen JWT (e.g. from an XSS leak prior to this hardening) cannot
-// be replayed for up to 30 days. The route is gated by authenticateToken so
-// req.user is hydrated and we know whose token to revoke.
-export const logoutUser = async (req, res, next) => {
-    try {
-        // Identify the account from the access token, or from the refresh cookie when the access
-        // token has already expired (expired refresh tokens still identify the session to revoke).
-        const cookieToken = req.cookies?.refreshToken;
-        let userId = req.user?._id;
-        if (!userId && cookieToken) {
-            try {
-                userId = jwt.verify(cookieToken, REFRESH_TOKEN_SECRET, { ignoreExpiration: true })?._id;
-            } catch {
-                userId = null;
-            }
-        }
-        if (userId) {
-            // Sign out this device only; other devices stay signed in.
-            await revokeRefreshSession(userId, cookieToken);
-        }
-        res.clearCookie("accessToken", COOKIE_OPTIONS);
-        res.clearCookie("refreshToken", COOKIE_OPTIONS);
-        res.status(200).json(
-            ApiResponse.success(200, "User Logout Successful")
-        );
-    } catch (error) {
-        next(error)
-    }
-};
-
-// Single Logout Handler
+// Logout (users and admins)
+// Always clears the auth cookies and revokes the session server-side, so a captured refresh token
+// cannot be replayed. Users sign out this device only (other devices stay signed in); admins keep a
+// single stored session, which is cleared. Any `role` in the body is ignored.
 export const logout = async (req, res, next) => {
     try {
-        const { role } = req.body;
+        const cookieToken = req.cookies?.refreshToken;
+        // Cleared first so the browser drops them even if revocation below fails.
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
 
-        if (role === ROLES.ADMIN) {
-            await logoutAdmin(req, res, next);
+        const account = await resolveLogoutAccount(req.user, cookieToken);
+        if (account?.isAdmin) {
+            await revokeAdminRefreshToken(account.id, cookieToken);
+        } else if (account) {
+            await revokeRefreshSession(account.id, cookieToken);
         }
-        else if (role === ROLES.USER) {
-            await logoutUser(req, res, next);
-        }
-        else {
-            throw new ApiError(400, "Invalid User Role");
-        }
+
+        res.status(200).json(
+            ApiResponse.success(200, "Logout Successful")
+        );
     } catch (error) {
         next(error)
     }
@@ -479,12 +461,11 @@ export const googleAuthFailure = (req, res) => {
 };
 
 // Refresh Token Controller
-// Source order: body first (form users), cookie second (OAuth users on HttpOnly-only path).
+// The refresh token is read only from the HttpOnly cookie and only ever sent back as a cookie, so page
+// scripts (and any XSS) never see it. The body carries just the new access token.
 export const refreshToken = async (req, res, next) => {
     try {
-        const bodyToken = req.body?.refreshToken;
-        const cookieToken = req.cookies?.refreshToken;
-        const tokenIn = bodyToken || cookieToken;
+        const tokenIn = req.cookies?.refreshToken;
 
         if (!tokenIn) {
             throw new ApiError(400, "Refresh token is required");
@@ -499,10 +480,7 @@ export const refreshToken = async (req, res, next) => {
                 ApiResponse.success(
                     200,
                     "Token refreshed successfully",
-                    {
-                        accessToken,
-                        refreshToken: newRefreshToken
-                    }
+                    { accessToken }
                 )
             );
     } catch (error) {
