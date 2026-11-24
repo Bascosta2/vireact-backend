@@ -4,7 +4,8 @@ import { connectTestDb, disconnectTestDb, fakeRes } from './helpers/test-db.js';
 import { User } from '../src/model/user.model.js';
 import { Admin } from '../src/model/admin.model.js';
 import { generateAccessToken, refreshTokenService } from '../src/service/auth.service.js';
-import { loginAdmin } from '../src/controller/auth.controller.js';
+import { hashRefreshToken } from '../src/utils/refresh-token-hash.js';
+import { loginAdmin, logout, refreshToken as refreshTokenController } from '../src/controller/auth.controller.js';
 import { convertLegacyRefreshTokens } from '../src/service/legacy-refresh-tokens.js';
 import { isHashedRefreshToken } from '../src/utils/refresh-token-hash.js';
 
@@ -84,4 +85,52 @@ test('legacy conversion: dry run counts only, apply hashes plaintext and leaves 
 
     const again = await convertLegacyRefreshTokens(db, { apply: true });
     assert.deepEqual(again.map((r) => r.plaintext), [0, 0]);
+});
+
+test('POST /auth/refresh-token: the body carries only the access token; the rotated token is only in the cookie', async () => {
+    const user = await newUser('endpoint');
+    const { refreshToken } = await generateAccessToken(user._id, User, 'User');
+
+    const fromBody = fakeRes();
+    let bodyErr;
+    await refreshTokenController({ body: { refreshToken }, cookies: {} }, fromBody, (e) => { bodyErr = e; });
+    assert.equal(bodyErr?.statusCode, 400, 'a token in the body is not accepted');
+
+    const res = fakeRes();
+    let err;
+    await refreshTokenController({ body: {}, cookies: { refreshToken } }, res, (e) => { err = e; });
+    assert.equal(err, undefined);
+    assert.deepEqual(Object.keys(res.body.data), ['accessToken']);
+    assert.ok(res.cookies.refreshToken && res.cookies.refreshToken !== refreshToken);
+    assert.ok(!JSON.stringify(res.body).includes(res.cookies.refreshToken));
+});
+
+test('admin logout revokes the stored refresh token, whatever role the body claims', async () => {
+    const email = `admin-logout-${Date.now()}@example.invalid`;
+    const admin = await Admin.create({ name: 'Admin', email, password: 'pw-123456' });
+    const { refreshToken } = await generateAccessToken(admin._id, Admin, 'Admin');
+    assert.equal((await Admin.findById(admin._id).lean()).refreshToken, hashRefreshToken(refreshToken));
+
+    const res = fakeRes();
+    let err;
+    const signedIn = await Admin.findById(admin._id).select('-password -refreshToken');
+    await logout({ body: { role: 'user' }, cookies: { refreshToken }, user: signedIn }, res, (e) => { err = e; });
+    assert.equal(err, undefined);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.cleared.sort(), ['accessToken', 'refreshToken']);
+    assert.equal((await Admin.findById(admin._id).lean()).refreshToken, null);
+});
+
+test('user logout with an expired access token signs out only the device presenting the cookie', async () => {
+    const user = await newUser('logout');
+    const laptop = await generateAccessToken(user._id, User, 'User');
+    const phone = await generateAccessToken(user._id, User, 'User');
+
+    const res = fakeRes();
+    let err;
+    await logout({ body: { role: 'admin' }, cookies: { refreshToken: laptop.refreshToken }, user: null }, res, (e) => { err = e; });
+    assert.equal(err, undefined);
+    assert.deepEqual(res.cleared.sort(), ['accessToken', 'refreshToken']);
+    await assert.rejects(refreshTokenService(laptop.refreshToken), (e) => e.statusCode === 401, 'laptop revoked');
+    assert.ok((await refreshTokenService(phone.refreshToken)).accessToken, 'phone still signed in');
 });
