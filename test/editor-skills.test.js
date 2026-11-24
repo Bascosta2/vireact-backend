@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
-import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
+import { SPLIT_ZOOM, buildRenderProps, framingFor, needsBackgroundMatte, sanitizeEdits } from '../src/service/editor/compose.js';
+import { MODELS, buildFalInput, estimateCostUsd, extractVideoUrl, matteKey, runFalQueue, runMatteStep } from '../src/service/editor/bg-removal.service.js';
+import { setStorageForTests } from '../src/lib/storage.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
 import { BRAND_FONTS, brandProblem, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
@@ -203,4 +205,114 @@ test('split screen: only with the flag, otherwise it falls back to fill', () => 
     assert.equal('detailX' in edlSchemaFor(false).properties.framing.properties, false);
     assert.ok(!edlSchemaFor(false).properties.framing.properties.mode.description.includes('split'));
     assert.equal(validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5, detailX: 0.7, detailY: 0.3 } }, ctx).plan.framing.mode, 'fill');
+});
+
+
+// ---- background removal (fal.ai) ----
+const jsonRes = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body), arrayBuffer: async () => new TextEncoder().encode('matte').buffer });
+const falFake = (statuses, { result = { video: [{ url: 'https://v3.fal.media/o.webm' }] } } = {}) => {
+    const calls = [];
+    let i = 0;
+    const fetchFn = async (url, init = {}) => {
+        calls.push({ url, method: init.method ?? 'GET', headers: init.headers, body: init.body });
+        if (init.method === 'POST') return jsonRes({ request_id: 'r1', status_url: 'https://queue.fal.run/veed/requests/r1/status', response_url: 'https://queue.fal.run/veed/requests/r1', cancel_url: 'https://queue.fal.run/veed/requests/r1/cancel' });
+        if (url.endsWith('/status')) return jsonRes(statuses[Math.min(i++, statuses.length - 1)]);
+        if (url.endsWith('/cancel')) return jsonRes({});
+        if (url.includes('fal.media')) return jsonRes({});
+        return jsonRes(result);
+    };
+    return { fetchFn, calls };
+};
+const memStorage = (existing = []) => {
+    const keys = new Set(existing);
+    const log = [];
+    setStorageForTests({
+        head: async (k) => (keys.has(k) ? { sizeBytes: 1 } : null),
+        uploadFile: async (_p, k) => { keys.add(k); log.push(['file', k]); },
+        uploadBuffer: async (_b, k) => { keys.add(k); log.push(['buffer', k]); },
+        presignDownload: async (k) => `https://s3/${k}?sig`,
+        deletePrefix: async (k) => { log.push(['del', k]); },
+    });
+    return log;
+};
+const matteDeps = (fake, extra = {}) => ({ env: { FAL_KEY: 'k', BG_REMOVAL_MODEL: 'veed' }, hash: async () => 'abc', makeProxy: async () => {}, fetchFn: fake.fetchFn, sleepFn: async () => {}, track: () => {}, ...extra });
+const matteJob = { userId: 'u1', projectId: 'p1', srcPath: '/x.mp4', workDir: '/tmp', durationSec: 60 };
+
+test('fal request building: veed and bria inputs, auth header, submit url', async () => {
+    assert.deepEqual(buildFalInput('veed', 'https://v', { refine: false }), { video_url: 'https://v', output_codec: 'vp9', refine_foreground_edges: false, subject_is_person: true });
+    assert.equal(buildFalInput('bria', 'https://v').background_color, 'Transparent');
+    assert.equal(buildFalInput('bria', 'https://v').output_container_and_codec, 'webm_vp9');
+    assert.throws(() => buildFalInput('nope', 'x'));
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runFalQueue({ endpoint: MODELS.veed.endpoint, input: { a: 1 }, apiKey: 'KEY', fetchFn: fake.fetchFn, sleepFn: async () => {} });
+    assert.equal(fake.calls[0].url, 'https://queue.fal.run/veed/video-background-removal');
+    assert.equal(fake.calls[0].headers.Authorization, 'Key KEY');
+    assert.equal(extractVideoUrl(out.result), 'https://v3.fal.media/o.webm');
+    assert.equal(extractVideoUrl({}), null);
+});
+
+test('fal polling waits through IN_QUEUE/IN_PROGRESS, reports failures, and times out', async () => {
+    const fake = falFake([{ status: 'IN_QUEUE' }, { status: 'IN_PROGRESS' }, { status: 'COMPLETED', metrics: { inference_time: 7 } }]);
+    const out = await runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn: fake.fetchFn, sleepFn: async () => {} });
+    assert.equal(out.inferenceSec, 7);
+    const bad = falFake([{ status: 'COMPLETED', error: 'boom' }]);
+    await assert.rejects(runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn: bad.fetchFn, sleepFn: async () => {} }), /could not process/);
+    const slow = falFake([{ status: 'IN_PROGRESS' }]);
+    let t = 0;
+    await assert.rejects(runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn: slow.fetchFn, sleepFn: async () => { t += 1000; }, now: () => t, pollMs: 1000, timeoutMs: 3000 }), /timed out/);
+    assert.ok(slow.calls.some((c) => c.method === 'PUT' && c.url.endsWith('/cancel')));
+});
+
+test('matte cache key uses source hash and model; cost estimates', () => {
+    assert.equal(matteKey('u', 'h1', 'veed', { refine: true }), 'editor/mattes/u/h1/veed-refine.webm');
+    assert.notEqual(matteKey('u', 'h1', 'veed', { refine: false }), matteKey('u', 'h1', 'veed', { refine: true }));
+    assert.equal(matteKey('u', 'h1', 'bria'), 'editor/mattes/u/h1/bria.webm');
+    assert.equal(estimateCostUsd('veed', 60, { fps: 30, refine: false }), 0.9);
+    assert.equal(estimateCostUsd('veed', 60, { refine: true }), 1.35);
+    assert.equal(estimateCostUsd('bria', 60), 3);
+});
+
+test('matte step: stores the result, then a cache hit makes no fal call', async () => {
+    const log = memStorage();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const first = await runMatteStep(matteJob, matteDeps(fake));
+    assert.equal(first.status, 'ok');
+    assert.equal(first.key, 'editor/mattes/u1/abc/veed-refine.webm');
+    assert.ok(log.some(([k, key]) => k === 'buffer' && key === first.key));
+    const body = JSON.parse(fake.calls[0].body);
+    assert.equal(body.video_url, 'https://s3/editor/mattes/u1/abc/input-720p.mp4?sig');
+    const again = falFake([{ status: 'COMPLETED' }]);
+    const second = await runMatteStep(matteJob, matteDeps(again));
+    assert.deepEqual([second.status, second.cached], ['ok', true]);
+    assert.equal(again.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('matte step falls back with a plain reason: no key, too long, provider error, timeout', async () => {
+    memStorage();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    assert.deepEqual(await runMatteStep(matteJob, matteDeps(fake, { env: {} })), { status: 'skipped', reason: 'not_configured' });
+    assert.equal((await runMatteStep({ ...matteJob, durationSec: 181 }, matteDeps(fake))).reason, 'too_long');
+    const broken = { fetchFn: async () => jsonRes({}, false, 500) };
+    assert.deepEqual(await runMatteStep(matteJob, matteDeps(broken)), { status: 'failed', reason: 'provider_error' });
+    const slow = falFake([{ status: 'IN_PROGRESS' }]);
+    let t = 0;
+    assert.equal((await runMatteStep(matteJob, matteDeps(slow, { now: () => t, sleepFn: async () => { t += 60000; }, pollMs: 1000, timeoutMs: 120000 }))).reason, 'timeout');
+    assert.equal(fake.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('matte layers: needsBackgroundMatte and behind-person graphics only with a matte url', () => {
+    const p = plan();
+    assert.equal(needsBackgroundMatte(p), true);
+    assert.equal(needsBackgroundMatte({ ...p, framing: { mode: 'fit_blur', focusX: 0.5 } }), false);
+    assert.equal(needsBackgroundMatte({ ...p, graphics: p.graphics.filter((g) => g.type !== 'headline') }), false);
+    assert.equal(needsBackgroundMatte(p, { overlaysOff: true }), false);
+    const plain = buildRenderProps(p, {}, media(null), { density: null });
+    assert.equal(plain.matte, undefined);
+    assert.ok(plain.graphics.every((g) => !g.layer), 'no matte: unchanged');
+    const withMatte = buildRenderProps(p, {}, { ...media(null), matteUrl: 'https://s3/m.webm' }, { density: null });
+    assert.deepEqual(withMatte.matte, { url: 'https://s3/m.webm', mode: 'alpha-webm' });
+    assert.deepEqual(withMatte.graphics.filter((g) => g.layer === 'behind').map((g) => g.type), ['headline']);
+    assert.equal(buildRenderProps(p, { framingMode: 'fit_blur' }, { ...media(null), matteUrl: 'https://s3/m.webm' }, { density: null }).matte, undefined);
 });
