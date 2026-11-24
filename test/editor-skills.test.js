@@ -100,9 +100,9 @@ test('hook variant is an edit the creator can change; the planner gets the skill
     assert.ok(!plain.some((c) => c.type === 'text' && /EDITING SKILL/.test(c.text)));
 });
 
-const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d'];
+const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d', 'watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime'];
 
-test('the ten animation styles are skills with planner rules, render rules and built-in sounds only', async () => {
+test('the twenty animation and painted styles are skills with planner rules, render rules and built-in sounds only', async () => {
     const { ANIMATION_STYLE_IDS, isAnimationStyle } = await import('../src/service/editor/skills.js');
     const { SFX_TYPES } = await import('../src/service/editor/edl.js');
     assert.deepEqual([...ANIMATION_STYLE_IDS], STYLE_IDS, 'ids match the composition (vireact-frontend/src/remotion/styles/ids.ts)');
@@ -116,7 +116,7 @@ test('the ten animation styles are skills with planner rules, render rules and b
         for (const type of sounds) assert.ok(SFX_TYPES.includes(type), `${id}: ${type} is a built-in sound`);
     }
     assert.equal(isAnimationStyle('remotion-reel'), false);
-    assert.ok(!/lego|ps2|playstation/i.test(STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked names');
+    assert.ok(!/lego|ps2|playstation|ghibli/i.test(STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked names');
 });
 
 test('an animation style sets the palette, its sounds and captions, and keeps the plan\'s structure', () => {
