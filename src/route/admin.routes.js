@@ -1,5 +1,13 @@
 import { Router } from 'express';
 import { adminAuth } from '../middleware/adminAuth.js';
+import { authenticateToken, requireAdminUser } from '../middleware/auth.js';
+import { ApiResponse } from '../utils/ApiResponse.js';
+import { overview, listUsers } from '../service/owner-data.service.js';
+import { PROMO_CODES, getPromoCode } from '../config/promo-codes.js';
+import { SKILLS, ANIMATION_STYLES } from '../service/editor/skills.js';
+import { learningOverview } from '../service/learning/learning.service.js';
+import { getResearchStats } from '../service/research-ingest/ingest.service.js';
+import { LearningRun } from '../model/learning.model.js';
 import mongoose from 'mongoose';
 import { getAnalysisStats } from '../service/ops-monitoring.service.js';
 import { getErrorReport } from '../service/error-log.service.js';
@@ -37,6 +45,83 @@ import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 import { learningReport, refitLearnedModel } from '../service/view-learning.service.js';
 
 const adminRoutes = Router();
+
+/**
+ * Read-only data for the in-app admin dashboard. Signed-in users with role admin only (JWT, no x-admin-key).
+ * Mounted at /api/v1/admin-app; GET endpoints only.
+ */
+export const adminAppRoutes = Router();
+adminAppRoutes.use(authenticateToken, requireAdminUser);
+
+const send = (res, data) => res.status(200).json(ApiResponse.success(200, 'OK', data));
+const countList = (name) => String(process.env[name] || '').split(',').filter((e) => e.trim()).length;
+
+adminAppRoutes.get('/overview', async (req, res, next) => {
+    try {
+        const [base, week, errors] = await Promise.all([
+            overview(),
+            getAnalysisStats({ since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }),
+            getErrorReport({ limit: 1 }),
+        ]);
+        send(res, {
+            users: base.users, usersWeek: base.usersWeek, plans: base.plans,
+            analysesToday: base.videosDay, analyses7d: week.uploads, failed7d: week.failed, processing: base.processing,
+            errors24h: errors.total,
+            health: {
+                database: mongoose.connection.readyState === 1 ? 'connected' : 'not connected',
+                uptimeMinutes: Math.round(process.uptime() / 60),
+                analysisJobs: runningJobIds().length,
+                status: week.uploads >= 5 && week.failed / week.uploads > 0.2 ? 'attention' : 'healthy',
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+adminAppRoutes.get('/users', async (req, res, next) => {
+    try {
+        send(res, await listUsers(req.query));
+    } catch (error) {
+        next(error);
+    }
+});
+
+adminAppRoutes.get('/promo-codes', async (req, res, next) => {
+    try {
+        const { promos } = await overview();
+        send(res, Object.entries(PROMO_CODES).map(([code, p]) => ({
+            code, plan: p.plan, label: p.label, days: p.days, disabled: getPromoCode(code) === null,
+            maxRedemptions: getPromoCode(code)?.maxRedemptions ?? null, redemptions: promos[code] ?? 0,
+        })));
+    } catch (error) {
+        next(error);
+    }
+});
+
+adminAppRoutes.get('/skills', (req, res) => {
+    send(res, {
+        skills: Object.values(SKILLS).filter((s) => !ANIMATION_STYLES[s.id]).map((s) => ({ id: s.id, name: s.name, version: s.version })),
+        animationStyles: Object.entries(ANIMATION_STYLES).map(([id, s]) => ({ id, name: s.name, bestFor: s.bestFor, accent: s.accent })),
+        betaAllowLists: { editor: countList('EDITOR_BETA_EMAILS'), accounts: countList('ACCOUNTS_BETA_EMAILS') },
+    });
+});
+
+adminAppRoutes.get('/model-health', async (req, res, next) => {
+    try {
+        const [learning, research, latestRun] = await Promise.all([
+            learningOverview(),
+            getResearchStats(),
+            LearningRun.findOne({}).sort({ startedAt: -1 }).select('kind startedAt finishedAt ok recordsUsed').lean(),
+        ]);
+        send(res, {
+            latestRun, model: learning.model ? { version: learning.model.version, status: learning.model.status, trainedAt: learning.model.trainedAt, n: learning.model.n } : null,
+            learningEnabled: learning.config.enabled, research,
+        });
+    } catch (error) {
+        next(error);
+    }
+});
 
 adminRoutes.use(adminAuth);
 
