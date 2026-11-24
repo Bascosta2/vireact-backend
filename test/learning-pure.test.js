@@ -193,3 +193,29 @@ test('classifier output: closed lists, sub-niche must match the niche, unsure go
     assert.equal(out.get('V3').niche, 'other');
     assert.equal(out.has('V9'), false, 'unknown refs are ignored');
 });
+
+test('shadow comparison: log error, within 2x, band hit rate per side and per platform', async () => {
+    const { compareShadow, shadowRows } = await import('../src/service/learning/model/shadow.js');
+    const rows = [
+        { platform: 'tiktok', actual: 1000, formula: { low: 100, expected: 300, high: 900 }, shadow: { low: 500, expected: 1000, high: 2000 } },
+        { platform: 'tiktok', actual: 200, formula: { low: 100, expected: 300, high: 900 }, shadow: { low: 500, expected: 1000, high: 2000 } },
+        { platform: 'instagram', actual: 50, formula: { low: 10, expected: 50, high: 100 }, shadow: { low: 1, expected: 5, high: 10 } },
+        { platform: 'instagram', actual: 50, formula: { low: 10, expected: 50, high: 100 }, shadow: null },
+    ];
+    const c = compareShadow(rows);
+    assert.equal(c.overall.n, 3, 'rows without both predictions are left out');
+    assert.equal(c.byPlatform.tiktok.formula.coverage, 0.5);
+    assert.equal(c.byPlatform.tiktok.shadow.coverage, 0.5);
+    assert.equal(c.byPlatform.tiktok.shadowCloser, 0.5);
+    assert.equal(c.byPlatform.instagram.formula.typicalMiss, 1);
+    assert.equal(c.byPlatform.instagram.shadow.within2x, 0);
+    assert.ok(c.overall.shadow.meanAbsLogError > c.overall.formula.meanAbsLogError);
+    assert.deepEqual(compareShadow([]).overall.n, 0);
+    // Only settled results count (48h+ after posting).
+    const records = [
+        { subjectId: 'a', shadowPrediction: { platform: 'tiktok', modelVersion: 3, low: 1, expected: 2, high: 3, formula: { low: 1, expected: 2, high: 3 } } },
+        { subjectId: 'b', shadowPrediction: { platform: 'tiktok', modelVersion: 3, low: 1, expected: 2, high: 3, formula: { low: 1, expected: 2, high: 3 } } },
+    ];
+    const snaps = [{ subjectId: 'a', views: 10, ageHours: 170 }, { subjectId: 'b', views: 10, ageHours: 5 }];
+    assert.deepEqual(shadowRows(records, snaps).map((r) => r.actual), [10]);
+});
