@@ -249,7 +249,7 @@ export const confirmEditUpload = async (req, res, next) => {
 };
 
 /** The editing skills a new edit can follow (Skills tab). */
-export const listEditSkills = (req, res) => ok(res, 'Skills', { skills: Object.values(SKILLS).map((s) => ({ id: s.id, name: s.name, version: s.version, kind: s.kind ?? 'editing' })) });
+export const listEditSkills = (req, res) => ok(res, 'Skills', { skills: Object.values(SKILLS).map((s) => ({ id: s.id, name: s.name, version: s.version, kind: s.kind ?? 'editing', category: s.category ?? 'talking-head' })) });
 
 export const listEditProjects = async (req, res, next) => {
     try {

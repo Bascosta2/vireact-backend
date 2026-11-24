@@ -318,6 +318,27 @@ export const ANIMATION_STYLES = Object.freeze({
 export const ANIMATION_STYLE_IDS = Object.freeze(Object.keys(ANIMATION_STYLES));
 export const isAnimationStyle = (id) => typeof id === 'string' && Object.hasOwn(ANIMATION_STYLES, id);
 
+/**
+ * What each style is for (the Skills library groups them the same way, vireact-frontend
+ * src/remotion/styles/covers.ts):
+ *   talking-head  made for someone on camera;
+ *   any-footage   restyles any video (gameplay, product shots, b-roll, screen recordings);
+ *   storytelling  animated storytelling: the style paints a whole animated world over the frame and the
+ *                 creator's voice narrates it (layout 'scene'; the creator can show their footage instead).
+ */
+const TALKING_HEAD_STYLES = new Set(['chalkboard', 'minimal-line', 'flat-vector']);
+const STORYTELLING_STYLES = new Set(['watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime']);
+export const styleCategory = (id) => (STORYTELLING_STYLES.has(id) ? 'storytelling' : TALKING_HEAD_STYLES.has(id) ? 'talking-head' : 'any-footage');
+
+const CATEGORY_RULES = {
+    'talking-head': '- This style is made for a person talking to camera: keep the face clear, hooks above the head, graphics around it.',
+    'any-footage': '- This style restyles whatever the footage is (talking head, gameplay, product shots, b-roll, a screen recording). Read the frames to see which, and place graphics where they do not cover the action.',
+    storytelling: [
+        '- ANIMATED STORYTELLING: the viewer does not see the camera. The style paints its own animated world over the whole frame and the creator\'s voice narrates it, like a storybook. Cut for the story: a clear beginning, middle and end, and keep the narration flowing.',
+        '- Write hookOverlay.text like the title of the story. Do not use callouts (there is no footage to point at). Illustrations (visual) and headlines suit a story; zooms are gentle camera pushes on the painting.',
+    ].join('\n'),
+};
+
 /** The planner rules for an animation style. */
 const stylePlannerRules = (s) => [
     `EDITING SKILL: ${s.name.toUpperCase()} ANIMATION STYLE (follow these on top of every rule above; where they conflict, these win)`,
@@ -336,8 +357,11 @@ for (const [id, s] of Object.entries(ANIMATION_STYLES)) {
         name: s.name,
         version: 1,
         kind: 'animation',
-        plannerRules: stylePlannerRules(s),
+        category: styleCategory(id),
+        plannerRules: `${stylePlannerRules(s)}\n${CATEGORY_RULES[styleCategory(id)]}`,
         render: {
+            // Storytelling styles paint a scene in place of the camera (see compose.js).
+            layout: styleCategory(id) === 'storytelling' ? 'scene' : 'footage',
             captions: { maxWords: s.captions.maxWords, maxChars: s.captions.maxChars, casual: s.captions.casual === true },
             dropGraphicTypes: s.dropGraphicTypes,
             accent: s.accent,
