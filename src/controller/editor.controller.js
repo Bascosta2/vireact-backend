@@ -19,11 +19,13 @@ import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
 import { hasEditorAccess, isEditorFeaturesV2 } from '../config/flags.js';
 import { User } from '../model/user.model.js';
-import { buildStoryboard, swapBeat } from '../service/editor/storyboard.js';
+import { buildStoryboard, storyboardBlocksExport, swapBeat } from '../service/editor/storyboard.js';
 import { BRAND_FONTS, SKILLS, brandProblem, isSkill, sanitizeBrand } from '../service/editor/skills.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
+export const MAX_BEAT_SWAPS = 5;
+export const MAX_PROJECT_SWAPS = 20;
 const ALLOWED_TYPES = new Map([
     ['video/mp4', '.mp4'],
     ['video/quicktime', '.mov'],
@@ -311,10 +313,10 @@ export const updateEdits = async (req, res, next) => {
     try {
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
         const v2 = isEditorFeaturesV2();
-        const changes = sanitizeEdits(req.body ?? {}, { wordCount: project.media?.words?.length ?? 0, trackIds: await trackIdSet(), v2, segmentIds: new Set(project.plan.segments.map((x) => x.id)) });
+        const changes = sanitizeEdits(req.body ?? {}, { wordCount: project.media?.words?.length ?? 0, trackIds: await trackIdSet(), v2 });
         const edits = { ...(project.edits ?? {}), ...changes };
         // Dropping or swapping a beat means the creator has not seen the storyboard as it is now.
-        if (v2 && ('disabledSegments' in changes || 'beatSwaps' in changes) && !('storyboardApproved' in changes)) edits.storyboardApproved = false;
+        if (v2 && 'disabledSegments' in changes && !('storyboardApproved' in changes)) edits.storyboardApproved = false;
         if (changes.captionText) edits.captionText = { ...(project.edits?.captionText ?? {}), ...changes.captionText };
         // Never allow removing every segment.
         const remaining = project.plan.segments.filter((s) => !(edits.disabledSegments ?? []).includes(s.id));
@@ -337,20 +339,31 @@ export const swapStoryboardBeat = async (req, res, next) => {
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
         const beatId = String(req.body?.beatId ?? '');
         if (!project.plan.segments.some((x) => x.id === beatId)) throw new ApiError(400, 'Pick a beat from the storyboard.');
-        if ((project.edits?.beatSwaps?.[beatId]?.count ?? 0) >= 5) throw new ApiError(429, 'You have swapped this beat enough times. Keep one of the options or drop it.', { code: 'SWAPS_USED' });
+        if ((project.edits?.disabledSegments ?? []).includes(beatId)) throw new ApiError(400, 'Bring this beat back before swapping it.');
+        if ((project.edits?.beatSwaps?.[beatId]?.count ?? 0) >= MAX_BEAT_SWAPS) throw new ApiError(429, 'You have swapped this beat enough times. Keep one of the options or drop it.', { code: 'SWAPS_USED' });
+        if ((project.edits?.swapsUsed ?? 0) >= MAX_PROJECT_SWAPS) throw new ApiError(429, 'You have used all the swaps for this edit. Start a new edit to try more.', { code: 'SWAPS_USED' });
         const swap = await withAiContext(
             { feature: 'video_editor', userId: String(req.user._id), distinctId: String(req.user._id), traceId: newTraceId(`swap-${project._id}`) },
             () => swapBeat({ plan: project.plan, edits: project.edits ?? {}, words: project.media?.words ?? [], segmentId: beatId })
         );
         if (!swap || (!swap.graphics.length && !swap.sfx.length && !swap.effects.length)) throw new ApiError(502, 'The editor could not find another option for this beat. Try again.');
-        const { generationId: _g, ...kept } = swap;
-        const edits = { ...(project.edits ?? {}), beatSwaps: { ...(project.edits?.beatSwaps ?? {}), [beatId]: kept }, storyboardApproved: false };
-        project.edits = edits;
-        project.markModified('edits');
-        await project.save();
+        // The planner call takes seconds: write only this beat's fields (and re-check the caps and the drop) so a
+        // drop or approval made meanwhile is never overwritten.
+        const at = `edits.beatSwaps.${beatId}`;
+        const under = (field, max) => ({ $or: [{ [field]: { $lt: max } }, { [field]: { $exists: false } }] });
+        const written = await EditProject.updateOne(
+            { _id: project._id, status: EDIT_STATUS.READY, 'edits.disabledSegments': { $ne: beatId }, $and: [under(`${at}.count`, MAX_BEAT_SWAPS), under('edits.swapsUsed', MAX_PROJECT_SWAPS)] },
+            {
+                $set: { [`${at}.graphics`]: swap.graphics, [`${at}.sfx`]: swap.sfx, [`${at}.effects`]: swap.effects, [`${at}.why`]: swap.why, 'edits.storyboardApproved': false },
+                $inc: { [`${at}.count`]: 1, 'edits.swapsUsed': 1 },
+            }
+        );
+        if (!written.modifiedCount) throw new ApiError(409, 'This beat changed while we looked for another option. Try again.');
+        const fresh = await ownedProject(req, { status: EDIT_STATUS.READY });
+        const edits = fresh.edits ?? {};
         captureServerEvent(String(req.user._id), 'edit_beat_swapped', { project_id: String(project._id), beat: beatId });
-        const props = buildRenderProps(project.plan, edits, mediaFor(project, brandFor(req.user)));
-        ok(res, 'Beat swapped', { edits, storyboard: buildStoryboard(project.plan, edits), props: { ...props, ...(await soundUrls(props)) } });
+        const props = buildRenderProps(fresh.plan, edits, mediaFor(fresh, brandFor(req.user)));
+        ok(res, 'Beat swapped', { edits, storyboard: buildStoryboard(fresh.plan, edits), props: { ...props, ...(await soundUrls(props)) } });
     } catch (error) {
         next(error);
     }
@@ -392,7 +405,7 @@ export const startEditRender = async (req, res, next) => {
         if (!isRenderConfigured()) throw new ApiError(503, 'Export is being set up and is not available yet.', { code: 'RENDER_UNAVAILABLE' });
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
         // With the storyboard review on, the export only uses a storyboard the creator approved.
-        if (isEditorFeaturesV2() && project.edits?.storyboardApproved !== true) throw new ApiError(409, 'Approve the storyboard before exporting.', { code: 'STORYBOARD_NOT_APPROVED' });
+        if (storyboardBlocksExport(project.edits, isEditorFeaturesV2())) throw new ApiError(409, 'Approve the storyboard before exporting.', { code: 'STORYBOARD_NOT_APPROVED' });
         const active = (project.renders ?? []).find((r) => r.status === RENDER_STATUS.RENDERING && Date.now() - new Date(r.createdAt).getTime() < 15 * 60 * 1000);
         if (active) return ok(res, 'Already exporting', { renderId: active.id });
         if ((project.renders ?? []).length >= 10) throw new ApiError(429, 'This edit has been exported 10 times. Download an earlier export instead.');

@@ -4,7 +4,7 @@ import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
 import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
-import { applyBeatSwaps, buildStoryboard, carryStoryboard, cleanSwap, storyboardNote, swapBeat } from '../src/service/editor/storyboard.js';
+import { applyBeatSwaps, buildStoryboard, carryStoryboard, cleanSwap, storyboardBlocksExport, storyboardNote, swapBeat } from '../src/service/editor/storyboard.js';
 import { BRAND_FONTS, brandProblem, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
 
 const words = [
@@ -227,7 +227,9 @@ test('storyboard: beats list their graphics and sounds; drop and swap change the
     // Edits are only stored with the flag, and only for real beats.
     assert.equal('storyboardApproved' in sanitizeEdits({ storyboardApproved: true }), false);
     assert.equal(sanitizeEdits({ storyboardApproved: true }, { v2: true }).storyboardApproved, true);
-    assert.deepEqual(Object.keys(sanitizeEdits({ beatSwaps: { ...swaps, zzz: swaps.s2 } }, { v2: true, segmentIds: new Set(['s1', 's2']) }).beatSwaps), ['s2']);
+    // A PATCH can never write swapped beats or their counters.
+    assert.equal('beatSwaps' in sanitizeEdits({ beatSwaps: swaps, swapsUsed: 0 }, { v2: true }), false);
+    assert.equal('swapsUsed' in sanitizeEdits({ swapsUsed: 0 }, { v2: true }), false);
 
     // The planner's alternative for one beat is cleaned against that beat's range.
     const seg = p.segments[1];
@@ -237,7 +239,6 @@ test('storyboard: beats list their graphics and sounds; drop and swap change the
     const swap = await swapBeat({ plan: p, edits: {}, words, segmentId: 's2' }, { request: async (a) => { asked = a; return { data: { why: 'new', graphics: [], beats: [{ type: 'pop', at: 3.3 }] }, generationId: 'g1' }; } });
     assert.equal(asked.label, 'editor_beat_swap');
     assert.match(asked.messages[0].content, /BEAT s2/);
-    assert.equal(swap.count, 1);
     assert.equal(await swapBeat({ plan: p, words, segmentId: 'nope' }, { request: async () => ({}) }), null);
 });
 
@@ -248,7 +249,29 @@ test('storyboard: a regenerate keeps dropped and swapped beats and asks for appr
     const kept = carryStoryboard(oldPlan, oldEdits, newPlan);
     assert.deepEqual(kept.disabledSegments, ['s2']);
     assert.deepEqual(Object.keys(kept.beatSwaps), ['s3']);
-    assert.equal('storyboardApproved' in kept, false);
+    assert.equal(kept.storyboardApproved, false);
     assert.match(storyboardNote(oldPlan, oldEdits), /DROPPED[^]*3-5s[^]*6-8s/);
     assert.equal(storyboardNote(oldPlan, {}), '');
+});
+
+test('storyboard: swap cleaning, carry rules and export gate', () => {
+    const seg = { id: 's', start: 3, end: 5 };
+    const g = (start, end, text) => ({ type: 'pill', start, end, text, subtext: '', items: '', focusX: 0.5, focusY: 0.5 });
+    const c = cleanSwap({ graphics: [g(3.1, 9, 'A'), g(3.5, 4.5, 'OVERLAP'), g(4.6, 5.5, 'B')], beats: [{ type: 'ding', at: 3.2 }, { type: 'pop', at: 3.4 }, { type: 'ding', at: 4 }, { type: 'ding', at: 5.5 }] }, seg);
+    assert.deepEqual(c.graphics.map((x) => x.text), ['A']);
+    assert.ok(c.graphics.every((x) => x.end <= 5));
+    assert.deepEqual(c.sfx.map((x) => x.at), [3.2, 4]);
+    // Carry: a new beat covering half of a dropped one is dropped too; times follow the new beat; all dropped = none dropped.
+    const oldPlan = { segments: [{ id: 'a', start: 0, end: 4 }, { id: 'b', start: 5, end: 9 }] };
+    const sw = { graphics: [{ ...g(5.5, 8, 'X'), items: [] }], sfx: [{ type: 'pop', at: 8.5 }], effects: [], why: '' };
+    const kept = carryStoryboard(oldPlan, { disabledSegments: ['a'], beatSwaps: { b: sw } }, { segments: [{ id: 'n1', start: 0, end: 10 }, { id: 'n2', start: 5, end: 7 }] });
+    assert.deepEqual(kept.disabledSegments, ['n1']);
+    assert.deepEqual([kept.beatSwaps.n2.graphics[0].end, kept.beatSwaps.n2.sfx.length], [7, 0]);
+    assert.deepEqual(carryStoryboard(oldPlan, { disabledSegments: ['a', 'b'] }, { segments: [{ id: 'n1', start: 0, end: 4 }, { id: 'n2', start: 5, end: 9 }] }).disabledSegments, []);
+    assert.equal(kept.storyboardApproved, false);
+    // Export: only an explicit "not approved" blocks; edits from before the review keep exporting.
+    assert.equal(storyboardBlocksExport({}, true), false);
+    assert.equal(storyboardBlocksExport({ storyboardApproved: false }, true), true);
+    assert.equal(storyboardBlocksExport({ storyboardApproved: true }, true), false);
+    assert.equal(storyboardBlocksExport({ storyboardApproved: false }, false), false);
 });

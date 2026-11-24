@@ -12,6 +12,7 @@ import { createSemaphore } from '../../utils/semaphore.js';
 import { prepareMedia } from './media-prep.js';
 import { transcribeWords } from './transcribe.js';
 import { buildCutCandidates, repairWordTimings } from './cut-candidates.js';
+import { isEditorFeaturesV2 } from '../../config/flags.js';
 import { carryStoryboard, storyboardNote } from './storyboard.js';
 import { planEdit } from './edit-planner.service.js';
 import { chargeEdit } from './editor-access.service.js';
@@ -179,7 +180,8 @@ export async function runEditJob(projectId, deps = {}) {
                     progress: 100,
                     plan: result.plan,
                     planGenerationId: result.generationId ?? null,
-                    edits: {},
+                    // With the storyboard review on, a new plan starts unapproved.
+                    edits: isEditorFeaturesV2() ? { storyboardApproved: false } : {},
                     readyAt: new Date(),
                     error: null,
                 },
@@ -225,7 +227,7 @@ async function replan(project, userId, plan) {
     await EditProject.updateOne(
         { _id: project._id },
         {
-            $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, plan: result.plan, planGenerationId: result.generationId ?? null, edits: revision.keepEdits ? carryStoryboard(revision.previousPlan, revision.keepEdits, result.plan) : {}, pendingRevision: null, readyAt: new Date(), error: null },
+            $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, plan: result.plan, planGenerationId: result.generationId ?? null, edits: revision.keepEdits ? carryStoryboard(revision.previousPlan, revision.keepEdits, result.plan) : isEditorFeaturesV2() ? { storyboardApproved: false } : {}, pendingRevision: null, readyAt: new Date(), error: null },
             $push: { revisions: { note: revision.note, plan: revision.previousPlan, createdAt: new Date() } },
         }
     );

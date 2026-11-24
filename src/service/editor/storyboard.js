@@ -62,24 +62,6 @@ export function buildStoryboard(plan, edits = {}) {
     };
 }
 
-/** Keep only well-formed swap entries (a PATCH can never store junk). */
-export function sanitizeBeatSwaps(input, segmentIds = null) {
-    const out = {};
-    if (!input || typeof input !== 'object') return out;
-    for (const [id, v] of Object.entries(input).slice(0, 50)) {
-        if (segmentIds && !segmentIds.has(id)) continue;
-        if (!v || typeof v !== 'object') continue;
-        out[id] = {
-            graphics: (Array.isArray(v.graphics) ? v.graphics : []).slice(0, MAX_SWAP_GRAPHICS).map(normalizeGraphic),
-            sfx: (Array.isArray(v.sfx) ? v.sfx : []).filter((e) => SFX_TYPES.includes(e?.type) && Number.isFinite(e.at)).slice(0, MAX_SWAP_SOUNDS).map((e) => ({ type: e.type, at: r3(e.at) })),
-            effects: (Array.isArray(v.effects) ? v.effects : []).filter((e) => EFFECT_TYPES.includes(e?.type) && Number.isFinite(e.at)).slice(0, MAX_SWAP_EFFECTS).map((e) => ({ type: e.type, at: r3(e.at) })),
-            why: String(v.why ?? '').slice(0, 200),
-            count: Math.min(9, Math.max(1, Number(v.count) || 1)),
-        };
-    }
-    return out;
-}
-
 /**
  * After a regeneration the plan has new segment ids. Carry the creator's drops and swaps over by time: a new
  * segment that sits mostly inside a dropped (or swapped) range inherits it. Approval is never carried.
@@ -87,15 +69,29 @@ export function sanitizeBeatSwaps(input, segmentIds = null) {
 export function carryStoryboard(oldPlan, oldEdits, newPlan) {
     const droppedOld = (oldPlan.segments ?? []).filter((s) => (oldEdits.disabledSegments ?? []).includes(s.id));
     const swappedOld = (oldPlan.segments ?? []).filter((s) => oldEdits.beatSwaps?.[s.id]);
-    const disabledSegments = [];
+    let disabledSegments = [];
     const beatSwaps = {};
     for (const n of newPlan.segments ?? []) {
         const len = Math.max(0.01, n.end - n.start);
-        if (droppedOld.some((o) => overlap(o, n) / len >= 0.5)) disabledSegments.push(n.id);
+        // Dropped when it sits mostly inside a dropped beat, or covers at least half of one.
+        if (droppedOld.some((o) => overlap(o, n) / len >= 0.5 || overlap(o, n) / Math.max(0.01, o.end - o.start) >= 0.5)) disabledSegments.push(n.id);
         const o = swappedOld.find((x) => overlap(x, n) / len >= 0.5);
-        if (o) beatSwaps[n.id] = oldEdits.beatSwaps[o.id];
+        if (o) beatSwaps[n.id] = clampSwap(oldEdits.beatSwaps[o.id], n);
     }
-    return { disabledSegments, beatSwaps };
+    // Never carry drops that would remove every beat.
+    if ((newPlan.segments ?? []).length > 0 && disabledSegments.length >= newPlan.segments.length) disabledSegments = [];
+    return { disabledSegments, beatSwaps, storyboardApproved: false };
+}
+
+/** Keep a swap's graphics, sounds and effects inside a beat (used when a swap moves to a new beat). */
+function clampSwap(swap, seg) {
+    const inside = (t) => t >= seg.start && t < seg.end;
+    return {
+        ...swap,
+        graphics: (swap.graphics ?? []).filter((g) => inside(g.start)).map((g) => ({ ...g, end: Math.min(g.end, seg.end) })),
+        sfx: (swap.sfx ?? []).filter((e) => inside(e.at)),
+        effects: (swap.effects ?? []).filter((e) => inside(e.at)),
+    };
 }
 
 /** Text for the regenerate prompt: what the creator already decided on the storyboard. */
@@ -124,16 +120,36 @@ const SWAP_SCHEMA = {
     additionalProperties: false,
 };
 
-/** Validate the planner's alternative for one beat against that beat's range. */
+/** Same spacing the render applies between sounds (15 frames at 30 fps). */
+const SOUND_GAP_SEC = 0.5;
+
+/** Validate the planner's alternative for one beat: everything inside the beat, no overlapping graphics, sounds spaced. */
 export function cleanSwap(data, segment) {
-    const graphics = (data?.graphics ?? []).map(normalizeGraphic)
+    const graphics = [];
+    const sorted = (data?.graphics ?? []).map(normalizeGraphic)
         .filter((g) => within(g.start, segment) && (g.type === 'visual' ? Boolean(g.visual) : g.type === 'list' ? g.items.length > 0 : Boolean(g.text)))
-        .slice(0, MAX_SWAP_GRAPHICS);
-    const beats = Array.isArray(data?.beats) ? data.beats.filter((b) => Number.isFinite(b?.at) && within(b.at, segment)) : [];
+        .sort((a, b) => a.start - b.start);
+    for (const g of sorted) {
+        const clipped = { ...g, end: r3(Math.min(g.end, segment.end)) };
+        if (clipped.end - clipped.start < 0.4) continue;
+        if (graphics.length && clipped.start < graphics[graphics.length - 1].end) continue;
+        graphics.push(clipped);
+        if (graphics.length >= MAX_SWAP_GRAPHICS) break;
+    }
+    const beats = (Array.isArray(data?.beats) ? data.beats : []).filter((b) => Number.isFinite(b?.at) && within(b.at, segment)).sort((a, b) => a.at - b.at);
+    const spaced = (list, max) => {
+        const out = [];
+        for (const b of list) {
+            if (out.length >= max) break;
+            if (out.length && b.at - out[out.length - 1].at < SOUND_GAP_SEC) continue;
+            out.push({ type: b.type, at: r3(b.at) });
+        }
+        return out;
+    };
     return {
         graphics,
-        sfx: beats.filter((b) => SFX_TYPES.includes(b.type)).slice(0, MAX_SWAP_SOUNDS).map((b) => ({ type: b.type, at: r3(b.at) })),
-        effects: beats.filter((b) => EFFECT_TYPES.includes(b.type)).slice(0, MAX_SWAP_EFFECTS).map((b) => ({ type: b.type, at: r3(b.at) })),
+        sfx: spaced(beats.filter((b) => SFX_TYPES.includes(b.type)), MAX_SWAP_SOUNDS),
+        effects: spaced(beats.filter((b) => EFFECT_TYPES.includes(b.type)), MAX_SWAP_EFFECTS),
         why: String(data?.why ?? '').slice(0, 200),
     };
 }
@@ -163,5 +179,8 @@ export async function swapBeat({ plan, edits = {}, words = [], segmentId }, deps
     ].join('\n');
     const res = await request({ label: 'editor_beat_swap', system, messages: [{ role: 'user', content: user }], schema: SWAP_SCHEMA, effort: 'low', maxTokens: 4000 });
     const swap = cleanSwap(res.data, segment);
-    return { ...swap, count: Math.min(9, (edits.beatSwaps?.[segmentId]?.count ?? 0) + 1), generationId: res.generationId ?? null };
+    return { ...swap, generationId: res.generationId ?? null };
 }
+
+/** Export waits only for a storyboard the creator has not approved. Edits made before the review existed (no flag set) keep exporting. */
+export const storyboardBlocksExport = (edits, v2) => v2 === true && edits?.storyboardApproved === false;
