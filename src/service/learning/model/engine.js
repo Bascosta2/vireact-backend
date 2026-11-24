@@ -525,10 +525,60 @@ export const trainMLP = (X, y, w, { trainIdx, valIdx, hidden = 16, epochs = 80, 
     return { predict, bestEpoch: best.epoch, history: history.slice(-20), weights: { hidden, W1: Array.from(W1, (x) => round(x, 5)), b1: Array.from(b1, (x) => round(x, 5)), W2: Array.from(W2, (x) => round(x, 5)), b2: round(b2, 5) } };
 };
 
+// ---------------------------------------------------------------- serving (shadow)
+
+/** Quantile of an ascending array (linear interpolation). */
+const quantileSorted = (sorted, q) => {
+    if (!sorted.length) return null;
+    const i = (sorted.length - 1) * q;
+    const lo = Math.floor(i);
+    const hi = Math.ceil(i);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+};
+
+/**
+ * How far real labels land from the out-of-fold prediction, as log factors: the 20th and 80th percentile
+ * of y - y^ (y = label vs the creator's leave-one-out usual, y^ = prediction from a model that never saw
+ * the creator). A served band is expected x exp(low) .. expected x exp(high), so about 60% of results fall
+ * inside on paper; the promotion gate measures real coverage on users' videos.
+ */
+export const residualSpread = (y, pred, { low = 0.2, high = 0.8 } = {}) => {
+    const r = [];
+    for (let i = 0; i < pred.length; i++) if (Number.isFinite(y[i]) && Number.isFinite(pred[i])) r.push(y[i] - pred[i]);
+    if (r.length < 10) return null;
+    r.sort((a, b) => a - b);
+    return { low: round(Math.min(0, quantileSorted(r, low))), high: round(Math.max(0, quantileSorted(r, high))), n: r.length };
+};
+
+/** Mean standardized vector of a creator's other videos (the "creator's usual" in feature space). */
+export const creatorCentre = (spec, featureList = []) => {
+    if (!spec?.columns?.length || !featureList.length) return null;
+    const sum = new Float64Array(spec.columns.length);
+    for (const f of featureList) transformRow(spec, f).forEach((x, j) => { sum[j] += x; });
+    return Array.from(sum, (x) => x / featureList.length);
+};
+
+/**
+ * The ridge model's predicted log deviation from the creator's usual for one video:
+ * (x - centre) . beta, with centre = creatorCentre of the creator's other videos (0 = the training average
+ * when the creator has no history). Returns null when the model cannot score the row.
+ */
+export const predictLogDeviation = ({ spec, beta }, features, { centre = null } = {}) => {
+    if (!spec?.columns?.length || !Array.isArray(beta) || beta.length !== spec.columns.length) return null;
+    const x = transformRow(spec, features);
+    let s = 0;
+    for (let j = 0; j < x.length; j++) s += (x[j] - (centre?.[j] ?? 0)) * beta[j];
+    return Number.isFinite(s) ? s : null;
+};
+
 // ---------------------------------------------------------------- whole run
 
-/** Rows -> every analysis. Returns a plain object (stored as LearningModel). */
-export const runEngine = (rows, { k = 5, mlp = true, maxMlpRows = 15000, seed = 7 } = {}) => {
+/**
+ * Rows -> every analysis. Returns a plain object (stored as LearningModel).
+ * opts.evalRows: input row indexes to return out-of-fold ridge predictions for (`evaluation`), so the trainer
+ * can score the model on users' videos it never saw a creator's data for (promotion gate).
+ */
+export const runEngine = (rows, { k = 5, mlp = true, maxMlpRows = 15000, seed = 7, evalRows = null } = {}) => {
     const design = buildDesign(rows);
     const fe = withinCreators(design.X, design.y, design.w, design.groups);
     const creators = new Set(fe.groups).size;
@@ -565,10 +615,21 @@ export const runEngine = (rows, { k = 5, mlp = true, maxMlpRows = 15000, seed = 
             };
         }
     }
+    // Out-of-fold predictions next to the raw labels (vs the leave-one-out usual), by original row index.
+    const rawY = Float64Array.from(fe.kept, (orig) => design.y[orig]);
+    const spread = residualSpread(rawY, ridge.oof);
+    let evaluation = null;
+    if (Array.isArray(evalRows)) {
+        const wanted = new Set(evalRows);
+        evaluation = [];
+        fe.kept.forEach((orig, pos) => { if (wanted.has(orig)) evaluation.push({ row: orig, pred: round(ridge.oof[pos], 6) }); });
+    }
     return {
         n: fe.X.rows,
         p: fe.X.cols,
         creators,
+        spread,
+        evaluation,
         columns: design.columns,
         spec: design.spec,
         lambda: ridge.lambda,
