@@ -56,12 +56,14 @@ export const SKILLS = {
 };
 
 /**
- * Animation styles, from the "10 Claude Animation Styles" guide (editor-skills/done/animation-styles in
- * the parent project). Each is a skill: the whole edit (footage treatment, ambient layer, captions, hook,
+ * Animation and painted styles, from the "10 Claude Animation Styles" guide (editor-skills/done/
+ * animation-styles in the parent project) and the painting-media prompts (editor-skills/done/
+ * painted-styles). Each is a skill: the whole edit (footage treatment, ambient layer, captions, hook,
  * graphics, transitions, progress) is drawn in that style by the composition
  * (vireact-frontend/src/remotion/styles/), and the planner follows the style's rules below.
  *
- * "Lego Style" is Brick Build and "PS2 Style" is Retro 3D here: those names are trademarks.
+ * "Lego Style" is Brick Build, "PS2 Style" is Retro 3D and "Ghibli Style" is Painted Anime here:
+ * those names are trademarks.
  *
  * `sfx` gives each style its own sound palette (built-in sounds only): `graphic` for graphics, `slam`,
  * `transition`, `countEnd`, `listItem`, `listEnd`, `hook` (one sound on the first frame, or null for
@@ -187,6 +189,129 @@ export const ANIMATION_STYLES = Object.freeze({
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['pop', 'bubble', 'chime'], slam: ['pop', 'boom'], transition: ['swoosh', 'bubble'], countEnd: ['ding', 'success'], listItem: ['pop', 'bubble'], listEnd: ['success'], hook: 'pop' },
+    },
+    // The second set: real painting media drawn in code, from the "10 Animation Styles" prompts
+    // (Skale Out; one PDF per medium, editor-skills/done/painted-styles in the parent project).
+    // "Ghibli Style" is Painted Anime here: that name belongs to a film studio.
+    watercolour: {
+        name: 'Watercolour',
+        accent: '#E0533A',
+        look: 'watercolour on cold-press paper: soft washes with blooms and dried edges, pigment granulation, a few colours (warm against cool blue-green), the paper grain showing through',
+        bestFor: 'calm explainers, wellness, food, travel and gentle storytelling',
+        motion: 'soft and flowing: washes bloom, ripples spread and fade, everything drifts like paint in water. Calm pacing',
+        hook: 'a short painted title, like the first line of a storybook ("Slow mornings, better days")',
+        graphics: 'Headlines and lists suit the painted look; keep elements few and let them breathe. At most 1 slam.',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['shimmer', 'sweep_up', 'blip'], slam: ['impact', 'shimmer'], transition: ['sweep_up', 'shimmer'], countEnd: ['chime', 'sparkle'], listItem: ['tick'], listEnd: ['chime'], hook: 'shimmer' },
+    },
+    'roman-mosaic': {
+        name: 'Roman Mosaic',
+        accent: '#D9A441',
+        look: 'a Roman tile mosaic: small stone tiles laid in rows that follow every outline, grout lines, each tile with its own slight colour shift; ochre, terracotta, sea green, slate and cream',
+        bestFor: 'history, travel, food and craft content with an old-world feel',
+        motion: 'solid and deliberate: tile layers glide over a fixed floor, light shimmers across brighter tiles. Nothing melts or slides through anything else',
+        hook: 'like an inscription carved for a floor ("Strength, built daily")',
+        graphics: 'Headlines like inscriptions, counters like tallies. Lists read as rows of tiles. At most 1 slam.',
+        captions: { maxWords: 3, maxChars: 15 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['tap', 'click', 'tick'], slam: ['thud', 'impact'], transition: ['swish', 'thud'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'tap' },
+    },
+    'sumi-e': {
+        name: 'Sumi-e',
+        accent: '#C8102E',
+        look: 'sumi-e ink wash on rice paper: black ink from deep black to pale grey, wet bleeding edges, dry brush strokes, a lot of empty paper and mist; one red accent',
+        bestFor: 'calm, premium storytelling: mindfulness, craft, philosophy, slow brands',
+        motion: 'quiet and spacious: mist blooms and fades, ridges slide past in layers. Few elements, generous pauses. Few sound effects: plan almost no beats',
+        hook: 'one spare line, like a brush inscription ("Less, but deeper")',
+        graphics: 'Very few: about one every 12 to 15 seconds, headlines and counters only. No slams.',
+        captions: { maxWords: 3, maxChars: 18, casual: true },
+        dropGraphicTypes: ['slam'],
+        sfx: { graphic: ['swish', 'shimmer'], transition: ['swish', 'sweep_up'], countEnd: ['chime'], listItem: ['tick'], listEnd: ['chime'], hook: null, volume: 0.8 },
+    },
+    'impasto-oil': {
+        name: 'Impasto Oil',
+        accent: '#E9A13B',
+        look: 'an impasto oil painting: thick paint with palette-knife and bristle strokes that follow the forms, swirling sea and sky, raised ridges catching the light, canvas weave where the paint is thin',
+        bestFor: 'dramatic storytelling, sea and nature content, bold opinion pieces',
+        motion: 'heavy and sweeping: waves roll as paint strokes, spray flies as flicks of paint at the big moments',
+        hook: 'a bold painted statement ("The sea does not care")',
+        graphics: 'Counters and headlines carry the drama; slams land in a splash of strokes on the 1 or 2 biggest moments, paired with a shake.',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['whoosh', 'swoosh'], slam: ['boom', 'impact'], transition: ['whoosh', 'sweep_down'], countEnd: ['chime', 'ding'], listItem: ['tap'], listEnd: ['chime'], hook: 'impact' },
+    },
+    'nocturne-gouache': {
+        name: 'Nocturne Gouache',
+        accent: '#FFC978',
+        look: 'a night painting in gouache: dark opaque layers of blue and green, matte bristle texture, moonlight as a pale edge, fireflies as small warm dabs of paint',
+        bestFor: 'night routines, sleep, calm storytelling, evening and outdoors content',
+        motion: 'slow and hushed: fireflies rise and blink, grass sways, clouds cross the moon. Gentle pacing',
+        hook: 'a quiet night-time line ("What the dark teaches you")',
+        graphics: 'Headlines and pills, softly lit. At most 1 slam (it glows like a firefly).',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['shimmer', 'sparkle', 'blip'], slam: ['impact', 'shimmer'], transition: ['shimmer', 'swish'], countEnd: ['sparkle', 'chime'], listItem: ['tick'], listEnd: ['sparkle'], hook: 'sparkle', volume: 0.85 },
+    },
+    'botanical-plate': {
+        name: 'Botanical Plate',
+        accent: '#4A7FD4',
+        look: 'a botanical illustration plate: fine ink outlines with soft watercolour fills on cream paper, plants laid out airy and readable like a scientific drawing',
+        bestFor: 'education, nature, gardening, wellness and careful explainers',
+        motion: 'delicate and exact: stems bend from their bases, a butterfly crosses and settles. Lines never flicker',
+        hook: 'like the title of a plate in an old book ("Field notes: morning light")',
+        graphics: 'Lists read as specimens, headlines as plate titles, callouts point like a label pin. At most 1 slam.',
+        captions: { maxWords: 3, maxChars: 17 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['tap', 'page', 'tick'], slam: ['tap', 'pop'], transition: ['page', 'swish'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'page' },
+    },
+    'paper-cut': {
+        name: 'Paper Cut',
+        accent: '#9FE8F5',
+        look: 'a paper cut diorama: layers of cut paper from pale surface blue to near black, each casting a soft shadow on the one behind, visible fibre and uneven knife-cut edges, a glowing tissue-paper jellyfish',
+        bestFor: 'playful explainers, kids and family content, ocean and layered storytelling',
+        motion: 'layered like a multiplane camera: paper sheets slide at different speeds, pieces hinge and curl but never melt',
+        hook: 'short and bright, on a pink paper card ("Deep breath, dive in")',
+        graphics: 'Lists and pills as stacked paper cards; counters in deep-sea pink. At most 1 slam.',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['pop', 'snap', 'tap'], slam: ['pop', 'snap'], transition: ['swish', 'swoosh'], countEnd: ['ding', 'coin'], listItem: ['pop'], listEnd: ['ding'], hook: 'pop' },
+    },
+    'art-nouveau': {
+        name: 'Art Nouveau',
+        accent: '#C9982F',
+        look: 'an Art Nouveau poster: flowing whiplash lines, thick dark outlines, flat muted fills (sage, olive, gold ochre, cream, deep red), a patterned halo and vines growing into the frame on aged lithograph paper',
+        bestFor: 'beauty, fashion, food, drink and elegant brand storytelling',
+        motion: 'graceful and ornamental: vines sway, the halo turns slowly, shapes move as clean outlined pieces like a poster come to life',
+        hook: 'like a poster title in flowing letters ("The art of the morning")',
+        graphics: 'Headlines inside the poster frame, lists with leaf markers. At most 1 slam (it lands in the halo).',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['chime', 'shimmer', 'page'], slam: ['impact', 'chime'], transition: ['swoosh', 'shimmer'], countEnd: ['chime'], listItem: ['tick'], listEnd: ['chime'], hook: 'chime' },
+    },
+    'golden-hour': {
+        name: 'Golden Hour',
+        accent: '#FF8C42',
+        look: 'golden hour gouache: warm opaque paint, the low sun turning everything gold and orange, long shadows, a soft hazy sky and visible brush texture',
+        bestFor: 'travel, outdoors, food, gratitude and reflective storytelling',
+        motion: 'warm and sweeping: wheat bends in waves, light rakes across, quick arcs of movement against a slow day ending',
+        hook: 'a warm reflective line ("The last hour of light")',
+        graphics: 'Counters glow like the sun; headlines sit in the warm band. At most 1 slam.',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['whoosh', 'swoosh', 'shimmer'], slam: ['boom', 'impact'], transition: ['sweep_up', 'whoosh'], countEnd: ['chime', 'ding'], listItem: ['tap'], listEnd: ['chime'], hook: 'shimmer' },
+    },
+    'painted-anime': {
+        name: 'Painted Anime',
+        accent: '#3D9BE9',
+        look: 'a hand-painted anime film background in gouache: lush greens, big white cumulus clouds in a blue sky, tiny flowers in the grass and visible brush texture; clean simple figures with soft flat colour. An original look, not any film',
+        bestFor: 'wholesome storytelling, childhood and summer topics, gentle vlogs',
+        motion: 'like hand-drawn animation: drawn on twos, background layers slide past at different speeds, hair and grass flutter in the wind',
+        hook: 'bright and simple, like the first line of a summer story ("That summer, we ran")',
+        graphics: 'Pills and lists on white rounded cards; counters in sunset coral. At most 1 slam.',
+        captions: { maxWords: 3, maxChars: 16 },
+        dropGraphicTypes: [],
+        sfx: { graphic: ['pop', 'bubble', 'blip'], slam: ['pop', 'impact'], transition: ['swoosh', 'bubble'], countEnd: ['ding', 'coin'], listItem: ['pop'], listEnd: ['success'], hook: 'pop' },
     },
 });
 
