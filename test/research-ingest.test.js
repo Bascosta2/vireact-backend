@@ -224,9 +224,12 @@ test('confidence must reach RESEARCH_MIN_CONFIDENCE (default 0.6)', () => {
     assert.match(checkCandidate(candidate({ confidence: 0.65 }), { now: NOW, config: strict }).reason, /confidence 0\.65 < 0\.7/);
 });
 
-test('RESEARCH_MIN_CONFIDENCE parsing: junk falls back to 0.6, and the floor can never drop below 0.5', () => {
+test('RESEARCH_MIN_CONFIDENCE parsing: unset, blank or junk falls back to 0.6, and the floor can never drop below 0.5', () => {
     assert.equal(researchConfig({}).minConfidence, 0.6);
     assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: 'abc' }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '' }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '   ' }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: null }).minConfidence, 0.6);
     assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '0' }).minConfidence, 0.5);
     assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '2' }).minConfidence, 1);
     const loose = researchConfig({ ...ENV, RESEARCH_MIN_CONFIDENCE: '0.1' });
