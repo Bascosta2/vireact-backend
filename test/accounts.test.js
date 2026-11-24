@@ -379,7 +379,11 @@ test('Instagram sign-in keeps the app-scoped ids Meta sends in its callbacks', a
 /** Evaluates the small filter language the Meta lookups use, against fake accounts. */
 const matchesFilter = (doc, filter) => Object.entries(filter).every(([k, v]) => {
     if (k === '$or') return v.some((f) => matchesFilter(doc, f));
-    if (v && typeof v === 'object' && '$ne' in v) return doc[k] !== v.$ne;
+    if (k === '$and') return v.every((f) => matchesFilter(doc, f));
+    const op = v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v);
+    if (op && '$ne' in v) return doc[k] !== v.$ne;
+    if (op && '$lte' in v) return doc[k] != null && new Date(doc[k]) <= v.$lte;
+    if (v === null) return doc[k] == null;
     if (Array.isArray(doc[k])) return doc[k].includes(v);
     return doc[k] === v;
 });
@@ -422,8 +426,8 @@ test('Meta data deletion callback: off by default, verified, deletes exactly wha
     const videos = new Map([[String(linked._id), linked], [String(legacy._id), legacy]]);
     for (const v of videos.values()) v.save = async () => v;
     const accounts = [
-        { _id: igId, userId, platform: 'instagram', externalId: '17841400000000', scopedUserIds: ['9001'], followers: 3400 },
-        { _id: fbId, userId, platform: 'facebook', externalId: '9001', followers: 10 },
+        { _id: igId, userId, platform: 'instagram', externalId: '17841400000000', scopedUserIds: ['9001'], followers: 3400, connectedAt: new Date('2026-01-01') },
+        { _id: fbId, userId, platform: 'facebook', externalId: '9001', followers: 10, connectedAt: new Date('2026-01-01') },
     ];
     const calls = { accountWrites: [], postDelete: [], outcomeDelete: [] };
     const store = fakeDeletionStore();
@@ -632,6 +636,99 @@ test('a sync that overlaps a data deletion stops writing and takes back what it 
     });
     await withStubs([[ConnectedAccount, 'findById', () => query({ deleting: true })]], async () => {
         await assert.rejects(A.syncAccount(account._id, { env: ENV, fetchImpl, now }), /not found/i, 'an account being deleted is not synced');
+    });
+});
+
+/** Model stubs under deleteAccountData that succeed and record which accounts were tombstoned. */
+const deletionStubs = (tombstoned) => [
+    [ConnectedAccount, 'updateOne', async () => ({})],
+    [ConnectedAccount, 'exists', async () => null],
+    [ConnectedAccount, 'replaceOne', async (filter) => { tombstoned.push(String(filter._id)); return {}; }],
+    [ConnectedPost, 'find', () => query([])],
+    [ConnectedPost, 'deleteMany', async () => ({ deletedCount: 0 })],
+    [Video, 'find', () => query([])],
+];
+
+test('deletions that stopped partway are finished daily, least-tried first, reported once after 3 failures', async () => {
+    const account = { _id: new mongoose.Types.ObjectId(), platform: 'instagram', deleteAttempts: undefined };
+    const seen = {};
+    const reports = [];
+    let failing = true;
+    await withStubs([
+        [ConnectedAccount, 'find', (filter) => {
+            seen.filter = filter;
+            const q = query([account]);
+            q.sort = (spec) => { seen.sort = spec; return q; };
+            return q;
+        }],
+        [ConnectedAccount, 'updateOne', async (filter, update) => { Object.assign(account, update.$set); return {}; }],
+    ], async () => {
+        const remove = async () => { if (failing) throw new Error('db hiccup for 9001'); };
+        for (let i = 0; i < 4; i++) await A.finishInterruptedDeletions({ remove, report: (e) => reports.push(e.message) });
+        assert.deepEqual(seen.filter, { deleting: true, deletedAt: null }, 'any account left deleting without a tombstone');
+        assert.deepEqual(seen.sort, { deleteAttempts: 1, updatedAt: 1 });
+        assert.equal(account.deleteAttempts, 4);
+        assert.equal(reports.length, 1);
+        assert.equal(/9001|hiccup/.test(reports[0]), false, 'no ids, no error text');
+        failing = false;
+        assert.deepEqual(await A.finishInterruptedDeletions({ remove, report: (e) => reports.push(e.message) }), { pending: 1, completed: 1, failed: 0 });
+    });
+});
+
+test('reconnecting an account whose deletion stopped partway finishes it first and never reuses that record', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    const stuck = { _id: new mongoose.Types.ObjectId(), userId, platform: 'instagram', externalId: '17841400000000', deleting: true, followers: 1 };
+    const upserts = [];
+    const fetchImpl = fakeFetch([
+        ['api.instagram.com/oauth/access_token', { access_token: 'short', user_id: 9001 }],
+        ['ig_exchange_token', { access_token: 'long', expires_in: 5184000 }],
+        ['/me?fields', { id: '9001', user_id: '17841400000000', username: 'reelmaker' }],
+    ]);
+    const tombstoned = [];
+    const connect = () => A.finishConnect('instagram', { code: 'c', state: 's' }, { env: ENV, fetchImpl, syncInBackground: false });
+    await withStubs([
+        ...deletionStubs(tombstoned),
+        [process.env, 'ACCOUNTS_TOKEN_KEY', ENV.ACCOUNTS_TOKEN_KEY],
+        [AccountOAuthState, 'findOneAndDelete', async () => ({ userId, platform: 'instagram', codeVerifier: null, expiresAt: new Date(Date.now() + 60_000) })],
+        [ConnectedAccount, 'findOne', async (filter) => (filter.deleting === true && !tombstoned.length ? stuck : null)],
+        [ConnectedAccount, 'findOneAndUpdate', async (filter, update) => { upserts.push([filter, update]); return { _id: new mongoose.Types.ObjectId() }; }],
+    ], async () => {
+        await withStubs([[ConnectedPost, 'find', () => { throw new Error('db hiccup'); }]], async () => {
+            const url = new URL(await connect());
+            assert.equal(url.searchParams.get('error'), 'still_deleting');
+            assert.equal(url.searchParams.get('detail'), A.STILL_DELETING_MESSAGE);
+            assert.equal(upserts.length, 0, 'nothing is connected while the old data is still there');
+        });
+        assert.equal(await connect(), 'https://app.example.test/accounts?connected=instagram');
+        assert.deepEqual(tombstoned, [String(stuck._id)], 'the unfinished deletion was completed first');
+        const [[filter, update]] = upserts;
+        assert.deepEqual(filter.deleting, { $ne: true }, 'a record being deleted is never reused');
+        assert.ok(update.$set.authorizedAt instanceof Date);
+    });
+});
+
+test('a Meta deletion covers accounts authorized before the request; one reconnected afterwards is kept', async () => {
+    const t0 = new Date('2026-11-01T00:00:00Z');
+    const accounts = [
+        { _id: new mongoose.Types.ObjectId(), userId: new mongoose.Types.ObjectId(), platform: 'instagram', externalId: 'a', scopedUserIds: ['9001'], authorizedAt: new Date('2026-10-01') },
+        { _id: new mongoose.Types.ObjectId(), userId: new mongoose.Types.ObjectId(), platform: 'instagram', externalId: 'b', scopedUserIds: ['9001'], connectedAt: new Date('2026-09-01') },
+        { _id: new mongoose.Types.ObjectId(), userId: new mongoose.Types.ObjectId(), platform: 'instagram', externalId: 'c', scopedUserIds: ['9001'], connectedAt: new Date('2026-09-01'), authorizedAt: new Date('2026-11-02') },
+    ];
+    const tombstoned = [];
+    const store = fakeDeletionStore();
+    let down = true;
+    await withStubs([
+        ...deletionStubs(tombstoned),
+        ...store.stubs,
+        [ConnectedAccount, 'find', (filter) => { if (down) throw new Error('db hiccup'); return query(accounts.filter((a) => matchesFilter(a, filter))); }],
+    ], async () => {
+        await Meta.requestMetaDataDeletion({ platform: 'instagram', userId: '9001' }, { env: META_ENV, now: t0.getTime(), log: () => {}, report: () => {} });
+        assert.equal(store.docs[0].cutoffAt.getTime(), t0.getTime());
+        down = false;
+        // The person reconnected account c after asking for deletion; the retry runs later.
+        assert.deepEqual(await Meta.finishPendingMetaDeletions({ now: Date.UTC(2026, 10, 5), report: () => {} }), { pending: 1, completed: 1 });
+        assert.deepEqual(tombstoned.sort(), [String(accounts[0]._id), String(accounts[1]._id)].sort(), 'authorized before the request (or connected before, for older records)');
+        assert.equal(store.docs[0].counts.accounts, 2);
     });
 });
 

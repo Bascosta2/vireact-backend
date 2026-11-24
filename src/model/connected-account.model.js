@@ -39,6 +39,8 @@ const connectedAccountSchema = new mongoose.Schema({
     tokens: { type: tokensSchema, default: () => ({}) },
     status: { type: String, enum: Object.values(ACCOUNT_STATUS), default: ACCOUNT_STATUS.ACTIVE },
     connectedAt: { type: Date, default: Date.now },
+    /** Last sign-in (every connect, also reconnecting the same account): a Meta deletion only covers accounts authorized before it. */
+    authorizedAt: { type: Date, default: undefined },
     lastSyncAt: { type: Date, default: null },
     lastSyncError: { type: String, default: null },
     lastSyncCounts: { type: mongoose.Schema.Types.Mixed, default: null },
@@ -49,11 +51,14 @@ const connectedAccountSchema = new mongoose.Schema({
      */
     deleting: { type: Boolean, default: undefined },
     deletedAt: { type: Date, default: undefined },
+    /** Failed attempts to finish a deletion that stopped partway (finishInterruptedDeletions). */
+    deleteAttempts: { type: Number, default: undefined },
 }, { timestamps: true });
 
 connectedAccountSchema.index({ userId: 1, platform: 1, externalId: 1 }, { unique: true });
 connectedAccountSchema.index({ platform: 1, externalId: 1 });
 connectedAccountSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 });
+connectedAccountSchema.index({ deleting: 1, deleteAttempts: 1, updatedAt: 1 }, { sparse: true });
 connectedAccountSchema.index({ status: 1, lastSyncAt: 1 });
 connectedAccountSchema.index({ scopedUserIds: 1 }, { sparse: true });
 
@@ -121,6 +126,8 @@ const metaDeletionRequestSchema = new mongoose.Schema({
     status: { type: String, enum: Object.values(META_DELETION_STATUS), default: META_DELETION_STATUS.PENDING },
     metaUserId: { type: String, default: null },
     requestedAt: { type: Date, required: true },
+    /** The latest callback's time: the deletion covers accounts authorized before it (a reconnect after it is kept). */
+    cutoffAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     /** What was removed, for support: { accounts, posts, readings }. No ids. */
     counts: { type: mongoose.Schema.Types.Mixed, default: null },

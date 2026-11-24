@@ -112,10 +112,22 @@ export const metaAccountFilter = (platform, metaUserId) => {
     throw new Error(`not a Meta platform: ${platform}`);
 };
 
-/** Deletes the data of every connected account (any Vireact user) on this platform with this Meta user id. */
-export const deleteMetaUserData = async (platform, metaUserId) => {
+/**
+ * Accounts a request made at `cutoff` covers: authorized (signed in, or reconnected) at or before it. An account
+ * the person connected again after asking for deletion is theirs anew and is kept. Older records without
+ * authorizedAt fall back to connectedAt.
+ */
+export const authorizedBy = (cutoff) => ({
+    $or: [{ authorizedAt: { $lte: cutoff } }, { authorizedAt: null, connectedAt: { $lte: cutoff } }],
+});
+
+/**
+ * Deletes the data of every connected account (any Vireact user) on this platform with this Meta user id,
+ * authorized at or before `cutoff`.
+ */
+export const deleteMetaUserData = async (platform, metaUserId, cutoff = new Date()) => {
     const counts = { accounts: 0, posts: 0, readings: 0 };
-    for (const account of await ConnectedAccount.find(metaAccountFilter(platform, metaUserId))) {
+    for (const account of await ConnectedAccount.find({ $and: [metaAccountFilter(platform, metaUserId), authorizedBy(cutoff)] })) {
         const c = await deleteAccountData(account);
         counts.accounts += 1;
         counts.posts += c.posts;
@@ -127,7 +139,7 @@ export const deleteMetaUserData = async (platform, metaUserId) => {
 /** Runs the deletion for a recorded request; on success marks it completed and forgets the Meta user id. */
 const runDeletion = async (request, { now = Date.now(), log = (l) => console.warn(`[meta] ${l}`), report = captureError } = {}) => {
     try {
-        const counts = await deleteMetaUserData(request.platform, request.metaUserId);
+        const counts = await deleteMetaUserData(request.platform, request.metaUserId, request.cutoffAt ?? request.requestedAt);
         Object.assign(request, { status: META_DELETION_STATUS.COMPLETED, completedAt: new Date(now), metaUserId: null, counts, attempts: (request.attempts ?? 0) + 1 });
     } catch (error) {
         // Pending (again) with the id; finishPendingMetaDeletions retries it daily.
@@ -149,7 +161,7 @@ const findOrCreateRequest = async (platform, metaUserId, now) => {
     if (existing) return existing;
     try {
         return await MetaDeletionRequest.create({
-            confirmationCode: crypto.randomBytes(16).toString('hex'), subjectHash, platform, metaUserId, requestedAt: new Date(now),
+            confirmationCode: crypto.randomBytes(16).toString('hex'), subjectHash, platform, metaUserId, requestedAt: new Date(now), cutoffAt: new Date(now),
         });
     } catch (error) {
         // Two callbacks for the same person at once: the other one recorded it.
@@ -165,6 +177,7 @@ const findOrCreateRequest = async (platform, metaUserId, now) => {
 export const requestMetaDataDeletion = async ({ platform, userId }, { env = process.env, now = Date.now(), log, report } = {}) => {
     const request = await findOrCreateRequest(platform, userId, now);
     request.metaUserId = userId;
+    request.cutoffAt = new Date(now); // a repeated callback covers what exists now
     await runDeletion(request, { now, log, report });
     return deletionResponse(request.confirmationCode, env);
 };

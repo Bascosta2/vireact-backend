@@ -9,6 +9,7 @@ import { tiktok } from './providers/tiktok.js';
 import { youtube } from './providers/youtube.js';
 import { instagram } from './providers/instagram.js';
 import { recordConnectedReadings, removeConnectedReadings } from '../performance.service.js';
+import { captureError } from '../ops-monitoring.service.js';
 
 /**
  * Connected accounts (Accounts tab). A user signs in with TikTok, YouTube or Instagram; we store the
@@ -87,6 +88,8 @@ const sealTokens = (t) => ({
  * The platform sent the user back. Verifies the state, exchanges the code, stores the account and starts a
  * first sync in the background. Returns the URL to send the browser to (the Accounts tab, with the outcome).
  */
+export const STILL_DELETING_MESSAGE = "We're still removing your previous data. Try again in a few minutes.";
+
 export const finishConnect = async (platform, { code, state, error, errorDescription } = {}, { env = process.env, fetchImpl, syncInBackground = true } = {}) => {
     const p = PROVIDERS[platform];
     if (!p) return returnUrl({ error: 'unknown_platform' }, env);
@@ -99,13 +102,23 @@ export const finishConnect = async (platform, { code, state, error, errorDescrip
         const profile = await p.profile({ access: tokens.access, env, fetchImpl });
         if (!profile?.externalId) throw new Error('the platform returned no account id');
         const scopedIds = scopedIdsOf(tokens, profile);
+        // A deletion of this same account that stopped partway is finished first; its record is never reused.
+        const interrupted = await ConnectedAccount.findOne({ userId: pending.userId, platform, externalId: String(profile.externalId), deleting: true });
+        if (interrupted) {
+            try {
+                await deleteAccountData(interrupted);
+            } catch (e) {
+                console.warn(`[accounts] ${platform} reconnect waits for an unfinished deletion: ${e.message}`);
+                return returnUrl({ error: 'still_deleting', platform, detail: STILL_DELETING_MESSAGE }, env);
+            }
+        }
         const account = await ConnectedAccount.findOneAndUpdate(
-            { userId: pending.userId, platform, externalId: String(profile.externalId) },
+            { userId: pending.userId, platform, externalId: String(profile.externalId), deleting: { $ne: true } },
             {
                 $set: {
                     handle: profile.handle ?? null, displayName: profile.displayName ?? null, avatarUrl: profile.avatarUrl ?? null,
                     followers: profile.followers ?? null, uploadsPlaylistId: profile.uploadsPlaylistId ?? null, tokens: sealTokens(tokens),
-                    status: ACCOUNT_STATUS.ACTIVE, lastSyncError: null,
+                    status: ACCOUNT_STATUS.ACTIVE, lastSyncError: null, authorizedAt: new Date(),
                 },
                 $setOnInsert: { connectedAt: new Date() },
                 ...(scopedIds.length ? { $addToSet: { scopedUserIds: { $each: scopedIds } } } : {}),
@@ -281,8 +294,9 @@ const pickStats = (s = {}) => Object.fromEntries(['views', 'likes', 'comments', 
 /** Daily: every active account, one at a time. Never throws. */
 export const syncAllAccounts = async ({ env = process.env, fetchImpl, now = Date.now(), log = () => {} } = {}) => {
     const out = { accounts: 0, synced: 0, failed: 0, needsReauth: 0, posts: 0, milestones: 0 };
-    // Meta data deletions that failed when Meta asked are retried first (imported here: it imports this file).
-    const { finishPendingMetaDeletions } = await import('./meta-data-deletion.js');
+    // Deletions that stopped partway (any trigger), then Meta requests that failed, are finished first.
+    out.interruptedDeletions = await finishInterruptedDeletions({ log });
+    const { finishPendingMetaDeletions } = await import('./meta-data-deletion.js'); // imported here: it imports this file
     out.metaDeletions = await finishPendingMetaDeletions({ now, log });
     if (!isTokenKeyConfigured(env)) return { ...out, skipped: 'ACCOUNTS_TOKEN_KEY not set' };
     const accounts = await ConnectedAccount.find({ status: ACCOUNT_STATUS.ACTIVE, deleting: { $ne: true } }).select('_id').lean();
@@ -376,6 +390,37 @@ export const deleteAccountData = async (account) => {
         userId: account.userId, platform: account.platform, externalId: `deleted:${account._id}`, deleting: true, deletedAt: new Date(),
     });
     return { posts: deletedPosts, readings, uploads: videoIds.size };
+};
+
+/** A deletion that failed this many times is reported (captureError) once. */
+export const DELETE_ALERT_AFTER = 3;
+
+/**
+ * Daily: finishes every account left `deleting` without a tombstone (a deletion that stopped partway, from
+ * Meta, disconnect with deleteData or a sync), least-tried first. Failures are counted on the account and
+ * reported once at the third (no ids, no error text). Never throws.
+ */
+export const finishInterruptedDeletions = async ({ log = () => {}, report = captureError, remove = deleteAccountData, limit = 100 } = {}) => {
+    const out = { pending: 0, completed: 0, failed: 0 };
+    try {
+        const stuck = await ConnectedAccount.find({ deleting: true, deletedAt: null }).sort({ deleteAttempts: 1, updatedAt: 1 }).limit(limit);
+        out.pending = stuck.length;
+        for (const account of stuck) {
+            try {
+                await remove(account);
+                out.completed += 1;
+            } catch (error) {
+                out.failed += 1;
+                const attempts = (account.deleteAttempts ?? 0) + 1;
+                await ConnectedAccount.updateOne({ _id: account._id }, { $set: { deleteAttempts: attempts } }).catch(() => {});
+                log(`accounts: an interrupted ${account.platform} deletion failed again: ${error.message}`);
+                if (attempts === DELETE_ALERT_AFTER) report(new Error(`Connected account deletion (${account.platform}) has failed ${attempts} times; last error: ${error?.name ?? 'Error'}`), { route: 'account deletion' });
+            }
+        }
+    } catch (error) {
+        log(`accounts: interrupted deletions: ${error.message}`);
+    }
+    return out;
 };
 
 /**
