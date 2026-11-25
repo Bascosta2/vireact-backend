@@ -28,12 +28,15 @@ const ENV = {
     INSTAGRAM_APP_ID: 'ig-id', INSTAGRAM_APP_SECRET: 'ig-secret',
 };
 
+// Provider tests need no database: the hooks only connect when DB_URL is set.
+const HAS_DB = Boolean(process.env.DB_URL);
 before(async () => {
+    if (!HAS_DB) return;
     Object.assign(process.env, { ACCOUNTS_TOKEN_KEY: ENV.ACCOUNTS_TOKEN_KEY });
     await connectTestDb();
     await Promise.all([ConnectedAccount, ConnectedPost, AccountOAuthState, Video, OutcomeSnapshot].map((m) => m.syncIndexes()));
 });
-after(disconnectTestDb);
+after(async () => { if (HAS_DB) await disconnectTestDb(); });
 
 /** Fake platform: answers by URL; records every request. */
 const fakeFetch = (routes) => {
@@ -268,4 +271,47 @@ test('callback with a denied sign-in or a bad state goes back to the tab with th
     const state = new URL(url).searchParams.get('state');
     assert.match(await A.finishConnect('youtube', { state, error: 'access_denied' }, { env: ENV }), /error=denied/);
     await assert.rejects(A.startConnect(user._id, 'youtube', { env: { ...ENV, YOUTUBE_CLIENT_ID: '' } }), /not available yet/);
+});
+
+test('Facebook provider: Page videos and Reels parse into the shared post shape (no database needed)', async () => {
+    const F = await import('../src/service/accounts/providers/facebook.js');
+    const scope = new URL(F.facebook.authUrl({ state: 's', redirectUri: 'https://api.example.test/cb', env: { FACEBOOK_APP_ID: 'fb-id' } })).searchParams.get('scope');
+    assert.equal(scope, 'pages_show_list,pages_read_engagement,read_insights', 'read-only scopes, no publishing');
+    assert.equal(F.facebook.isConfigured({}), false);
+    assert.equal(F.facebook.isConfigured({ FACEBOOK_APP_ID: 'a', FACEBOOK_APP_SECRET: 'b' }), true);
+
+    const fetchImpl = fakeFetch([
+        ['/oauth/access_token?client_id', { access_token: 'short' }],
+        ['fb_exchange_token', { access_token: 'long', expires_in: 5184000 }],
+        ['/me/permissions', { data: [{ permission: 'pages_show_list', status: 'granted' }, { permission: 'read_insights', status: 'declined' }] }],
+        ['/me/accounts', { data: [{ id: 'p1', name: 'My Page', access_token: 'page-token', followers_count: 900, picture: { data: { url: 'https://img.test/p.jpg' } } }, { id: 'p2', name: 'No token' }] }],
+        ['/me?fields', { id: '77', name: 'Owner' }],
+        ['/p1/video_reels?', { data: [{ id: 'r1', description: 'a reel', created_time: '2026-11-01T10:00:00+0000', length: 14.5, permalink_url: '/reel/r1', likes: { summary: { total_count: 40 } }, comments: { summary: { total_count: 3 } } }] }],
+        ['/p1/videos?', { data: [{ id: 'r1', length: 14.5 }, { id: 'v1', created_time: '2026-10-01T10:00:00+0000', length: 62, permalink_url: 'https://www.facebook.com/p1/videos/v1', shares: { count: 5 } }] }],
+        ['/r1/video_insights', { data: [{ name: 'fb_reels_total_plays', values: [{ value: 5000 }] }, { name: 'post_impressions_unique', values: [{ value: 3100 }] }, { name: 'post_video_avg_time_watched', values: [{ value: 6400 }] }, { name: 'post_video_retention_graph', values: [{ value: { 1: 100, 2: 80.04, 3: 55 } }] }, { name: 'post_video_social_actions', values: [{ value: { comment: 3, share: 9 } }] }] }],
+        ['/v1/video_insights', { data: [{ name: 'total_video_views', values: [{ value: 800 }] }] }],
+    ]);
+    const tokens = await F.facebook.exchangeCode({ code: 'c', redirectUri: 'https://api.example.test/cb', env: { FACEBOOK_APP_ID: 'a', FACEBOOK_APP_SECRET: 'b' }, fetchImpl });
+    assert.equal(tokens.access, 'long');
+    assert.deepEqual(tokens.scopes, ['pages_show_list']);
+    const profile = await F.facebook.profile({ access: 'long', fetchImpl });
+    assert.deepEqual([profile.externalId, profile.displayName, profile.followers], ['77', 'My Page', 900]);
+    const posts = await F.facebook.listPosts({ access: 'long', fetchImpl });
+    assert.equal(posts.length, 2, 'the Reel listed on both edges counts once');
+    const reel = posts.find((p) => p.externalId === 'r1');
+    assert.deepEqual([reel.mediaType, reel.url, reel.durationSec], ['reel', 'https://www.facebook.com/reel/r1', 14.5]);
+    assert.deepEqual([reel.stats.views, reel.stats.reach, reel.stats.avgWatchSec, reel.stats.shares, reel.stats.likes], [5000, 3100, 6.4, 9, 40]);
+    assert.deepEqual(reel.retention, [100, 80, 55]);
+    const video = posts.find((p) => p.externalId === 'v1');
+    assert.deepEqual([video.mediaType, video.stats.views, video.stats.shares, video.stats.avgWatchSec ?? null], ['video', 800, 5, null]);
+    assert.ok(fetchImpl.calls.filter((c) => c.url.includes('video_insights')).every((c) => c.url.includes('access_token=page-token')), 'insights use the Page token');
+});
+
+test('Facebook provider: login-gone answers (code 190, code 10 with a session subcode) ask the user to reconnect', async () => {
+    const F = await import('../src/service/accounts/providers/facebook.js');
+    const answer = (error) => fakeFetch([['/me?fields', { __status: 400, __body: { error } }]]);
+    for (const error of [{ message: 'The user has logged out', type: 'OAuthException', code: 190, error_subcode: 467 }, { message: 'x', code: 10, error_subcode: 460 }, { message: 'y', code: 190 }]) {
+        await assert.rejects(F.facebook.profile({ access: 't', fetchImpl: answer(error) }), (e) => e.reauth === true);
+    }
+    await assert.rejects(F.facebook.profile({ access: 't', fetchImpl: answer({ message: 'Permission denied', code: 10, error_subcode: 1 }) }), (e) => !e.reauth);
 });

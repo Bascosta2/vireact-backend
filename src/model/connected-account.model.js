@@ -8,7 +8,7 @@ import mongoose from 'mongoose';
  * the server: API responses use toPublicAccount().
  */
 
-export const ACCOUNT_PLATFORMS = Object.freeze(['tiktok', 'youtube', 'instagram']);
+export const ACCOUNT_PLATFORMS = Object.freeze(['tiktok', 'youtube', 'instagram', 'facebook']);
 export const ACCOUNT_STATUS = Object.freeze({ ACTIVE: 'active', NEEDS_REAUTH: 'needs_reauth' });
 
 const tokensSchema = new mongoose.Schema({
