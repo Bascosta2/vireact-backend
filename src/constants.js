@@ -104,7 +104,13 @@ export const SUBSCRIPTION_STATUS = {
   ACTIVE: 'active',
   CANCELLED: 'cancelled',
   EXPIRED: 'expired',
-  TRIAL: 'trial'
+  TRIAL: 'trial',
+  // Mirrors of Stripe subscription statuses (see mapStripeStatus in subscription.service).
+  PAST_DUE: 'past_due',
+  UNPAID: 'unpaid',
+  PAUSED: 'paused',
+  INCOMPLETE: 'incomplete',
+  INCOMPLETE_EXPIRED: 'incomplete_expired'
 };
 
 // SUBSCRIPTION PLANS

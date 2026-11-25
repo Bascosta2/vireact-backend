@@ -19,7 +19,10 @@ let seq = 0;
 const fakeStripe = {
     customers: { create: async () => ({ id: `cus_test_${++seq}` }) },
     checkout: { sessions: { create: async (params) => { sessions.push(params); return { id: `cs_test_${++seq}`, url: 'https://checkout.test/session' }; } } },
-    subscriptions: { retrieve: async (id) => stripeSubs.get(id) },
+    subscriptions: {
+        retrieve: async (id) => stripeSubs.get(id),
+        list: async () => ({ data: [] }),
+    },
 };
 
 const newUser = async () => User.create({ name: 'Trial', email: `trial-${Date.now()}-${++seq}@example.invalid`, password: 'pw-123456', isEmailVerified: true });
