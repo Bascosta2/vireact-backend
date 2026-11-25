@@ -1,9 +1,8 @@
 import bcrypt, { compare } from "bcryptjs";
 import mongoose from "mongoose"
-import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } from "../config/index.js";
-import { OAUTH_PROVIDERS, ROLES } from "../constants.js";
+import { signToken, TOKEN_TYPE } from "../utils/jwt.js";
+import { BCRYPT_COST, OAUTH_PROVIDERS, ROLES } from "../constants.js";
 
 const userSchema = new mongoose.Schema({
     name: {
@@ -206,7 +205,7 @@ userSchema.set("toJSON", {
 userSchema.pre("save", async function (next) {
     // Only hash password if it exists and has been modified
     if (this.isModified("password") && this.password) {
-        this.password = await bcrypt.hash(this.password, 10);
+        this.password = await bcrypt.hash(this.password, BCRYPT_COST);
     }
     next();
 });
@@ -223,28 +222,12 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 
 
 userSchema.methods.generateAccessToken = function () {
-    const signOptions = {
-        expiresIn: "30m"
-    };
-
-    return jwt.sign(
-        { _id: this._id, email: this.email },
-        ACCESS_TOKEN_SECRET,
-        signOptions
-    );
+    return signToken(TOKEN_TYPE.ACCESS, { _id: this._id, email: this.email }, "30m");
 };
 
 userSchema.methods.generateRefreshToken = function () {
-    const signOptions = {
-        expiresIn: "30d"
-    };
-
     // jti makes every refresh token unique, even two issued in the same second.
-    return jwt.sign(
-        { _id: this._id, email: this.email, jti: crypto.randomUUID() },
-        REFRESH_TOKEN_SECRET,
-        signOptions
-    );
+    return signToken(TOKEN_TYPE.REFRESH, { _id: this._id, email: this.email, jti: crypto.randomUUID() }, "30d");
 };
 
 // Utility methods for OAuth users

@@ -240,6 +240,24 @@ test('signup reports the email outcome: verificationEmail (detail) next to verif
     }
 });
 
+test('signup ignores a client-supplied provider: email + password accounts are always local', async () => {
+    const save = User.prototype.save;
+    const saved = [];
+    User.prototype.save = async function () { saved.push(this.provider); return this; };
+    try {
+        await withEmailDown(() => withFakeUserModel(unverifiedDoc({ email: 'someone-else@example.invalid' }), async () => {
+            User.findById = () => Promise.resolve({ _id: 'new', generateAccessToken: () => 'access', generateRefreshToken: () => 'refresh' });
+            for (const provider of ['google', 'tiktok', { $ne: null }]) {
+                const body = { role: 'user', name: 'New', email: 'new@example.invalid', password: 'pw-123456', provider };
+                await signup({ body }, fakeRes(), assert.ifError);
+            }
+        }));
+        assert.deepEqual(saved, ['local', 'local', 'local']);
+    } finally {
+        User.prototype.save = save;
+    }
+});
+
 test('signup rejects non-text fields with 400', async () => {
     for (const body of [{ name: { $ne: null }, email: 'a@example.invalid', password: 'pw-123456' }, { name: 'A', email: ['a@example.invalid'], password: 'pw-123456' }]) {
         let err;

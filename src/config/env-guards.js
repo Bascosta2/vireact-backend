@@ -61,6 +61,23 @@ export function assertSafeStripeKey(env = process.env) {
 }
 
 /** Loggable host fragment: first 4 characters of the first label only, e.g. "clus***". */
+/** Shortest accepted ACCESS_TOKEN_SECRET / REFRESH_TOKEN_SECRET (HS256 wants at least 256 bits). */
+export const MIN_JWT_SECRET_LENGTH = 32;
+
+/**
+ * Problems with the JWT signing secrets, as readable sentences (empty when fine). Never includes the values.
+ * REFRESH_TOKEN_SECRET falls back to ACCESS_TOKEN_SECRET when unset (see config/index.js), which counts as "the same".
+ */
+export function jwtSecretProblems(env = process.env) {
+    const access = env.ACCESS_TOKEN_SECRET || '';
+    const refresh = env.REFRESH_TOKEN_SECRET || access;
+    const problems = [];
+    if (access && access === refresh) problems.push('ACCESS_TOKEN_SECRET and REFRESH_TOKEN_SECRET are the same');
+    if (access.length < MIN_JWT_SECRET_LENGTH) problems.push(`ACCESS_TOKEN_SECRET is shorter than ${MIN_JWT_SECRET_LENGTH} characters`);
+    if (refresh.length < MIN_JWT_SECRET_LENGTH) problems.push(`REFRESH_TOKEN_SECRET is shorter than ${MIN_JWT_SECRET_LENGTH} characters`);
+    return problems;
+}
+
 export function redactHost(host) {
     if (!host || typeof host !== 'string') return 'unknown';
     const label = host.split('.')[0] || '';
