@@ -108,10 +108,10 @@ const toStrategyResponse = async (doc, userId) => {
         ...(out.schedule?.slots ?? []).map((slot) => slot.linkedVideoId).filter(Boolean),
     ]);
     const videos = ids.size
-        ? await Video.find({ _id: { $in: [...ids] }, uploader_id: userId }).select('_id filename sourceTitle thumbnailUrl viralityScore actualViews').lean()
+        ? await Video.find({ _id: { $in: [...ids] }, uploader_id: userId }).select('_id filename title sourceTitle thumbnailUrl viralityScore actualViews').lean()
         : [];
     out.videos = Object.fromEntries(videos.map((v) => [String(v._id), {
-        title: v.sourceTitle || v.filename,
+        title: v.title || v.sourceTitle || v.filename,
         thumbnailUrl: v.thumbnailUrl ?? null,
         score: v.viralityScore ?? null,
         actualViews: v.actualViews ?? null,

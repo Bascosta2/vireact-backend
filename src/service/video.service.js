@@ -31,6 +31,7 @@ import { keepForMeasure, measureLater } from './learning/user-media.js';
 import { Readable } from 'stream';
 import path from 'path';
 import { editorKey, isStorageConfigured, storage } from '../lib/storage.js';
+import { VIDEO_SUMMARY_FIELDS, autoTitleFromTranscript } from '../lib/video-summary.js';
 
 /**
  * Twelve Labs takes local files up to 200 MB; links up to 4 GB. Larger uploads (2-3 minute phone
@@ -369,17 +370,18 @@ export const confirmVideoUploadService = async (videoId, userId, fileSize) => {
     }
 };
 
-/** Fields the Home, Library and "analyzing" badge need. Keeps polling cheap as libraries grow. */
-export const VIDEO_SUMMARY_FIELDS = '_id filename thumbnailUrl uploadStatus analysisStatus selectedFeatures viralityScore isAnalysisReady createdAt updatedAt lastError actualViews';
+export { VIDEO_SUMMARY_FIELDS, autoTitleFromTranscript };
 const MAX_SUMMARY_VIDEOS = 500;
 
 export const getUserVideoSummariesService = async (userId) => {
     if (!userId) throw new ApiError(400, 'User ID is required');
-    return Video.find({ uploader_id: userId })
-        .select(VIDEO_SUMMARY_FIELDS)
+    const projection = Object.fromEntries(VIDEO_SUMMARY_FIELDS.split(' ').map((f) => [f, 1]));
+    const rows = await Video.find({ uploader_id: userId })
+        .select({ ...projection, rawTranscript: { $slice: 2 } })
         .sort({ createdAt: -1 })
         .limit(MAX_SUMMARY_VIDEOS)
         .lean();
+    return rows.map(({ rawTranscript, ...v }) => ({ ...v, autoTitle: autoTitleFromTranscript(rawTranscript) }));
 };
 
 /**

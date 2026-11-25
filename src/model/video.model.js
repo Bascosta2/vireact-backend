@@ -390,6 +390,13 @@ const videoSchema = new mongoose.Schema({
         type: String,
         default: null,
     },
+    /** Name the creator gave the video in the app (rename). Shown before any other name. */
+    title: {
+        type: String,
+        default: null,
+        trim: true,
+        maxlength: 100,
+    },
     /** Platform title from yt-dlp metadata when available */
     sourceTitle: {
         type: String,
