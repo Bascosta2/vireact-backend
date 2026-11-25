@@ -4,6 +4,7 @@ import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
 import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
+import { applyBeatSwaps, buildStoryboard, carryStoryboard, cleanSwap, storyboardBlocksExport, storyboardNote, swapBeat } from '../src/service/editor/storyboard.js';
 import { BRAND_FONTS, brandProblem, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
 
 const words = [
@@ -229,4 +230,74 @@ test('split screen: only with the flag, otherwise it falls back to fill', () => 
     assert.equal('detailX' in edlSchemaFor(false).properties.framing.properties, false);
     assert.ok(!edlSchemaFor(false).properties.framing.properties.mode.description.includes('split'));
     assert.equal(validateEdl({ ...plan(), framing: { mode: 'split', focusX: 0.5, detailX: 0.7, detailY: 0.3 } }, ctx).plan.framing.mode, 'fill');
+});
+
+test('storyboard: beats list their graphics and sounds; drop and swap change the render; flag off ignores swaps', async () => {
+    const p = { ...plan(), segments: [{ id: 's1', start: 0.3, end: 2.5, role: 'hook', reason: 'open' }, { id: 's2', start: 3.0, end: 4.8, role: 'payoff', reason: 'close' }], sfx: [{ type: 'ding', at: 3.4 }] };
+    const sb = buildStoryboard(p, {});
+    assert.deepEqual(sb.beats.map((b) => [b.id, b.role, b.graphics.length, b.sounds.length]), [['s1', 'hook', 1, 0], ['s2', 'payoff', 1, 1]]);
+    assert.equal(sb.approved, false);
+    assert.equal(buildStoryboard(p, { disabledSegments: ['s2'], storyboardApproved: true }).beats[1].dropped, true);
+
+    // A swap replaces only that beat's layers.
+    const swaps = { s2: { graphics: [{ type: 'pill', start: 3.2, end: 4.0, text: 'THE CATCH', subtext: '', items: [], focusX: 0.5, focusY: 0.5 }], sfx: [{ type: 'pop', at: 3.2 }], effects: [], why: 'a label instead' } };
+    const swapped = applyBeatSwaps(p, swaps);
+    assert.deepEqual(swapped.graphics.map((g) => g.text), ['AI', 'THE CATCH']);
+    assert.deepEqual(swapped.sfx.map((e) => e.type), ['pop']);
+    assert.equal(buildStoryboard(p, { beatSwaps: swaps }).beats[1].swapped, true);
+    const withFlag = buildRenderProps(p, { beatSwaps: swaps }, { ...media(null), v2: true }, { density: null });
+    assert.ok(withFlag.graphics.some((g) => g.text === 'THE CATCH'));
+    assert.ok(!withFlag.graphics.some((g) => g.text === 'Cuts everything'));
+    assert.ok(!buildRenderProps(p, { beatSwaps: swaps }, media(null), { density: null }).graphics.some((g) => g.text === 'THE CATCH'));
+
+    // Edits are only stored with the flag, and only for real beats.
+    assert.equal('storyboardApproved' in sanitizeEdits({ storyboardApproved: true }), false);
+    assert.equal(sanitizeEdits({ storyboardApproved: true }, { v2: true }).storyboardApproved, true);
+    // A PATCH can never write swapped beats or their counters.
+    assert.equal('beatSwaps' in sanitizeEdits({ beatSwaps: swaps, swapsUsed: 0 }, { v2: true }), false);
+    assert.equal('swapsUsed' in sanitizeEdits({ swapsUsed: 0 }, { v2: true }), false);
+
+    // The planner's alternative for one beat is cleaned against that beat's range.
+    const seg = p.segments[1];
+    const clean = cleanSwap({ why: 'x', graphics: [{ type: 'pill', start: 3.5, end: 4, text: 'IN', subtext: '', items: '', focusX: 0.5, focusY: 0.5 }, { type: 'pill', start: 1, end: 2, text: 'OUT', subtext: '', items: '', focusX: 0.5, focusY: 0.5 }], beats: [{ type: 'ding', at: 3.5 }, { type: 'shake', at: 3.6 }, { type: 'ding', at: 0.5 }, { type: 'nonsense', at: 3.7 }] }, seg);
+    assert.deepEqual([clean.graphics.map((g) => g.text), clean.sfx.length, clean.effects.length], [['IN'], 1, 1]);
+    let asked = null;
+    const swap = await swapBeat({ plan: p, edits: {}, words, segmentId: 's2' }, { request: async (a) => { asked = a; return { data: { why: 'new', graphics: [], beats: [{ type: 'pop', at: 3.3 }] }, generationId: 'g1' }; } });
+    assert.equal(asked.label, 'editor_beat_swap');
+    assert.match(asked.messages[0].content, /BEAT s2/);
+    assert.equal(await swapBeat({ plan: p, words, segmentId: 'nope' }, { request: async () => ({}) }), null);
+});
+
+test('storyboard: a regenerate keeps dropped and swapped beats and asks for approval again', () => {
+    const oldPlan = { ...plan(), segments: [{ id: 's1', start: 0, end: 2, role: 'hook', reason: '' }, { id: 's2', start: 3, end: 5, role: 'body', reason: '' }, { id: 's3', start: 6, end: 8, role: 'payoff', reason: '' }] };
+    const oldEdits = { disabledSegments: ['s2'], beatSwaps: { s3: { graphics: [], sfx: [], effects: [], why: 'mine' } }, storyboardApproved: true };
+    const newPlan = { segments: [{ id: 's1', start: 0.1, end: 1.9, role: 'hook' }, { id: 's2', start: 3.1, end: 4.9, role: 'body' }, { id: 's3', start: 5.9, end: 8, role: 'payoff' }] };
+    const kept = carryStoryboard(oldPlan, oldEdits, newPlan);
+    assert.deepEqual(kept.disabledSegments, ['s2']);
+    assert.deepEqual(Object.keys(kept.beatSwaps), ['s3']);
+    assert.equal(kept.storyboardApproved, false);
+    assert.match(storyboardNote(oldPlan, oldEdits), /DROPPED[^]*3-5s[^]*6-8s/);
+    assert.equal(storyboardNote(oldPlan, {}), '');
+});
+
+test('storyboard: swap cleaning, carry rules and export gate', () => {
+    const seg = { id: 's', start: 3, end: 5 };
+    const g = (start, end, text) => ({ type: 'pill', start, end, text, subtext: '', items: '', focusX: 0.5, focusY: 0.5 });
+    const c = cleanSwap({ graphics: [g(3.1, 9, 'A'), g(3.5, 4.5, 'OVERLAP'), g(4.6, 5.5, 'B')], beats: [{ type: 'ding', at: 3.2 }, { type: 'pop', at: 3.4 }, { type: 'ding', at: 4 }, { type: 'ding', at: 5.5 }] }, seg);
+    assert.deepEqual(c.graphics.map((x) => x.text), ['A']);
+    assert.ok(c.graphics.every((x) => x.end <= 5));
+    assert.deepEqual(c.sfx.map((x) => x.at), [3.2, 4]);
+    // Carry: a new beat covering half of a dropped one is dropped too; times follow the new beat; all dropped = none dropped.
+    const oldPlan = { segments: [{ id: 'a', start: 0, end: 4 }, { id: 'b', start: 5, end: 9 }] };
+    const sw = { graphics: [{ ...g(5.5, 8, 'X'), items: [] }], sfx: [{ type: 'pop', at: 8.5 }], effects: [], why: '' };
+    const kept = carryStoryboard(oldPlan, { disabledSegments: ['a'], beatSwaps: { b: sw } }, { segments: [{ id: 'n1', start: 0, end: 10 }, { id: 'n2', start: 5, end: 7 }] });
+    assert.deepEqual(kept.disabledSegments, ['n1']);
+    assert.deepEqual([kept.beatSwaps.n2.graphics[0].end, kept.beatSwaps.n2.sfx.length], [7, 0]);
+    assert.deepEqual(carryStoryboard(oldPlan, { disabledSegments: ['a', 'b'] }, { segments: [{ id: 'n1', start: 0, end: 4 }, { id: 'n2', start: 5, end: 9 }] }).disabledSegments, []);
+    assert.equal(kept.storyboardApproved, false);
+    // Export: only an explicit "not approved" blocks; edits from before the review keep exporting.
+    assert.equal(storyboardBlocksExport({}, true), false);
+    assert.equal(storyboardBlocksExport({ storyboardApproved: false }, true), true);
+    assert.equal(storyboardBlocksExport({ storyboardApproved: true }, true), false);
+    assert.equal(storyboardBlocksExport({ storyboardApproved: false }, false), false);
 });
