@@ -1,0 +1,5516 @@
+[
+ {
+  "id": "blueprint",
+  "name": "Blueprint",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "product"
+  ],
+  "source": "lemo-opuscar \"blueprint\"; its-applied-ai #23 Blueprint, #67",
+  "accent": "#FFD166",
+  "fonts": [
+   [
+    "BigShoulders",
+    "800"
+   ],
+   [
+    "IBMPlexMono",
+    "500"
+   ]
+  ],
+  "tagline": "An engineering drawing that draws itself: white line work on Prussian blue, with you explaining from a detail-view bubble.",
+  "bestFor": "How things work, engineering, product breakdowns, building and making",
+  "look": "cyanotype blueprint paper: white technical line work on Prussian blue, a fine grid, construction circles, centre lines, hatching and dimension arrows, one yellow accent",
+  "motion": "drafting order: construction lines first, then the part, then dimensions; a gear turns, an arm flexes, nothing bounces",
+  "hookRule": "like the title block of a drawing (\"ROBOT ARM / CONCEPT STUDY\")",
+  "graphicsRule": "Lists read as build steps, counters as measured values, charts as hatched bars. Headlines name each part. At most 1 slam.",
+  "ambient": "A blueprint sheet with a turning gear and a robot arm drawn line by line, dimensions and a title block.",
+  "captions": "Condensed capitals in white chalk-blue, emphasis in yellow, written on left to right.",
+  "hook": "A title block box with a heavy shadow, written in.",
+  "graphics": "Cards outlined like detail views, numbered square markers, hatched bar charts, corner brackets for callouts.",
+  "transition": "A bright drafting line scans down the sheet.",
+  "sound": "Pencil taps and page sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: engineering",
+   "hook": [
+    "How a robot arm",
+    "actually moves"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "whiteboard",
+  "name": "Whiteboard",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "lemo-opuscar \"whiteboard\"",
+  "accent": "#E5383B",
+  "fonts": [
+   [
+    "Caveat",
+    "700"
+   ],
+   [
+    "Caveat",
+    "500"
+   ]
+  ],
+  "tagline": "A glossy whiteboard that fills with marker diagrams as you talk: boxes, arrows and underlines written stroke by stroke.",
+  "bestFor": "Business explainers, strategy, frameworks and classroom lessons",
+  "look": "a glossy dry-erase whiteboard in an aluminium frame: black, blue and red marker handwriting and diagrams, ghosts of erased marks, a marker tray",
+  "motion": "written live: every line and word draws itself stroke by stroke; an eraser wipes the board at each jump",
+  "hookRule": "like a title written at the top of the board (\"The 3-step funnel\")",
+  "graphicsRule": "Lists as numbered board points, headlines as boxed board titles, charts as hand-drawn bars, callouts as marker circles. At most 1 slam.",
+  "ambient": "A whiteboard with a flowchart, a rising arrow and a scribbled graph drawn in marker, a tray of markers and erased ghosts.",
+  "captions": "Handwritten marker words in black, emphasis in red.",
+  "hook": "Written at the top of the board in blue marker, underlined twice.",
+  "graphics": "Cards outlined in marker, numbered circles, marker loops for callouts, hand-drawn bar charts.",
+  "transition": "A felt eraser wipes across the board.",
+  "sound": "Marker squeaks (taps) and a soft swish for the eraser.",
+  "sfx": "chalk",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: business",
+   "hook": [
+    "The 3-step",
+    "growth plan"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "sketchnote",
+  "name": "Sketchnote",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "lemo-opuscar \"sketchnote\"",
+  "accent": "#FFD23F",
+  "fonts": [
+   [
+    "GochiHand",
+    "400"
+   ],
+   [
+    "Kalam",
+    "400"
+   ]
+  ],
+  "tagline": "Visual notes on dot-grid paper, drawn while you talk: fineliner doodles, grey marker shading and a yellow highlighter.",
+  "bestFor": "Book summaries, lessons, productivity, notes and study videos",
+  "look": "a page of visual notes on dot-grid paper: black fineliner drawings and lettering, grey marker shadows, one yellow highlighter, banners, arrows and icons",
+  "motion": "drawn while you watch: the pen writes, the marker shades, the highlighter swipes; calm and steady",
+  "hookRule": "like the banner title at the top of a notes page (\"Atomic Habits in 60s\")",
+  "graphicsRule": "Lists as bulleted notes, headlines as banners, counters as circled numbers, charts as sketched bars. At most 1 slam.",
+  "ambient": "A dot-grid page that fills with a light bulb, banners, arrows and boxes, shaded in grey with yellow highlights.",
+  "captions": "Hand lettering in black ink with a yellow highlighter swipe behind emphasis words.",
+  "hook": "A ribbon banner drawn across the top.",
+  "graphics": "Cards as boxed notes with a drop shadow in grey marker, hand-drawn stars, highlighter bars.",
+  "transition": "At each jump in the edit: the page turns.",
+  "sound": "Pen taps and page turns.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: book notes",
+   "hook": [
+    "Atomic Habits",
+    "in 60 seconds"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "marker-pad",
+  "name": "Marker Pad",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "data"
+  ],
+  "source": "lemo-opuscar \"marker-paper\"",
+  "accent": "#1F6FEB",
+  "fonts": [
+   [
+    "PermanentMarker",
+    "400"
+   ],
+   [
+    "ArchitectsDaughter",
+    "400"
+   ]
+  ],
+  "tagline": "A big pad of white paper and three markers: black for the idea, blue for what we know, red for what we do not.",
+  "bestFor": "Reasoning, maths, science, finance and any \"let me show you\" explanation",
+  "look": "a pad of matte white paper on a binding, drawn with one black bullet-tip marker, with blue for known facts and red for unknowns or warnings",
+  "motion": "drawn by hand, line by line; the page flips up at each jump",
+  "hookRule": "like a question written in marker at the top of the pad (\"Why do prices rise?\")",
+  "graphicsRule": "Counters and charts carry numbers (blue for known, red for unknown). Lists as marker bullets. At most 1 slam.",
+  "ambient": "A paper pad with a number line, blue circles for what is known, red question marks and arrows between them.",
+  "captions": "Bold marker capitals in black, emphasis in blue.",
+  "hook": "Written in black marker at the top of the page with a red underline.",
+  "graphics": "Cards drawn as marker boxes, check marks, loops for callouts, bars filled with marker hatching.",
+  "transition": "The sheet flips up over the binding.",
+  "sound": "Marker taps and page flips.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: maths",
+   "hook": [
+    "Why do",
+    "prices rise?"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "tablet-sketch",
+  "name": "Tablet Sketch",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "art"
+  ],
+  "source": "lemo-opuscar \"ipad-sketch\"",
+  "accent": "#FF6B6B",
+  "fonts": [
+   [
+    "Mali",
+    "700"
+   ],
+   [
+    "Mali",
+    "500"
+   ]
+  ],
+  "tagline": "A drawing app on a tablet: pencil lines go down first, then flat colour fills in, while you talk over it.",
+  "bestFor": "Design, illustration, creative tutorials, explainers with drawings",
+  "look": "a cream drawing canvas inside a dark tablet bezel with a slim tool bar: grainy pencil lines first, then flat colour blocks filling in",
+  "motion": "like someone drawing live: a stylus cursor moves, strokes appear, colours fill",
+  "hookRule": "like a canvas name in a drawing app (\"Sketch 01: the logo\")",
+  "graphicsRule": "Headlines as layer names, lists as steps, counters in the accent colour. At most 1 slam.",
+  "ambient": "A tablet canvas where a pencil sketch of a house and sun is drawn, then filled with flat colour, with tools on the side.",
+  "captions": "Rounded hand-made lettering in charcoal, emphasis in coral.",
+  "hook": "A rounded canvas-title chip at the top.",
+  "graphics": "Cards as floating panels with soft shadows, colour-swatch markers.",
+  "transition": "A brush stroke sweeps across the canvas.",
+  "sound": "Soft pops and pencil taps.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: design",
+   "hook": [
+    "Draw a logo",
+    "in 3 shapes"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "iso-infographic",
+  "name": "Isometric Infographic",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "data"
+  ],
+  "source": "lemo-opuscar \"iso-infographic\"; its-applied-ai #1, #19, #28",
+  "accent": "#FF8A3D",
+  "fonts": [
+   [
+    "Sora",
+    "800"
+   ],
+   [
+    "Sora",
+    "500"
+   ]
+  ],
+  "tagline": "A system explained as a tiny isometric world: blocks, labels and a glowing packet travelling the route as you talk.",
+  "bestFor": "Tech explainers, supply chains, \"how does X get to you\", processes",
+  "look": "an isometric diorama of flat three-tone blocks on a cream ground with thin ink labels: a phone, a tower, cables and a data centre, a glowing packet running between them",
+  "motion": "clean and procedural: blocks rise into place, a packet travels the route, labels pop on as it arrives",
+  "hookRule": "like a diagram title (\"How a message / reaches your friend\")",
+  "graphicsRule": "Lists as route stops, counters for each stage, charts as block stacks. At most 1 slam.",
+  "ambient": "An isometric route from a phone to a tower to a data centre with a glowing packet and labels.",
+  "captions": "Clean geometric sans in ink, emphasis in orange.",
+  "hook": "A white label card with an orange top edge.",
+  "graphics": "Cards as flat isometric tiles, numbered dots, orange callout rings.",
+  "transition": "Blinds of cream tiles close and open.",
+  "sound": "Clicks, blips and soft pops.",
+  "sfx": "digital",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: tech",
+   "hook": [
+    "How a message",
+    "reaches you"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "assembly-manual",
+  "name": "Assembly Manual",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "product"
+  ],
+  "source": "lemo-opuscar \"instruction-manual\"",
+  "accent": "#111111",
+  "fonts": [
+   [
+    "BarlowCondensed",
+    "700"
+   ],
+   [
+    "Barlow",
+    "500"
+   ]
+  ],
+  "tagline": "Your explanation as a printed assembly manual: numbered steps, black isometric line art and little arrows.",
+  "bestFor": "Step-by-step guides, setups, recipes, how-to videos",
+  "look": "a printed assembly manual: one off-white sheet, black line art in true isometric, flat white parts, faceless figures, step numbers in circles and motion arrows",
+  "motion": "step by step: each part slides into place along its arrow, then the next step number appears",
+  "hookRule": "like the manual cover (\"Set up / in 4 steps\")",
+  "graphicsRule": "Lists are the steps (numbered), headlines are step titles, callouts point at parts. No slams.",
+  "ambient": "A manual sheet where parts slide together along arrows in numbered steps.",
+  "captions": "Condensed black capitals, emphasis boxed in black.",
+  "hook": "A black header band like the manual cover.",
+  "graphics": "Cards as white panels with a thick black outline, big step numbers.",
+  "transition": "The page slides like the next sheet.",
+  "sound": "Clicks and snaps.",
+  "sfx": "mechanical",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: how-to",
+   "hook": [
+    "Set it up",
+    "in 4 steps"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  },
+  "drop": [
+   "slam"
+  ]
+ },
+ {
+  "id": "technical-drawing",
+  "name": "Technical Drawing",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "product"
+  ],
+  "source": "lemo-opuscar \"hardcore-info\", \"precise-mechanism\"; its-applied-ai #53, #73 exploded views",
+  "accent": "#E4572E",
+  "fonts": [
+   [
+    "SpaceMono",
+    "700"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "A mechanism drawn in fine black line on warm paper, coming apart into an exploded view with numbered callouts.",
+  "bestFor": "Products, mechanisms, anatomy of things, engineering and teardown explainers",
+  "look": "a black-line technical drawing on warm white paper: a pocket watch drawn in fine line, coming apart along one axis into an exploded view, leader lines to numbered balloons, section hatching, one orange accent",
+  "motion": "precise and slow: parts separate evenly along an axis, leaders draw out, numbers appear",
+  "hookRule": "like a drawing caption (\"Inside a watch: / 6 parts\")",
+  "graphicsRule": "Lists as parts lists (numbered balloons), counters as measurements, callouts as leaders. At most 1 slam.",
+  "ambient": "A pocket watch drawn in line that explodes into case, dial, hands and gears with numbered leaders.",
+  "captions": "Monospace capitals in black, emphasis in orange.",
+  "hook": "The hook is a ruled caption box, typed in, on screen from the first frame.",
+  "graphics": "Cards as ruled boxes, numbered balloons, leader-line callouts.",
+  "transition": "A fast scan line redraws the sheet.",
+  "sound": "Ticks and clicks.",
+  "sfx": "mechanical",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: product",
+   "hook": [
+    "Inside a watch:",
+    "6 parts"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "stick-figures",
+  "name": "Stick Figures",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"stick-explainer\"; its-applied-ai #42 Stickman",
+  "accent": "#E63946",
+  "fonts": [
+   [
+    "GochiHand",
+    "400"
+   ],
+   [
+    "IndieFlower",
+    "400"
+   ]
+  ],
+  "tagline": "Plain stick people on notebook paper acting out your idea, with one red accent and hand-written notes.",
+  "bestFor": "Life lessons, psychology, relationships, simple explanations of how people behave",
+  "look": "plain stick people drawn in black pen on lined notebook paper with a red margin, one red accent colour, speech marks and scribbled arrows",
+  "motion": "wobbly hand-drawn lines that boil slightly; figures wave, jump, point and react",
+  "hookRule": "like a scribbled note at the top of the page (\"Why we put things off\")",
+  "graphicsRule": "Lists as scribbled bullet points, headlines as notes, counters circled in red. At most 1 slam.",
+  "ambient": "A notebook page where stick figures stand on a line, wave, jump and react.",
+  "captions": "Handwriting in black pen, emphasis in red.",
+  "hook": "Scribbled at the top of the page and circled in red.",
+  "graphics": "Cards as torn notebook scraps, scribbled ticks, red pen loops.",
+  "transition": "At each jump in the edit: the page tears away.",
+  "sound": "Pen taps and paper sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: psychology",
+   "hook": [
+    "Why we put",
+    "things off"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "flat-space",
+  "name": "Flat Space",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "motion"
+  ],
+  "source": "lemo-opuscar \"flat-space-explainer\"; its-applied-ai #22 Cartoon explainer (sunlight)",
+  "accent": "#FFC857",
+  "fonts": [
+   [
+    "Lexend",
+    "800"
+   ],
+   [
+    "Lexend",
+    "400"
+   ]
+  ],
+  "tagline": "Space explained in flat shapes on night blue: planets with hard-edged glow rings, orbits and a tiny rocket.",
+  "bestFor": "Space, physics, science and astronomy explainers",
+  "look": "solid flat shapes on a deep night-blue ground: planets with one shade step and hard-edged ring glows, dotted orbits, small stars and a tiny rocket",
+  "motion": "calm orbital motion: planets turn, the rocket follows its path, glows pulse in steps",
+  "hookRule": "like a planetarium title (\"How far away / is the Sun?\")",
+  "graphicsRule": "Counters for distances and sizes, charts for comparisons, lists for facts. At most 1 slam.",
+  "ambient": "A flat solar system with ringed glows, dotted orbits and a rocket on its way.",
+  "captions": "Rounded geometric sans in white, emphasis in sun yellow.",
+  "hook": "The hook is a pill with a planet icon, on screen from the first frame.",
+  "graphics": "Cards as dark-blue panels with a ring glow, planet-dot markers.",
+  "transition": "An iris closes like an eclipse.",
+  "sound": "Soft chimes and sweeps.",
+  "sfx": "sci",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: space",
+   "hook": [
+    "How far away",
+    "is the Sun?"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "oscilloscope",
+  "name": "Oscilloscope",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "retro",
+   "music"
+  ],
+  "source": "lemo-opuscar \"oscilloscope-math\"; its-applied-ai #6 maths diagram, #30",
+  "accent": "#7CFF6B",
+  "fonts": [
+   [
+    "ShareTechMono",
+    "400"
+   ],
+   [
+    "IBMPlexMono",
+    "500"
+   ]
+  ],
+  "tagline": "Maths and signals drawn by an electron beam: glowing green traces on a phosphor screen that move with your voice.",
+  "bestFor": "Maths, physics, audio, engineering and science explainers",
+  "look": "an oscilloscope screen: thin glowing green traces on near-black, a dotted graticule, monospace readouts, the creator seen in a green phosphor inset",
+  "motion": "the beam draws curves that wobble with the voice; readouts tick; everything glows and fades like phosphor",
+  "hookRule": "like a scope readout (\"CH1: the golden ratio\")",
+  "graphicsRule": "Counters as readouts, charts as glowing bar traces, lists as readout lines. At most 1 slam.",
+  "ambient": "A scope screen with Lissajous curves and a sine wave that move as you speak, readouts in the corners.",
+  "captions": "Green monospace with a glow, emphasis brighter.",
+  "hook": "A readout box with a blinking cursor, typed in.",
+  "graphics": "Cards as screen insets with a green outline, readout markers.",
+  "transition": "The trace collapses to a dot and expands again.",
+  "sound": "Blips and pulses.",
+  "sfx": "sci",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: maths",
+   "hook": [
+    "CH1: the",
+    "golden ratio"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "circuit-board",
+  "name": "Circuit Board",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "product",
+   "motion"
+  ],
+  "source": "lemo-opuscar \"circuit-board\"; its-applied-ai #59",
+  "accent": "#FFC94D",
+  "fonts": [
+   [
+    "Tektur",
+    "700"
+   ],
+   [
+    "ShareTechMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your idea as a circuit board seen from above: copper traces, pulses of light racing to a chip, and you inside the chip.",
+  "bestFor": "Tech, AI, computing and \"how the system works\" explainers",
+  "look": "a dark green printed circuit board from straight above with a fine weave, copper traces, silkscreen labels (R12, U1, C7) and pulses of light travelling to a central chip",
+  "motion": "pulses run along traces to the chip, which brightens; labels and LEDs blink",
+  "hookRule": "like a chip label (\"AI-1 / how it thinks\")",
+  "graphicsRule": "Lists as signal paths, counters as readouts, charts as LED bars. At most 1 slam.",
+  "ambient": "A PCB with traces, resistors, LEDs and pulses running to a central chip.",
+  "captions": "Technical capitals in white silkscreen, emphasis in gold.",
+  "hook": "The hook is a silkscreen label box, on screen from the first frame.",
+  "graphics": "Cards as chip packages with pins, LED markers.",
+  "transition": "A pulse races across the board.",
+  "sound": "Blips and zaps.",
+  "sfx": "digital",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: AI",
+   "hook": [
+    "AI-1:",
+    "how it thinks"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "factory-cutaway",
+  "name": "Factory Cutaway",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "data"
+  ],
+  "source": "lemo-opuscar \"assembly-line-diagram\"",
+  "accent": "#FF5A36",
+  "fonts": [
+   [
+    "Barlow",
+    "800"
+   ],
+   [
+    "Barlow",
+    "500"
+   ]
+  ],
+  "tagline": "A process explained as a factory cut open like a doll's house: rooms, conveyors, pipes and little crates moving through.",
+  "bestFor": "Processes, the body, businesses, supply chains, \"what happens inside\"",
+  "look": "a building cut open in elevation into rooms: conveyor belts, gears, pipes and machines, small crates moving room to room, flat colours with dark outlines",
+  "motion": "mechanical and busy: belts run, gears turn, crates move from room to room in a loop",
+  "hookRule": "like a sign over the factory door (\"Inside your gut\")",
+  "graphicsRule": "Lists as stations, counters as gauges, charts as stacked crates. At most 1 slam.",
+  "ambient": "A cut-open factory with conveyors, gears and crates moving between rooms.",
+  "captions": "Bold condensed sans in white on dark, emphasis in orange.",
+  "hook": "The hook is a painted sign plate, on screen from the first frame.",
+  "graphics": "Cards as riveted metal plates, gear markers.",
+  "transition": "At each jump in the edit: shutters roll down and up.",
+  "sound": "Clanks (thuds) and clicks.",
+  "sfx": "mechanical",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: process",
+   "hook": [
+    "Inside",
+    "your gut"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "transit-map",
+  "name": "Transit Map",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "data"
+  ],
+  "source": "lemo-opuscar \"transit-map\"",
+  "accent": "#E63946",
+  "fonts": [
+   [
+    "Inter",
+    "800"
+   ],
+   [
+    "Inter",
+    "500"
+   ]
+  ],
+  "tagline": "Your explanation as a metro map: coloured lines at 45 degrees, white stops, interchanges and trains running the routes.",
+  "bestFor": "Journeys, timelines, processes, career paths and \"how to get from A to B\"",
+  "look": "a metro schematic printed on paper: lines held to eight directions, white stops, black-outlined interchange capsules, water as flat blue, small trains running",
+  "motion": "trains run along the lines; stops light up in turn; lines draw themselves",
+  "hookRule": "like a line name (\"The Founder Line / 5 stops\")",
+  "graphicsRule": "Lists as stops on a line, headlines as station names, charts as line lengths. At most 1 slam.",
+  "ambient": "A metro map with four coloured lines, interchanges, a river and moving trains.",
+  "captions": "Clean sans in black, emphasis in red.",
+  "hook": "A station sign with a coloured line bar.",
+  "graphics": "Cards as station signs, stop-circle markers.",
+  "transition": "At each jump in the edit: a coloured line sweeps across.",
+  "sound": "Chimes and clicks.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: journey",
+   "hook": [
+    "The founder line:",
+    "5 stops"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "relief-map",
+  "name": "Relief Map",
+  "layout": "story",
+  "category": "explainer",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"map-explainer\"",
+  "accent": "#FFB347",
+  "fonts": [
+   [
+    "Gloock",
+    "400"
+   ],
+   [
+    "Inter",
+    "500"
+   ]
+  ],
+  "tagline": "A raised relief map lit by a low sun: mountains, rivers and a sea, the camera gliding over it while you narrate.",
+  "bestFor": "Geography, history, travel, wars and \"why the world looks like this\"",
+  "look": "a raised relief map with vertical exaggeration: hypsometric colour bands from green lowland to snowy peaks, a river, a sea shaded by depth, lit by one warm low sun",
+  "motion": "slow aerial glides over the terrain; contour lines and labels draw in",
+  "hookRule": "like the title of a documentary map (\"Why Egypt / is the Nile\")",
+  "graphicsRule": "Headlines as place labels, counters for distances and heights. No callouts (no footage).",
+  "ambient": "A relief map with contour bands, a winding river and a sea, place labels appearing.",
+  "captions": "Serif display capitals in white with a shadow, emphasis in amber.",
+  "hook": "The hook is a map title cartouche, on screen from the first frame.",
+  "graphics": "Cards as map legends, pin markers.",
+  "transition": "The camera tilts down and glides on.",
+  "sound": "Soft sweeps.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: geography",
+   "hook": [
+    "Why Egypt",
+    "is the Nile"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "paper-map",
+  "name": "Paper Map",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "news",
+   "art"
+  ],
+  "source": "lemo-opuscar \"comic-history\"",
+  "accent": "#B23A48",
+  "fonts": [
+   [
+    "IMFellEnglish",
+    "400"
+   ],
+   [
+    "OldStandardTT",
+    "400"
+   ]
+  ],
+  "tagline": "History told on a printed paper map: paper puppet pieces on brass pins, red string between places, a compass rose.",
+  "bestFor": "History, geopolitics, wars, empires and travel stories",
+  "look": "a printed paper map with cut-paper puppet pieces held by brass split pins, red string between places, a compass rose, old serif lettering",
+  "motion": "paper pieces wobble on their pins and slide across the map; string draws between pins",
+  "hookRule": "like an old map title (\"The empire / that ran out of maps\")",
+  "graphicsRule": "Lists as dated events, headlines as place labels, counters as years or armies. At most 1 slam.",
+  "ambient": "An old paper map with paper puppet pieces on pins, red string and a compass rose.",
+  "captions": "Old-style serif in dark ink, emphasis in red.",
+  "hook": "The hook is a ribbon cartouche, on screen from the first frame.",
+  "graphics": "Cards as paper labels pinned to the map, pin markers.",
+  "transition": "A sheet of map paper slides over.",
+  "sound": "Paper and page sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: history",
+   "hook": [
+    "The empire that",
+    "ran out of maps"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "pen-plotter",
+  "name": "Pen Plotter",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "art",
+   "data"
+  ],
+  "source": "lemo-opuscar \"pen-plotter\"",
+  "accent": "#2B59C3",
+  "fonts": [
+   [
+    "DMMono",
+    "500"
+   ],
+   [
+    "DMMono",
+    "400"
+   ]
+  ],
+  "tagline": "A pen plotter draws your idea on paper one stroke at a time: the carriage moving, real ink lines appearing.",
+  "bestFor": "Data, maps, generative art, maths and calm explainers",
+  "look": "a pen plotter on a desk drawing on white paper: a gantry and pen carriage moving, fine ink lines in black and blue appearing one stroke at a time",
+  "motion": "mechanical and exact: the carriage travels, the pen lifts and drops, lines appear at the pen tip",
+  "hookRule": "like a plot file name (\"plot_01: / the spiral\")",
+  "graphicsRule": "Charts suit it best (plotted bars), then counters and lists. At most 1 slam.",
+  "ambient": "A plotter carriage drawing a spiral and a chart line by line on paper.",
+  "captions": "Monospace in ink, emphasis in blue.",
+  "hook": "The hook is a paper tag typed in, on screen from the first frame.",
+  "graphics": "Cards as paper sheets with hairline borders, plus-sign markers.",
+  "transition": "The carriage sweeps across the sheet.",
+  "sound": "Ticks and motor whirs (sweeps).",
+  "sfx": "mechanical",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: data art",
+   "hook": [
+    "plot_01:",
+    "the spiral"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "microscope",
+  "name": "Microscope",
+  "layout": "window",
+  "category": "explainer",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"microscope\"",
+  "accent": "#7FE3C8",
+  "fonts": [
+   [
+    "IBMPlexMono",
+    "600"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage seen down a microscope: a round eyepiece view, a scale bar, a specimen label and focus pulls at each cut.",
+  "bestFor": "Science, biology, close-ups, food, nature and \"look closer\" videos",
+  "look": "the footage seen through a round microscope eyepiece in a black field: a soft edge, a scale bar, a specimen label and stage readouts",
+  "motion": "clinical and calm: the view drifts slightly, focus pulls blur and sharpen at each jump",
+  "hookRule": "like a specimen label (\"Sample 04: / your morning coffee\")",
+  "graphicsRule": "Callouts point at things inside the eyepiece, counters as measurements, lists as observations. At most 1 slam.",
+  "ambient": "A black field with a round eyepiece, scale bar, crosshair ticks and readouts.",
+  "captions": "Monospace in mint, emphasis brighter.",
+  "hook": "The hook is a specimen slide label, on screen from the first frame.",
+  "graphics": "Cards as lab labels, reticle callouts.",
+  "transition": "A focus pull: blur in, sharpen out.",
+  "sound": "Soft clicks and blips.",
+  "sfx": "minimal",
+  "cover": {
+   "base": "talking",
+   "shown": "Any footage: close-up",
+   "hook": [
+    "Sample 04:",
+    "your coffee"
+   ],
+   "lines": [
+    "look",
+    "closer at",
+    "the crema*",
+    "see that*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "physics-lab",
+  "name": "Physics Lab",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "motion"
+  ],
+  "source": "its-applied-ai #8 Domino Reveal, #14 Galton Board, #56 Physics Smash, #78 Marble Run, #74 Chain Reaction (react-three-rapier, opus-video-prompts)",
+  "accent": "#E85D3A",
+  "fonts": [
+   [
+    "Unbounded",
+    "700"
+   ],
+   [
+    "Inter",
+    "600"
+   ]
+  ],
+  "tagline": "A warm physics lab behind you: dominoes topple, balls pour through a Galton board into a bell curve, marbles run.",
+  "bestFor": "Science, probability, cause and effect, systems and \"one thing leads to another\" stories",
+  "look": "a warm beige studio floor with physics running on it: a domino line toppling, a Galton board pouring balls into a bell curve, marbles rolling down a ramp, soft shadows",
+  "motion": "real-feeling physics on a loop: things fall, bounce and settle; steady and satisfying",
+  "hookRule": "like an experiment title (\"Experiment 1: / chance\")",
+  "graphicsRule": "Charts suit it (the bell curve), counters for results, lists for steps. At most 1 slam.",
+  "ambient": "Dominoes toppling, a Galton board making a bell curve, marbles rolling, all on a beige floor.",
+  "captions": "Bold rounded sans in charcoal, emphasis in red-orange.",
+  "hook": "The hook is a lab label on a beige card, on screen from the first frame.",
+  "graphics": "Cards as cream lab cards, ball markers, red rings.",
+  "transition": "A ball rolls across and knocks the frame on.",
+  "sound": "Clacks (clicks), pops and dings.",
+  "sfx": "mechanical",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: science",
+   "hook": [
+    "Experiment 1:",
+    "chance"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "crowd-sim",
+  "name": "Crowd Sim",
+  "layout": "explainer",
+  "category": "explainer",
+  "tags": [
+   "data",
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"pip-simulation\"",
+  "accent": "#F25C54",
+  "fonts": [
+   [
+    "Nunito",
+    "900"
+   ],
+   [
+    "Nunito",
+    "600"
+   ]
+  ],
+  "tagline": "A crowd of tiny round characters running a simulation on a paper lab board: spreading, gathering, choosing.",
+  "bestFor": "Epidemics, markets, evolution, game theory, social behaviour and statistics",
+  "look": "a warm paper lab board with a crowd of tiny round characters flocking, colour spreading from one to the next, simple zones and counters",
+  "motion": "a living simulation: the crowd flocks and swirls, a colour spreads through it, counters tick",
+  "hookRule": "like a simulation title (\"What if / 1 person shares?\")",
+  "graphicsRule": "Counters and charts are the results, lists are the rules. At most 1 slam.",
+  "ambient": "Hundreds of little round characters flocking on a paper board as a colour spreads through them.",
+  "captions": "Chunky rounded sans in ink, emphasis in red.",
+  "hook": "The hook is a lab-board label, on screen from the first frame.",
+  "graphics": "Cards as paper cards with rounded corners, dot markers.",
+  "transition": "The crowd scatters across the frame.",
+  "sound": "Pops and bubbles.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: statistics",
+   "hook": [
+    "What if 1",
+    "person shares?"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "mascot-explainer",
+  "name": "Mascot Explainer",
+  "layout": "footage",
+  "category": "cartoon",
+  "tags": [
+   "talking-head",
+   "explainer"
+  ],
+  "source": "ClaudeAnimationBase (emotions grid, reactions; its-applied-ai #7, #75-77, #31) with an original mascot, not the repo's character",
+  "accent": "#2EC4B6",
+  "fonts": [
+   [
+    "Fredoka",
+    "700"
+   ],
+   [
+    "Fredoka",
+    "500"
+   ]
+  ],
+  "tagline": "A friendly cartoon mascot sits in your video and reacts to what you say: talking along, getting ideas, laughing, gasping.",
+  "bestFor": "Talking heads for kids and families, friendly explainers, light-hearted education",
+  "look": "your footage framed like a sticker card with rounded corners, and a small original mascot (a round teal blob) living in the corner, reacting with eight emotions and props",
+  "motion": "bouncy and alive: the mascot talks when you talk, blinks, bounces on emphasis and shows a new emotion each line",
+  "hookRule": "friendly and bright (\"Did you know / this about sleep?\")",
+  "graphicsRule": "Pills and lists on bubbly cards, counters in teal. The mascot already reacts, so keep graphics to the key moments. At most 1 slam.",
+  "ambient": "A rounded sticker frame and a mascot in the corner that talks, blinks and reacts (idea bulb, hearts, sunglasses, rain cloud, zzz).",
+  "captions": "Rounded bubbly letters in white with a dark outline, emphasis in teal.",
+  "hook": "A speech bubble from the mascot.",
+  "graphics": "Cards as bubbly white rounded cards, round markers.",
+  "transition": "A bubble pops across the frame.",
+  "sound": "Pops and bubbles.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: family",
+   "hook": [
+    "Did you know",
+    "this about sleep?"
+   ],
+   "lines": [
+    "kids need",
+    "11 hours*",
+    "of sleep",
+    "every night*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "coin-stacks",
+  "name": "Coin Stacks",
+  "layout": "footage",
+  "category": "data",
+  "tags": [
+   "talking-head",
+   "product"
+  ],
+  "source": "lemo-opuscar \"data-physical\"; its-applied-ai #3 3D data chart (three.js), #20 and #29 coin stacks, #17 data towers",
+  "accent": "#F5C542",
+  "fonts": [
+   [
+    "Outfit",
+    "700"
+   ],
+   [
+    "Outfit",
+    "500"
+   ]
+  ],
+  "tagline": "Your numbers built as real things: gold coins dropping into stacks, counters struck in gold, and a shower of coins at each cut.",
+  "bestFor": "Money, finance, business results, revenue, prices and any video with numbers",
+  "look": "the footage under a navy vignette and a soft studio key light; charts are gold coin discs stacking up, numbers are struck in gold",
+  "motion": "satisfying and weighty: coins drop and settle, numbers count up, cuts are a shower of coins",
+  "hookRule": "like a finance headline (\"Where my money / went this year\")",
+  "graphicsRule": "Charts are the star (items like \"2024: $2.6M\"), counters for every money number. Lists for breakdowns. At most 1 slam.",
+  "ambient": "A navy vignette and a warm key light over your video.",
+  "captions": "Bold white with gold emphasis words.",
+  "hook": "A gold bar of a title card with a deep shadow.",
+  "graphics": "Gold coin-stack charts, gold-struck numbers, coin bullets.",
+  "transition": "Coins rain down across the frame.",
+  "sound": "Cash, coins and dings.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: money",
+   "hook": [
+    "Where my money",
+    "went this year"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "pencil-dataviz",
+  "name": "Pencil Dataviz",
+  "layout": "explainer",
+  "category": "data",
+  "tags": [
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"dataviz\"",
+  "accent": "#D7263D",
+  "fonts": [
+   [
+    "Kalam",
+    "700"
+   ],
+   [
+    "Kalam",
+    "400"
+   ]
+  ],
+  "tagline": "A chart that tells a story, drawn mark by mark with a red-blue pencil on cream paper, with notes pinned to the numbers.",
+  "bestFor": "Data stories, research, results, comparisons and \"the numbers say\" videos",
+  "look": "cream graph paper with a red-blue editing pencil: hatched bars drawn mark by mark, a dotted trend line, handwritten notes and arrows pinned to the numbers",
+  "motion": "hand-drawn and patient: axes, then bars, then the trend, then the note",
+  "hookRule": "like the title written over a chart (\"Why sign-ups / doubled\")",
+  "graphicsRule": "Charts are the main event, counters circled in red, lists as pencil bullets. At most 1 slam.",
+  "ambient": "A pencil chart that draws itself: axes, hatched bars, a trend line and a pinned note.",
+  "captions": "Handwriting in graphite with red emphasis and a blue underline.",
+  "hook": "Pencil title underlined in red.",
+  "graphics": "Hatched pencil bar charts, scribbled ticks, red loops.",
+  "transition": "At each jump in the edit: the sheet tears away.",
+  "sound": "Pencil taps and page sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: data",
+   "hook": [
+    "Why sign-ups",
+    "doubled"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "spreadsheet",
+  "name": "Spreadsheet",
+  "layout": "window",
+  "category": "data",
+  "tags": [
+   "product",
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"spreadsheet\"",
+  "accent": "#1E8E3E",
+  "fonts": [
+   [
+    "Inter",
+    "600"
+   ],
+   [
+    "Inter",
+    "400"
+   ]
+  ],
+  "tagline": "The whole video inside a spreadsheet: your footage fills a range of cells, the formula bar runs, cells light up in colour.",
+  "bestFor": "Finance, productivity, office humour, data and work content",
+  "look": "a spreadsheet window: the footage fills a merged range of cells with a green selection border, column letters and row numbers round it, conditional formatting stepping in the cells below, a running formula bar",
+  "motion": "stepped like software: cells flip colours in steps, the hook types into the cell, cuts are rows blinking",
+  "hookRule": "like a cell comment (\"Q1 budget: / where it went\")",
+  "graphicsRule": "Charts as data bars in cells, counters as highlighted cells, lists as rows. At most 1 slam.",
+  "ambient": "A spreadsheet window with your video in cells B3:H17, a running formula and colour-coded cells.",
+  "captions": "Clean sans in a cell box with a green border.",
+  "hook": "A yellow cell comment, typed in.",
+  "graphics": "Data-bar charts, highlighted number cells, coloured square bullets.",
+  "transition": "At each jump in the edit: rows blink white and back.",
+  "sound": "Clicks and keyboard taps.",
+  "sfx": "digital",
+  "cover": {
+   "base": "talking",
+   "shown": "Any footage: work",
+   "hook": [
+    "Q1 budget:",
+    "where it went"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "projection-model",
+  "name": "Projection Model",
+  "layout": "story",
+  "category": "data",
+  "tags": [
+   "motion",
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"white-model\"; its-applied-ai #17 data towers (blender-mcp idea, drawn in code)",
+  "accent": "#3CE0FF",
+  "fonts": [
+   [
+    "Syne",
+    "600"
+   ],
+   [
+    "Inter",
+    "400"
+   ]
+  ],
+  "tagline": "A white model city on a plinth in a dark room, with a projector painting your data onto it as light.",
+  "bestFor": "Cities, populations, economies, climate and big-picture data stories",
+  "look": "a pure white massing model of a city on a dark plinth in a dark room; a projector beam sweeps cyan light over the blocks and the tallest data towers glow magenta",
+  "motion": "slow and architectural: towers rise to their values, the beam sweeps, light layers build",
+  "hookRule": "like an exhibition title (\"8 billion people, / one model\")",
+  "graphicsRule": "Counters and charts for the data; headlines for each layer. No callouts.",
+  "ambient": "A white model city with towers rising and a projector sweeping light across it.",
+  "captions": "Light sans in white with a cyan glow.",
+  "hook": "An exhibition title glowing in white.",
+  "graphics": "Dark glass cards with a cyan hairline.",
+  "transition": "At each jump in the edit: a light scan sweeps the model.",
+  "sound": "Soft sweeps and shimmers.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: data",
+   "hook": [
+    "8 billion people,",
+    "one model"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "big-numbers",
+  "name": "Big Numbers",
+  "layout": "footage",
+  "category": "data",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "its-applied-ai #84 Stat Reveal (librosa set)",
+  "accent": "#FFB23F",
+  "fonts": [
+   [
+    "Unbounded",
+    "700,900"
+   ],
+   [
+    "Inter",
+    "500"
+   ]
+  ],
+  "tagline": "Every number becomes a moment: deep black, a glowing sun of colour, a measuring grid and huge counting numbers.",
+  "bestFor": "Facts, science, records, \"did you know\" and statistic-heavy videos",
+  "look": "the footage pushed into deep black, a glowing orange sun on the edge of the frame, a fine dotted measuring grid, huge numbers in a warm gradient",
+  "motion": "cinematic and slow: numbers count up big, the glow breathes, everything else stays quiet",
+  "hookRule": "like a documentary fact card (\"The Sun is / 109 Earths wide\")",
+  "graphicsRule": "Counters are the point: one for every big number, with a short subtext. Few other graphics. At most 1 slam.",
+  "ambient": "A dark frame with a breathing sun glow and a dotted grid.",
+  "captions": "White with warm emphasis words.",
+  "hook": "A documentary title with a glowing rule under it.",
+  "graphics": "Huge gradient numbers with a measuring line, dark frosted cards.",
+  "transition": "At each jump in the edit: a warm flash and push.",
+  "sound": "Risers and deep hits.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: facts",
+   "hook": [
+    "The Sun is",
+    "109 Earths wide"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "product-studio",
+  "name": "Product Studio",
+  "layout": "footage",
+  "category": "product",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "video-shotcraft (product shots, beat cuts, framing marks, speed-line burst); its-applied-ai #12 CGI product, #85 Product Shot, #86 Coffee Shot",
+  "accent": "#FF6B1A",
+  "fonts": [
+   [
+    "Inter",
+    "900"
+   ],
+   [
+    "Inter",
+    "600"
+   ]
+  ],
+  "tagline": "A product ad cut like a launch promo: a dark studio spotlight, camera framing marks, hard cuts on a comic speed-line burst.",
+  "bestFor": "Product ads, unboxings, e-commerce, launches and UGC ads",
+  "look": "a dark studio grade with a spotlight on the product, camera framing marks in the corners and a REC light; slams on a big orange circle",
+  "motion": "punchy and rhythmic: hard cuts that land on a black-and-white speed-line burst, quick pushes",
+  "hookRule": "like an ad line (\"The drop / you waited for\")",
+  "graphicsRule": "Slams for the product name and the offer (up to 2), counters for prices and specs, a cta at the end.",
+  "ambient": "Framing marks, a spotlight vignette and a REC light over your footage.",
+  "captions": "Heavy white capitals, emphasis in orange.",
+  "hook": "A white card with an orange bar.",
+  "graphics": "White cards with a hard orange shadow, slams on an orange circle.",
+  "transition": "A comic speed-line burst on each cut.",
+  "sound": "Impacts and whooshes.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "product-dark",
+   "shown": "Product ad",
+   "hook": [
+    "Ice cold,",
+    "zero sugar"
+   ],
+   "lines": [
+    "the can",
+    "that started",
+    "it all*",
+    "taste it*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "glass-product",
+  "name": "Glass Product",
+  "layout": "footage",
+  "category": "product",
+  "tags": [
+   "motion"
+  ],
+  "source": "lemo-opuscar \"glass-product\"",
+  "accent": "#9EE7FF",
+  "fonts": [
+   [
+    "Sora",
+    "600,700"
+   ],
+   [
+    "Sora",
+    "400"
+   ]
+  ],
+  "tagline": "Launch-film glass: a dark-field studio, a strip light sweeping across, caustic shimmer and frosted glass graphics.",
+  "bestFor": "Premium products, tech, beauty, drinks and launch films",
+  "look": "a dark-field studio: a soft strip light sweeps diagonally over the footage with a prism fringe, caustic light ripples below, frosted glass panes and cut-crystal numbers",
+  "motion": "slow and premium: a gentle drift, the light sweep, refraction at each cut",
+  "hookRule": "like a premium tagline (\"Clear / by design\")",
+  "graphicsRule": "Headlines and counters on glass panes; few graphics. At most 1 slam.",
+  "ambient": "A sweeping strip light, prism fringe and caustic shimmer.",
+  "captions": "Light white letters, emphasis in ice blue.",
+  "hook": "A frosted glass pane with a bright rim.",
+  "graphics": "Frosted glass cards, crystal numbers, ice-blue rings.",
+  "transition": "A refraction flare across the frame.",
+  "sound": "Shimmers and soft sweeps.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "product-dark",
+   "shown": "Product: launch",
+   "hook": [
+    "Clear",
+    "by design"
+   ],
+   "lines": [
+    "every edge",
+    "polished",
+    "by light*",
+    "see it*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "teardown",
+  "name": "Teardown",
+  "layout": "footage",
+  "category": "product",
+  "tags": [
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"teardown\"; its-applied-ai #53 Exploded View, #73 Exploded Watch",
+  "accent": "#C6FF3D",
+  "fonts": [
+   [
+    "SpaceGrotesk",
+    "700"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "A product taken apart like a studio packshot: numbered leaders pull out to part tags, with a parts list along the bottom.",
+  "bestFor": "Product reviews, tech breakdowns, \"what's inside\" and how-it's-made videos",
+  "look": "a clean grey studio grade over the footage with a fine engineering grid, numbered leader lines pulling out to white part tags, a bill of materials strip along the bottom, lime accent",
+  "motion": "precise: leaders pull out one by one, tags settle, nothing bounces",
+  "hookRule": "like a teardown title (\"What's inside / a $20 speaker\")",
+  "graphicsRule": "Lists as parts lists, callouts point at parts, counters for specs and prices. At most 1 slam.",
+  "ambient": "Numbered leaders to part tags and a BOM strip over your footage.",
+  "captions": "Dark sans on white with lime highlights.",
+  "hook": "The hook is a black tag in lime type, on screen from the first frame.",
+  "graphics": "White part cards, lime-highlighted numbers, numbered markers.",
+  "transition": "At each jump in the edit: a wipe with a lime edge.",
+  "sound": "Clicks and ticks.",
+  "sfx": "mechanical",
+  "cover": {
+   "base": "toy-box",
+   "shown": "Product: teardown",
+   "hook": [
+    "What's inside",
+    "the new set"
+   ],
+   "lines": [
+    "350 pieces*",
+    "and one",
+    "tiny motor*",
+    "look"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "keynote-launch",
+  "name": "Keynote Launch",
+  "layout": "footage",
+  "category": "product",
+  "tags": [
+   "talking-head",
+   "motion"
+  ],
+  "source": "lemo-opuscar \"dark-keynote\"; HyperFrames motion-doctrine and cut-the-curve (zoom-through seams); video-shotcraft promo energy arc",
+  "accent": "#4D7CFF",
+  "fonts": [
+   [
+    "Inter",
+    "600,700,800"
+   ],
+   [
+    "Inter",
+    "500"
+   ]
+  ],
+  "tagline": "A software launch film: near-black, a hairline grid, soft light from above and zoom-through cuts.",
+  "bestFor": "App and SaaS launches, founders, product demos and announcements",
+  "look": "a near-black gradient over the footage, a hairline grid, soft blue light from above, dark soft panels with an electric blue accent",
+  "motion": "one continuous camera: titles cascade in, cuts zoom through into the next shot and settle",
+  "hookRule": "like a launch title (\"Introducing Flow\")",
+  "graphicsRule": "Headlines for each feature, counters for the key metric, lists for what is new. At most 1 slam.",
+  "ambient": "A hairline grid and a soft blue light from above.",
+  "captions": "Clean white sans, emphasis in soft blue.",
+  "hook": "A big launch title with a glowing rule.",
+  "graphics": "Dark soft panels, gradient numbers, small blue dots.",
+  "transition": "A zoom-through: the picture rushes in and settles out.",
+  "sound": "Whooshes and soft risers.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "app",
+   "shown": "App launch",
+   "hook": [
+    "Introducing",
+    "Flow"
+   ],
+   "lines": [
+    "tap start",
+    "pick a plan",
+    "invite your",
+    "team*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "desk-flythrough",
+  "name": "Desk Flythrough",
+  "layout": "window",
+  "category": "product",
+  "tags": [
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"desktop-flythrough\"",
+  "accent": "#FF6B6B",
+  "fonts": [
+   [
+    "Nunito",
+    "700"
+   ],
+   [
+    "Nunito",
+    "600"
+   ]
+  ],
+  "tagline": "App screens printed as paper cards on a sunlit desk, your footage the big card in the middle, tiny voxel helpers carrying work.",
+  "bestFor": "App walkthroughs, workflows, tools, productivity and \"how I work\" videos",
+  "look": "a sunlit wooden desk with app screens as printed paper cards, the footage on the big card in the middle, small voxel helpers walking between cards carrying blocks, window light in stripes",
+  "motion": "playful and tidy: helpers walk and bob, cards sit slightly askew, graphics bounce in",
+  "hookRule": "like a sticky note on the desk (\"My 3-app / workflow\")",
+  "graphicsRule": "Pills for steps, lists for workflows, callouts on the screen card. At most 1 slam.",
+  "ambient": "A wooden desk with paper app cards and little voxel helpers walking between them.",
+  "captions": "Rounded sans on a paper chip.",
+  "hook": "A paper note with a yellow tape strip.",
+  "graphics": "Paper cards with soft shadows, square bullets.",
+  "transition": "At each jump in the edit: a paper sheet slides over.",
+  "sound": "Pops and taps.",
+  "sfx": "soft",
+  "cover": {
+   "base": "app",
+   "shown": "Any footage: app",
+   "hook": [
+    "My 3-app",
+    "workflow"
+   ],
+   "lines": [
+    "tap start",
+    "pick a plan",
+    "invite your",
+    "team*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "mascot-screencast",
+  "name": "Mascot Screencast",
+  "layout": "window",
+  "category": "product",
+  "tags": [
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"living-screencast\" (with an original mascot); HyperFrames oversized-cursor",
+  "accent": "#7C5CFF",
+  "fonts": [
+   [
+    "Outfit",
+    "700"
+   ],
+   [
+    "Outfit",
+    "500"
+   ]
+  ],
+  "tagline": "A screen recording in a desktop window with a little pixel robot walking on the window edge and a big cursor gliding and clicking.",
+  "bestFor": "App tutorials, SaaS demos, onboarding and how-to-use videos",
+  "look": "the footage in a desktop app window on a soft background, a small original pixel robot walking along the top of the window, an oversized cursor that glides and clicks on each line",
+  "motion": "friendly and clear: the robot walks and blinks, the cursor glides and presses, cards bounce in",
+  "hookRule": "like an onboarding tip (\"Set it up / in 30 seconds\")",
+  "graphicsRule": "Callouts point at UI in the window, pills for steps, lists for settings. At most 1 slam.",
+  "ambient": "A desktop window with a pixel robot on top and a big cursor that clicks.",
+  "captions": "White on a dark rounded chip, emphasis in yellow.",
+  "hook": "A white tip card with a purple edge.",
+  "graphics": "White rounded cards, purple rings for callouts.",
+  "transition": "At each jump in the edit: a purple wipe up the frame.",
+  "sound": "Clicks, pops and blips.",
+  "sfx": "digital",
+  "cover": {
+   "base": "app",
+   "shown": "Any footage: app demo",
+   "hook": [
+    "Set it up",
+    "in 30 seconds"
+   ],
+   "lines": [
+    "tap start",
+    "pick a plan",
+    "invite your",
+    "team*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "liquid-glass",
+  "name": "Liquid Glass",
+  "layout": "footage",
+  "category": "talking-head",
+  "tags": [
+   "product"
+  ],
+  "source": "HyperFrames blocks: ios26-liquid-glass, liquid-glass-notification, macos-tahoe-liquid-glass, notification-cascade",
+  "accent": "#0A84FF",
+  "fonts": [
+   [
+    "Inter",
+    "700,800"
+   ],
+   [
+    "Inter",
+    "400"
+   ]
+  ],
+  "tagline": "Your video in the language of a modern phone: liquid glass captions, a hook that lands like a notification, clear glass cards.",
+  "bestFor": "Lifestyle, tech, productivity, vlogs and clean talking heads",
+  "look": "liquid glass interface over the footage: clear blurred panes with a bright rim, a notification-style hook with an app icon, a faint drifting aurora in the corners",
+  "motion": "springy like a phone UI: panes bounce in, notifications drop down, zoom cuts",
+  "hookRule": "like a notification (\"Reminder: / you are not lazy\")",
+  "graphicsRule": "Lists and pills read like widgets; counters as big white numbers. At most 1 slam.",
+  "ambient": "A faint aurora gradient drifting in the corners.",
+  "captions": "White on glass pills, emphasis words in a blue capsule.",
+  "hook": "A notification banner with an app icon and \"now\".",
+  "graphics": "Glass widget cards, coloured dots, glowing rings.",
+  "transition": "At each jump in the edit: a quick zoom with motion blur.",
+  "sound": "Soft notifications and pops.",
+  "sfx": "soft",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: lifestyle",
+   "hook": [
+    "Reminder:",
+    "you are not lazy"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "code-editor",
+  "name": "Code Editor",
+  "layout": "window",
+  "category": "talking-head",
+  "tags": [
+   "product"
+  ],
+  "source": "HyperFrames blocks: code-typing, code-highlight, code-snippet-dark-modern, code-scroll",
+  "accent": "#7EE787",
+  "fonts": [
+   [
+    "JetBrainsMono",
+    "500,600,700"
+   ],
+   [
+    "JetBrainsMono",
+    "400"
+   ]
+  ],
+  "tagline": "You inside a dark code editor: your video as the preview pane, code typing itself below as you talk.",
+  "bestFor": "Developers, coding tutorials, tech explainers and indie hackers",
+  "look": "a dark code editor: the footage in the preview pane, tabs above, syntax-highlighted code typing itself below one line per caption beat, line numbers and a blue status bar",
+  "motion": "like live coding: a line types in on every beat, the cursor blinks, cuts glitch",
+  "hookRule": "like a code comment (\"// how I ship / a feature a day\")",
+  "graphicsRule": "Lists as code steps, counters as values, headlines as file names. At most 1 slam.",
+  "ambient": "An editor with tabs, a typing code pane and a status bar under your video.",
+  "captions": "Monospace in comment grey, emphasis in green.",
+  "hook": "The hook is a typed comment line in green, on screen from the first frame.",
+  "graphics": "Dark editor panels, arrow bullets, bracket callouts.",
+  "transition": "At each jump in the edit: a colour glitch.",
+  "sound": "Keyboard taps and blips.",
+  "sfx": "digital",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: developer",
+   "hook": [
+    "// how I ship",
+    "a feature a day"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "news-package",
+  "name": "News Package",
+  "layout": "footage",
+  "category": "news",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "lemo-opuscar \"news-package\"; HyperFrames blocks: news-ticker, lt-* lower thirds",
+  "accent": "#D7141A",
+  "fonts": [
+   [
+    "BarlowCondensed",
+    "800"
+   ],
+   [
+    "Barlow",
+    "500"
+   ]
+  ],
+  "tagline": "Your video as an on-air news package: a channel bug with a LIVE dot, a ticker, captions as lower-third straps and a breaking banner.",
+  "bestFor": "News commentary, current events, announcements and serious updates",
+  "look": "a TV news package over the footage: a channel bug with a blinking LIVE dot, a scrolling ticker, captions as white straps with a red tag, a BREAKING banner",
+  "motion": "broadcast-tidy: straps slide in, the ticker scrolls, cuts are a red and navy sting",
+  "hookRule": "like a breaking-news strap (\"Rates cut / for the first time\")",
+  "graphicsRule": "Lower thirds for every person or source, counters for figures, lists as \"what we know\". At most 1 slam.",
+  "ambient": "A LIVE channel bug and a scrolling news ticker.",
+  "captions": "Capitals on a white strap with a red tag.",
+  "hook": "A red BREAKING banner with a navy shadow.",
+  "graphics": "White cards with a red top bar, navy number plates.",
+  "transition": "A sting of red and navy bars on a diagonal.",
+  "sound": "News stings (swooshes) and soft alerts.",
+  "sfx": "news",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: news",
+   "hook": [
+    "Rates cut for",
+    "the first time"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "caption-news",
+  "name": "Caption News",
+  "layout": "footage",
+  "category": "news",
+  "tags": [
+   "talking-head",
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"caption-news\"",
+  "accent": "#FFE100",
+  "fonts": [
+   [
+    "Inter",
+    "900"
+   ],
+   [
+    "Inter",
+    "700"
+   ]
+  ],
+  "tagline": "News that reads with the sound off: huge captions slam on in black and yellow, the footage is the ground under them.",
+  "bestFor": "News clips, explainers on b-roll, \"here's what happened\" and sound-off social video",
+  "look": "huge capital captions as the lead actor, in black boxes with yellow highlight words, a NEWS source tag in the corner, the footage slightly muted under them",
+  "motion": "snappy: captions slam on line by line, yellow wipes at cuts",
+  "hookRule": "like a headline slammed on screen (\"The town / that banned cars\")",
+  "graphicsRule": "Counters with a short subtext for every key number; slams for the one shocking fact (at most 2). Keep captions short: they carry the story.",
+  "ambient": "A NEWS tag and a source line in the corner.",
+  "captions": "Huge white capitals in black boxes, key words in yellow.",
+  "hook": "A yellow headline block with a black shadow.",
+  "graphics": "Yellow number plates, black cards.",
+  "transition": "At each jump in the edit: a yellow wipe.",
+  "sound": "Hits and swooshes.",
+  "sfx": "news",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: news clip",
+   "hook": [
+    "The town that",
+    "banned cars"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  },
+  "captionLimits": [
+   3,
+   14
+  ]
+ },
+ {
+  "id": "briefing-board",
+  "name": "Briefing Board",
+  "layout": "window",
+  "category": "news",
+  "tags": [
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"briefing-board\"",
+  "accent": "#D62828",
+  "fonts": [
+   [
+    "Caveat",
+    "700"
+   ],
+   [
+    "Caveat",
+    "500"
+   ]
+  ],
+  "tagline": "Your footage pinned to a real whiteboard wall with magnets, marker arrows and circled notes drawn round it.",
+  "bestFor": "Breakdowns, investigations, strategy, sport tactics and \"let me explain what happened\"",
+  "look": "a whiteboard wall in window light: the footage as a cut-out photo held by magnets, red and blue marker arrows and notes drawn round it, ghosts of erased marks",
+  "motion": "written live round the photo: arrows draw, notes appear, an eraser wipes at cuts",
+  "hookRule": "like a marker title on the wall (\"What really / happened here\")",
+  "graphicsRule": "Callouts point at the photo, lists as numbered marker points, counters circled. At most 1 slam.",
+  "ambient": "A whiteboard wall with a photo pinned by magnets and marker notes round it.",
+  "captions": "Marker handwriting on white, emphasis in red.",
+  "hook": "A blue marker title underlined in red.",
+  "graphics": "White cards outlined in marker, red loops.",
+  "transition": "At each jump in the edit: an eraser wipe.",
+  "sound": "Marker taps and swishes.",
+  "sfx": "chalk",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: breakdown",
+   "hook": [
+    "What really",
+    "happened here"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "analyst-briefing",
+  "name": "Analyst Briefing",
+  "layout": "footage",
+  "category": "news",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"satellite-briefing\"",
+  "accent": "#FFB000",
+  "fonts": [
+   [
+    "IBMPlexMono",
+    "600"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage graded to an analyst's grey with white measurement lines drawn on it: a lock-on reticle, distances and coordinates.",
+  "bestFor": "Drone and aerial footage, travel, real estate, investigations and geography",
+  "look": "the footage graded to cool grey with thin white measurement lines on it: a lock-on reticle that drifts and settles, a distance line with a value, coordinates, a north arrow and a scale bar",
+  "motion": "measured and calm: the reticle drifts and locks, lines draw, text types",
+  "hookRule": "like an intelligence slide title (\"Site A: / what changed\")",
+  "graphicsRule": "Callouts are target locks, counters are measurements, lists are observations. At most 1 slam.",
+  "ambient": "A lock-on reticle, distance line, coordinates, north arrow and scale bar.",
+  "captions": "Monospace capitals on dark strips, emphasis in amber.",
+  "hook": "A typed slide title in a white frame.",
+  "graphics": "Dark cards with white frames, amber brackets.",
+  "transition": "At each jump in the edit: a white scan line.",
+  "sound": "Blips and ticks.",
+  "sfx": "digital",
+  "cover": {
+   "base": "city-night",
+   "shown": "Any footage: aerial",
+   "hook": [
+    "Site A:",
+    "what changed"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "investigation-desk",
+  "name": "Investigation Desk",
+  "layout": "window",
+  "category": "news",
+  "tags": [
+   "retro"
+  ],
+  "source": "lemo-opuscar \"visual-investigation\"",
+  "accent": "#E23D3D",
+  "fonts": [
+   [
+    "IBMPlexMono",
+    "600,700"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage on a monitor on a cold investigation desk, with a synced waveform, timecode, documents, a map and red string.",
+  "bestFor": "True crime, investigations, documentaries, mysteries and deep dives",
+  "look": "a cold dark desk: the footage on one monitor with a running timecode and a waveform that moves with the voice, documents and a map card round it joined by red string",
+  "motion": "forensic and slow: the clock runs, the waveform moves, shutters close at cuts",
+  "hookRule": "like an evidence label (\"Exhibit 4: / the call at 14:35\")",
+  "graphicsRule": "Lists as timelines, callouts on the monitor, counters for times and sums. At most 1 slam.",
+  "ambient": "A monitor with a waveform and timecode, documents and a map joined by red string.",
+  "captions": "Monospace white with a red edge.",
+  "hook": "An evidence label with a red top.",
+  "graphics": "Paper evidence cards, red brackets.",
+  "transition": "At each jump in the edit: black shutters close and open.",
+  "sound": "Ticks, static and low hits.",
+  "sfx": "film",
+  "cover": {
+   "base": "city-night",
+   "shown": "Any footage: true crime",
+   "hook": [
+    "Exhibit 4:",
+    "the call at 14:35"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "light-scan",
+  "name": "Light Scan",
+  "layout": "footage",
+  "category": "news",
+  "tags": [
+   "motion"
+  ],
+  "source": "lemo-opuscar \"dark-documentary\"",
+  "accent": "#9FE8FF",
+  "fonts": [
+   [
+    "Exo2",
+    "500,600"
+   ],
+   [
+    "Exo2",
+    "400"
+   ]
+  ],
+  "tagline": "The picture is black until a plane of light sweeps across it; what it touches lights up, then settles into a dim glow.",
+  "bestFor": "Mysteries, science documentaries, reveals, history and suspense",
+  "look": "a documentary look where the footage stays dark until a bright scan line sweeps down and reveals it, leaving a dim afterglow; cool cyan light",
+  "motion": "slow reveals: a scan sweeps, the picture settles; each cut falls to black and scans again",
+  "hookRule": "like a documentary title (\"What the scan / found\")",
+  "graphicsRule": "Headlines for reveals, counters for measurements. Few graphics: the reveal is the effect.",
+  "ambient": "A sweeping scan line that reveals the picture and leaves a dim afterglow.",
+  "captions": "Spaced capitals with a cyan glow.",
+  "hook": "A wide-spaced title glowing cyan.",
+  "graphics": "Dark cards with a cyan hairline.",
+  "transition": "A fall to black, then a new sweep.",
+  "sound": "Low pulses and risers.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "city-night",
+   "shown": "Any footage: documentary",
+   "hook": [
+    "What the scan",
+    "found"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "light-table",
+  "name": "Light Table",
+  "layout": "window",
+  "category": "news",
+  "tags": [
+   "retro",
+   "art"
+  ],
+  "source": "lemo-opuscar \"archive-lighttable\"",
+  "accent": "#3E7CB1",
+  "fonts": [
+   [
+    "Kalam",
+    "700"
+   ],
+   [
+    "Lora",
+    "500"
+   ]
+  ],
+  "tagline": "Your footage as a slide on a backlit light table, with negatives, other slides and a loupe drifting over it.",
+  "bestFor": "Family history, archives, nostalgia, photography and memory stories",
+  "look": "a cool backlit light table: the footage as a slide in a card mount with a handwritten label, a strip of negatives with sprocket holes, other slides and a loupe drifting over the picture",
+  "motion": "quiet and archival: the loupe drifts, cuts are blinds of light",
+  "hookRule": "like a handwritten slide label (\"no. 17: / summer at the lake\")",
+  "graphicsRule": "Pills and headlines as handwritten labels, lists as notes. At most 1 slam.",
+  "ambient": "A light table with negatives, slides and a drifting loupe.",
+  "captions": "Handwriting on white tape, emphasis in archive blue.",
+  "hook": "The hook is a handwritten paper label, on screen from the first frame.",
+  "graphics": "Graphics sit on paper labels, blue squares.",
+  "transition": "At each jump in the edit: blinds of white light.",
+  "sound": "Shutter clicks and page sounds.",
+  "sfx": "film",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: memories",
+   "hook": [
+    "no. 17:",
+    "summer at the lake"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "case-file",
+  "name": "Case File",
+  "layout": "window",
+  "category": "news",
+  "tags": [
+   "retro",
+   "art"
+  ],
+  "source": "lemo-opuscar \"halftone-dossier\"",
+  "accent": "#C8102E",
+  "fonts": [
+   [
+    "SpecialElite",
+    "400"
+   ],
+   [
+    "CourierPrime",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage as a halftone photo clipped into a retro case file, with typed headings, misprinted headlines and a CLASSIFIED stamp.",
+  "bestFor": "Mysteries, history, conspiracies (debunked), stories and \"the file on\" videos",
+  "look": "a manila folder with a typed case sheet: the footage as a halftone photo held by a paper clip, misregistered red and black headlines, a rubber stamp",
+  "motion": "paper and ink: the stamp slams down, cards pop in, folder sheets wipe at cuts",
+  "hookRule": "like a case-file heading (\"File 0417: / the missing week\")",
+  "graphicsRule": "Lists as file entries, counters as misprinted numbers, one slam as a rubber stamp.",
+  "ambient": "A manila folder with a typed sheet, a paper clip and a CLASSIFIED stamp.",
+  "captions": "Typewriter capitals on paper, emphasis in red.",
+  "hook": "A typed heading with a red misprint.",
+  "graphics": "Paper cards, misregistered numbers, stamp slams.",
+  "transition": "At each jump in the edit: a manila sheet slides over.",
+  "sound": "Typing, stamps (thuds) and page sounds.",
+  "sfx": "print",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: mystery",
+   "hook": [
+    "File 0417:",
+    "the missing week"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "countdown",
+  "name": "Countdown",
+  "layout": "footage",
+  "category": "news",
+  "tags": [
+   "gaming",
+   "music"
+  ],
+  "source": "lemo-opuscar \"countdown\"",
+  "accent": "#FFB020",
+  "fonts": [
+   [
+    "Oswald",
+    "600,700"
+   ],
+   [
+    "Inter",
+    "600"
+   ]
+  ],
+  "tagline": "An edit built round a known zero: a T-minus clock counts down to the end of your video and the picture tightens as zero nears.",
+  "bestFor": "Launches, races, deadlines, reveals, challenges and \"wait for it\" videos",
+  "look": "a running T-minus clock in the corner counting down to the end of the video, an amber segment bar emptying along the top, the frame tightening and turning red in the last seconds",
+  "motion": "tension that builds: the clock runs, the picture pushes in, the last seconds pulse red",
+  "hookRule": "like a mission clock (\"T-60: / the final lap\")",
+  "graphicsRule": "Counters for what is at stake, slams for the zero moment (at most 2). Keep the cuts tight.",
+  "ambient": "A T-minus clock and an emptying segment bar.",
+  "captions": "Bold capitals with a black outline, emphasis in amber.",
+  "hook": "An amber plate with a red shadow.",
+  "graphics": "Graphics sit on dark cards with amber frames.",
+  "transition": "At each jump in the edit: a red flash and push.",
+  "sound": "Ticks, risers and impacts.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "race",
+   "shown": "Racing game",
+   "hook": [
+    "T-60:",
+    "the final lap"
+   ],
+   "lines": [
+    "full speed*",
+    "hold the",
+    "line",
+    "new record*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "telestrator",
+  "name": "Telestrator",
+  "layout": "footage",
+  "category": "news",
+  "tags": [
+   "gaming",
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"telestrator\"",
+  "accent": "#FFE600",
+  "fonts": [
+   [
+    "BarlowCondensed",
+    "800"
+   ],
+   [
+    "Barlow",
+    "600"
+   ]
+  ],
+  "tagline": "The TV analysis segment: yellow rings under the action, arrows and run lines drawn on your footage, rewinds and freeze-frames.",
+  "bestFor": "Sports breakdowns, gameplay analysis, tutorials and \"watch this closely\" videos",
+  "look": "a broadcast analysis look: yellow and cyan rings drawn under the action, a dashed run line with an arrow, an ANALYSIS tag; cuts rewind with VHS lines and land on a FREEZE tag",
+  "motion": "like a pundit with a pen: rings and lines draw on, the replay rewinds and freezes",
+  "hookRule": "like a pundit's headline (\"Watch / his first touch\")",
+  "graphicsRule": "Callouts are the main tool (rings under the action); counters for stats; lists for keys to the play. At most 1 slam.",
+  "ambient": "Rings, a run line and arrows drawn on the picture, an ANALYSIS tag.",
+  "captions": "Condensed capitals with a black outline, emphasis in yellow.",
+  "hook": "The hook is a yellow tilted plate, on screen from the first frame.",
+  "graphics": "Dark cards with yellow frames, arrow bullets, ellipse rings under the action.",
+  "transition": "A rewind with VHS lines, then FREEZE.",
+  "sound": "Whooshes, rewind (reverse) and hits.",
+  "sfx": "news",
+  "cover": {
+   "base": "game",
+   "shown": "Gameplay analysis",
+   "hook": [
+    "Watch",
+    "the first jump"
+   ],
+   "lines": [
+    "jump",
+    "grab the",
+    "coins*",
+    "one more*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "newsreel",
+  "name": "Newsreel",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "news"
+  ],
+  "source": "lemo-opuscar \"newsreel\"",
+  "accent": "#EDE6D6",
+  "fonts": [
+   [
+    "Limelight",
+    "400"
+   ],
+   [
+    "OldStandardTT",
+    "400"
+   ]
+  ],
+  "tagline": "Your video as a 1920s sound newsreel: a warm silver print, flicker and scratches, intertitle type and a spinning globe ident at each cut.",
+  "bestFor": "History, nostalgia, old-time storytelling, announcements and comedy",
+  "look": "a late-1920s newsreel print: warm silver black-and-white with flicker, dust and scratches, a rounded film gate, spaced capital intertitles",
+  "motion": "on twos like old film: flicker, a gentle weave; cuts spin a globe-and-searchlight ident",
+  "hookRule": "like a newsreel title card (\"City opens / its new bridge\")",
+  "graphicsRule": "Headlines as title cards, counters in silver, lists as bulletins. At most 1 slam.",
+  "ambient": "Flicker, dust, scratches, grain and a rounded film gate.",
+  "captions": "Spaced silver capitals with a dark shadow.",
+  "hook": "A double-bordered title card on black.",
+  "graphics": "Black cards with double silver borders.",
+  "transition": "A spinning globe ident with searchlights.",
+  "sound": "Projector clicks (ticks) and soft swells.",
+  "sfx": "film",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: old-time",
+   "hook": [
+    "City opens",
+    "its new bridge"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "silent-film",
+  "name": "Silent Film",
+  "layout": "window",
+  "category": "retro",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"silent-film\"",
+  "accent": "#C9A227",
+  "fonts": [
+   [
+    "PlayfairDisplay",
+    "700"
+   ],
+   [
+    "PlayfairDisplay",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage as a silent picture in a picture house: a flickering 4:3 print between red velvet curtains, ornate intertitles, an iris at each cut.",
+  "bestFor": "Comedy, slapstick, storytelling, nostalgia and dramatic \"meanwhile\" moments",
+  "look": "a picture house: the footage as a flickering black-and-white 4:3 print on a screen between red velvet curtains, the audience in silhouette, ornate cream intertitle cards",
+  "motion": "on twos with a weave: the print flickers, the curtains sway, an iris closes and opens at each cut",
+  "hookRule": "like an intertitle (\"Meanwhile, / at the station...\")",
+  "graphicsRule": "Headlines as intertitles (the best use), lists and counters on ornate cards. At most 1 slam.",
+  "ambient": "Velvet curtains, a gold rail and a silhouetted audience round the screen.",
+  "captions": "Serif type on cream intertitle cards with a double border.",
+  "hook": "The hook is an ornate intertitle card, on screen from the first frame.",
+  "graphics": "Graphics sit on ornate cream cards.",
+  "transition": "At each jump in the edit: an iris closes and opens.",
+  "sound": "Piano-like chimes and ticks.",
+  "sfx": "film",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: comedy",
+   "hook": [
+    "Meanwhile,",
+    "at the station..."
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "scratch-film",
+  "name": "Scratch Film",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "art",
+   "music"
+  ],
+  "source": "lemo-opuscar \"scratch-film\"",
+  "accent": "#FFD23F",
+  "fonts": [
+   [
+    "RockSalt",
+    "400"
+   ],
+   [
+    "Neucha",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage scratched into black film emulsion and hand-tinted with dye, boiling at fifteen frames a second.",
+  "bestFor": "Music videos, art films, experimental edits and moody storytelling",
+  "look": "direct animation: the footage darkened and dyed in shifting colour fields, scratched white lines, loops and sprocket holes boiling over it, film burns at cuts",
+  "motion": "jittery and hand-made: everything redraws every other frame, dyes change on the beat",
+  "hookRule": "like a hand-scratched title (\"Wake up\")",
+  "graphicsRule": "Few graphics: slams as scratched words (up to 2), pills for chapter names.",
+  "ambient": "Dye fields, scratched lines and loops, sprocket holes and dust.",
+  "captions": "Scratchy capitals with a pink and cyan split.",
+  "hook": "A scratched title with a colour split.",
+  "graphics": "Black blobby cards, scribbled markers.",
+  "transition": "At each jump in the edit: a film burn.",
+  "sound": "Static and glitches.",
+  "sfx": "film",
+  "cover": {
+   "base": "city-night",
+   "shown": "Any footage: music video",
+   "hook": [
+    "Wake",
+    "up"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "retro-terminal",
+  "name": "Retro Terminal",
+  "layout": "window",
+  "category": "retro",
+  "tags": [
+   "motion",
+   "gaming"
+  ],
+  "source": "lemo-opuscar \"ascii-crt\"; its-applied-ai #13 Retro Terminal, #68 CRT",
+  "accent": "#FFB000",
+  "fonts": [
+   [
+    "VT323",
+    "400"
+   ],
+   [
+    "VT323",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage on an old amber CRT monitor: curved glass, scanlines, a typing hook with a block cursor.",
+  "bestFor": "Tech, hacking, gaming, sci-fi, retro computing and mysterious reveals",
+  "look": "an old beige monitor with an amber monochrome CRT: the footage in amber phosphor with scanlines and glass glare, terminal readouts and a loading bar round it",
+  "motion": "typed and flickering: the hook types with a block cursor, text flickers on, the tube collapses at cuts",
+  "hookRule": "like a terminal command (\"> RUN / DEEP SIGNAL\")",
+  "graphicsRule": "Lists as terminal output, counters as readouts. At most 1 slam.",
+  "ambient": "A beige CRT case, terminal readouts and a loading bar.",
+  "captions": "Amber terminal type with a glow.",
+  "hook": "A terminal line typing with a block cursor.",
+  "graphics": "Amber-outlined terminal panels, arrow bullets.",
+  "transition": "The tube shutters closed and open.",
+  "sound": "Blips and keyboard taps.",
+  "sfx": "digital",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: tech",
+   "hook": [
+    "> RUN",
+    "DEEP SIGNAL"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "liminal-tape",
+  "name": "Liminal Tape",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"backrooms\" (renamed); its-applied-ai #68 CRT camcorder",
+  "accent": "#E8D88A",
+  "fonts": [
+   [
+    "VT323",
+    "400"
+   ],
+   [
+    "VT323",
+    "400"
+   ]
+  ],
+  "tagline": "Your video as camcorder tape found in an empty fluorescent place: a yellow grade, REC light, date stamp and tracking noise.",
+  "bestFor": "Horror, mystery, urban exploring, analog nostalgia and eerie storytelling",
+  "look": "a 1990s camcorder tape: sickly yellow fluorescent grade, soft picture, REC light and battery icon, PLAY and a date stamp, tracking noise rolling up, a colour ghost",
+  "motion": "unsettling and lo-fi: tracking bars roll, glitches jump, text types in camcorder block type",
+  "hookRule": "like a rule on a sign (\"Rule 1: / never count the doors\")",
+  "graphicsRule": "Lists as rules (the best use), counters as stamps. At most 1 slam.",
+  "ambient": "REC, battery, date stamp, tracking noise and grain.",
+  "captions": "Camcorder block capitals with a colour ghost.",
+  "hook": "A blue camcorder menu bar, typed.",
+  "graphics": "Graphics sit on blue camcorder menu cards.",
+  "transition": "At each jump in the edit: a tape glitch.",
+  "sound": "Static and low hum (pulses).",
+  "sfx": "film",
+  "cover": {
+   "base": "city-night",
+   "shown": "Any footage: eerie",
+   "hook": [
+    "Rule 1:",
+    "never count the doors"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "one-bit",
+  "name": "1-Bit Dither",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "gaming",
+   "art"
+  ],
+  "source": "lemo-opuscar \"one-bit-dither\"",
+  "accent": "#1C1E26",
+  "fonts": [
+   [
+    "Silkscreen",
+    "400,700"
+   ],
+   [
+    "Silkscreen",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage in exactly two inks: every grey becomes a dot pattern like an old handheld screen, inside a 1-bit desktop.",
+  "bestFor": "Retro tech, indie games, design nerds, minimal storytelling",
+  "look": "the footage dithered to exactly two inks (charcoal and cream) with an ordered dot pattern, a 1-bit menu bar and window border, pixel type",
+  "motion": "stepped like old software: things blink in, windows pop, cuts dissolve pixel by pixel",
+  "hookRule": "like a dialog box (\"Saving / your life...\")",
+  "graphicsRule": "Pills as dialog boxes, lists as menus, counters inverted. At most 1 slam.",
+  "ambient": "A 1-bit menu bar with a clock and a window border.",
+  "captions": "Pixel type on cream with inverted emphasis.",
+  "hook": "A window with a striped title bar.",
+  "graphics": "Bordered windows with hard shadows.",
+  "transition": "At each jump in the edit: a pixel dissolve.",
+  "sound": "Blips and clicks.",
+  "sfx": "game",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: retro tech",
+   "hook": [
+    "Saving",
+    "your life..."
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "kino-montage",
+  "name": "Kino Montage",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "art",
+   "music"
+  ],
+  "source": "lemo-opuscar \"kino-montage\"",
+  "accent": "#D21F1F",
+  "fonts": [
+   [
+    "AlfaSlabOne",
+    "400"
+   ],
+   [
+    "OldStandardTT",
+    "700"
+   ]
+  ],
+  "tagline": "Your footage printed as a 1920s constructivist poster in ink and one red, with diagonal bands and slogans cut on the beat.",
+  "bestFor": "Manifestos, motivation, history, bold opinions and music edits",
+  "look": "the footage printed in two inks on cream paper like a poster, heavy red diagonal bands and a red circle that snap to new angles on the beat, tilted slab slogans",
+  "motion": "cut on a machine beat: bands snap every half second, slogans slam in tilted, a red slash at each cut",
+  "hookRule": "like a poster slogan (\"Build / the future\")",
+  "graphicsRule": "Slams as slogans (up to 2), counters in red with a black shadow, lists as tilted bars.",
+  "ambient": "Red diagonal bands and a circle that snap on the beat, print grain.",
+  "captions": "Slab capitals on cream strips with a red edge.",
+  "hook": "A tilted black slogan with a red shadow.",
+  "graphics": "Tilted cream cards, red numbers.",
+  "transition": "At each jump in the edit: a red slash crosses the frame.",
+  "sound": "Kicks, claps and hits.",
+  "sfx": "music",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: manifesto",
+   "hook": [
+    "Build",
+    "the future"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "spy-titles",
+  "name": "Spy Titles",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "art",
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"spy-titles\"",
+  "accent": "#F25C05",
+  "fonts": [
+   [
+    "Rye",
+    "400"
+   ],
+   [
+    "JosefinSans",
+    "600"
+   ]
+  ],
+  "tagline": "A cut-paper opening title sequence for a film that never existed: flat inks, sliding paper bars, a keyhole and a walking silhouette.",
+  "bestFor": "Intros, trailers, stories, mysteries and stylish personal brands",
+  "look": "a 1960s cut-paper title sequence: the footage in flat ink steps (black, teal, cream), orange and black paper bars sliding across, a keyhole and a silhouette walking",
+  "motion": "jazzy and angular: bars slide like credits, slogans tilt, wipes cut on a diagonal",
+  "hookRule": "like an opening credit (\"Agent / of nothing\")",
+  "graphicsRule": "Headlines as credits, slams as title cards (at most 1), counters in orange.",
+  "ambient": "Sliding paper bars, a keyhole and a walking silhouette.",
+  "captions": "Western-slab capitals on black strips.",
+  "hook": "The hook is an orange tilted title plate, on screen from the first frame.",
+  "graphics": "Cream cut-paper cards with black borders.",
+  "transition": "An orange diagonal wipe with a black bar.",
+  "sound": "Swishes and hits.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: intro",
+   "hook": [
+    "Agent",
+    "of nothing"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "text-flash",
+  "name": "Text Flash",
+  "layout": "footage",
+  "category": "music",
+  "tags": [
+   "retro",
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"text-flash-cuts\"",
+  "accent": "#E10600",
+  "fonts": [
+   [
+    "ShipporiMincho",
+    "800"
+   ],
+   [
+    "ShipporiMincho",
+    "600"
+   ]
+  ],
+  "tagline": "Full-screen title cards in heavy serif cut in for a few frames on the beats of your talk, avant-garde anime style.",
+  "bestFor": "Dramatic monologues, motivation, music edits and intense storytelling",
+  "look": "avant-garde anime \"text frames\": full-screen heavy serif cards (black on white, white on red) cutting in for four frames on the beats, a hard, desaturated grade",
+  "motion": "staccato: cards flash on the beats of the voice, everything else holds still; whiteout cuts",
+  "hookRule": "like a title card (\"Do not / look away\")",
+  "graphicsRule": "Slams as title cards (up to 2), few other graphics: the flashes carry it.",
+  "ambient": "Full-screen word cards that flash on the beats.",
+  "captions": "Heavy serif in white, emphasis in red.",
+  "hook": "The hook is a white card in heavy serif, on screen from the first frame.",
+  "graphics": "White cards, red number plates.",
+  "transition": "At each jump in the edit: a white-out flash.",
+  "sound": "Hits and clicks.",
+  "sfx": "music",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: monologue",
+   "hook": [
+    "Do not",
+    "look away"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "digital-rain",
+  "name": "Digital Rain",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "retro",
+   "gaming"
+  ],
+  "source": "its-applied-ai #65 Matrix (renamed)",
+  "accent": "#39FF7A",
+  "fonts": [
+   [
+    "ShareTechMono",
+    "400"
+   ],
+   [
+    "ShareTechMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage turned to glowing green code, with columns of falling characters raining over it.",
+  "bestFor": "Tech, hacking, AI, sci-fi, mind-bending ideas and gaming",
+  "look": "the footage in green phosphor with columns of falling binary and glyphs over it, brightest at the head of each column, glowing green type",
+  "motion": "constant rain, flickering text, glitch cuts",
+  "hookRule": "like a message on a screen (\"Wake up. / It's all code.\")",
+  "graphicsRule": "Pills as system messages, lists as decoded lines, counters glowing. At most 1 slam.",
+  "ambient": "Columns of falling code over the picture.",
+  "captions": "Glowing green monospace.",
+  "hook": "A typed message in a green frame.",
+  "graphics": "Graphics sit on dark panels with green frames.",
+  "transition": "At each jump in the edit: a green glitch.",
+  "sound": "Glitches and blips.",
+  "sfx": "digital",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: tech",
+   "hook": [
+    "Wake up.",
+    "It's all code."
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "xray-scanner",
+  "name": "X-Ray Scanner",
+  "layout": "footage",
+  "category": "retro",
+  "tags": [
+   "product",
+   "motion"
+  ],
+  "source": "lemo-opuscar \"security-xray\"",
+  "accent": "#F28C28",
+  "fonts": [
+   [
+    "Oswald",
+    "600"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage seen through a baggage scanner: a dual-energy X-ray image in blue and orange inside a console.",
+  "bestFor": "Product reveals, \"what's inside\", comedy, mystery and tech videos",
+  "look": "the footage as a dual-energy X-ray image (white for empty, orange for soft, blue for dense) inside a screening console with lane readouts, belt counter and operator buttons",
+  "motion": "mechanical: the belt runs, a scan line sweeps at cuts, threat boxes flash",
+  "hookRule": "like a scanner alert (\"Item flagged: / lane 3\")",
+  "graphicsRule": "Callouts as threat boxes, lists as contents, counters as weights. At most 1 slam.",
+  "ambient": "A scanner console with readouts and coloured buttons.",
+  "captions": "Capitals on white strips, emphasis in orange.",
+  "hook": "A red alert label with a warning sign.",
+  "graphics": "White console cards, red brackets.",
+  "transition": "At each jump in the edit: a green scan line.",
+  "sound": "Beeps (blips) and alerts.",
+  "sfx": "digital",
+  "cover": {
+   "base": "product-dark",
+   "shown": "Product: what's inside",
+   "hook": [
+    "Item flagged:",
+    "lane 3"
+   ],
+   "lines": [
+    "the can",
+    "that started",
+    "it all*",
+    "taste it*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "thermal",
+  "name": "Thermal Camera",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"thermal-camera\"; its-applied-ai #63 Thermal",
+  "accent": "#FFB21F",
+  "fonts": [
+   [
+    "ShareTechMono",
+    "400"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage through a thermal camera: an iron palette where brightness is heat, a spot temperature and a colour scale.",
+  "bestFor": "Science, health, fitness, cooking, animals, mystery and \"see the invisible\"",
+  "look": "the footage in a thermal camera's iron palette (cold black-purple to hot white), a crosshair with a drifting spot temperature, corner brackets, a colour scale bar and readouts",
+  "motion": "clinical and live: the spot temperature flickers, a warm flash at cuts",
+  "hookRule": "like a camera readout (\"Hottest spot: / your coffee\")",
+  "graphicsRule": "Counters as temperatures, callouts as hot spots, lists as readings. At most 1 slam.",
+  "ambient": "A crosshair with a temperature, corner brackets, a scale bar and readouts.",
+  "captions": "White monospace with a dark shadow, emphasis hot.",
+  "hook": "The hook is a readout box, on screen from the first frame.",
+  "graphics": "Dark readout cards, hot numbers.",
+  "transition": "At each jump in the edit: a warm flash.",
+  "sound": "Blips and pulses.",
+  "sfx": "sci",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: science",
+   "hook": [
+    "Hottest spot:",
+    "your coffee"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "synthwave",
+  "name": "Synthwave",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "music",
+   "retro"
+  ],
+  "source": "its-applied-ai #4 Synthwave, #21 Neon Flight, #57 Glow City, #61 (three.js scenes redrawn in SVG)",
+  "accent": "#FF3CAC",
+  "fonts": [
+   [
+    "Audiowide",
+    "400"
+   ],
+   [
+    "Exo2",
+    "500"
+   ]
+  ],
+  "tagline": "An endless neon flight: a sliced retro sun, magenta mountains and a glowing grid racing toward you under your video.",
+  "bestFor": "Music, retro gaming, night drives, nostalgia and hype edits",
+  "look": "a synthwave horizon over the footage: a sliced yellow-to-pink sun, neon-edged mountains, a glowing pink perspective grid racing along the bottom, stars above, a purple and pink grade",
+  "motion": "constant forward motion: the grid races, the sun glows, cuts are a fast zoom",
+  "hookRule": "like an 80s title (\"Night drive / 1986\")",
+  "graphicsRule": "Counters in chrome, headlines in neon. At most 1 slam (chrome).",
+  "ambient": "A sliced sun, neon mountains and a racing perspective grid along the bottom.",
+  "captions": "Italic capitals with a hot pink glow.",
+  "hook": "A chrome title with a pink glow.",
+  "graphics": "Dark panels with neon frames, chrome numbers.",
+  "transition": "At each jump in the edit: a fast zoom with motion blur.",
+  "sound": "Sweeps, risers and shimmers.",
+  "sfx": "neon",
+  "cover": {
+   "base": "city-night",
+   "shown": "Night b-roll",
+   "hook": [
+    "Night drive",
+    "1986"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "neon-signs",
+  "name": "Neon Signs",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"neon-tubes\"; its-applied-ai #79 Neon Ring, #80 Neon City (react-postprocessing bloom done in CSS)",
+  "accent": "#FF2E88",
+  "fonts": [
+   [
+    "Righteous",
+    "400"
+   ],
+   [
+    "JosefinSans",
+    "400"
+   ]
+  ],
+  "tagline": "A wet night street lit by real neon: rain, colour bleeding into puddles, and every word a glass tube that strikes with a flicker.",
+  "bestFor": "Nightlife, food spots, city vlogs, music and moody storytelling",
+  "look": "a rainy night street: the footage darkened and cooled, rain falling, pink and cyan neon light bleeding onto the picture and pooling in reflections, all text as glowing neon tubes",
+  "motion": "flickering on like real tubes; rain never stops; cuts buzz dark for a beat",
+  "hookRule": "like a neon sign (\"Open / all night\")",
+  "graphicsRule": "Pills as neon signs, counters in amber neon. At most 1 slam.",
+  "ambient": "Rain, neon light spill and wet reflections.",
+  "captions": "Neon tube letters in pink, emphasis in cyan.",
+  "hook": "A neon sign in a cyan tube frame.",
+  "graphics": "Dark cards with neon tube borders.",
+  "transition": "A neon buzz: dark frames, then the light strikes.",
+  "sound": "Buzzing zaps and shimmers.",
+  "sfx": "neon",
+  "cover": {
+   "base": "city-night",
+   "shown": "Night b-roll",
+   "hook": [
+    "Open",
+    "all night"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "cosmos",
+  "name": "Cosmos",
+  "layout": "story",
+  "category": "motion",
+  "tags": [
+   "storytelling",
+   "explainer"
+  ],
+  "source": "its-applied-ai #52 Particle Galaxy (three.js points redrawn in SVG)",
+  "accent": "#FFD98A",
+  "fonts": [
+   [
+    "JosefinSans",
+    "300"
+   ],
+   [
+    "JosefinSans",
+    "400"
+   ]
+  ],
+  "tagline": "A barred spiral galaxy of glowing points turns slowly behind your narration, its golden core blooming.",
+  "bestFor": "Space, philosophy, big ideas, meditation and science storytelling",
+  "look": "a spiral galaxy made of hundreds of seeded points: a white-gold core that blooms, lilac and violet arms, a blue-white halo, starfield behind; the disc turns and the camera drifts",
+  "motion": "slow and vast: the galaxy turns, points twinkle, the camera drifts",
+  "hookRule": "like the opening of a space documentary (\"100 billion stars, / one galaxy\")",
+  "graphicsRule": "Counters for the big numbers, headlines for ideas. No callouts.",
+  "ambient": "A turning spiral galaxy and a starfield.",
+  "captions": "Thin spaced capitals with a violet glow.",
+  "hook": "The hook is a wide-spaced glowing title, on screen from the first frame.",
+  "graphics": "Dark glass cards with a lilac hairline.",
+  "transition": "At each jump in the edit: an iris into darkness.",
+  "sound": "Soft risers and shimmers.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: space",
+   "hook": [
+    "100 billion stars,",
+    "one galaxy"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "glitch-cut",
+  "name": "Glitch Cut",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "gaming",
+   "music"
+  ],
+  "source": "its-applied-ai #54 Glitch Cut (three.js + post-processing, redone as SVG filters)",
+  "accent": "#00F0FF",
+  "fonts": [
+   [
+    "Syne",
+    "800"
+   ],
+   [
+    "SpaceGrotesk",
+    "500"
+   ]
+  ],
+  "tagline": "A hard digital-glitch edit: a constant colour split, datamosh bursts, and every cut a smash of displaced blocks.",
+  "bestFor": "Gaming, tech, hype edits, music and high-energy content",
+  "look": "the footage with a constant red-cyan split and scanlines, datamosh slice bursts every couple of seconds, every cut a smash of displaced colour blocks and a hard shake",
+  "motion": "aggressive and exact: bursts on a rhythm, hard smash cuts, never a fade",
+  "hookRule": "like a system message (\"System error: / too good\")",
+  "graphicsRule": "Slams for the big moments (up to 2), counters with colour split, pills as error tags.",
+  "ambient": "A constant colour split, scanlines and slice bursts.",
+  "captions": "Heavy capitals with a magenta-cyan split.",
+  "hook": "A white bar with a split shadow.",
+  "graphics": "Black cards with split borders.",
+  "transition": "A glitch smash: displaced blocks and a shake.",
+  "sound": "Glitches, static and zaps.",
+  "sfx": "digital",
+  "cover": {
+   "base": "game",
+   "shown": "Gameplay",
+   "hook": [
+    "System error:",
+    "too good"
+   ],
+   "lines": [
+    "jump",
+    "grab the",
+    "coins*",
+    "one more*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "hologram-hud",
+  "name": "Hologram HUD",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "product",
+   "gaming"
+  ],
+  "source": "lemo-opuscar \"hologram-hud\"; its-applied-ai #25 Hologram HUD",
+  "accent": "#3DF5FF",
+  "fonts": [
+   [
+    "ChakraPetch",
+    "600"
+   ],
+   [
+    "ShareTechMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage scanned into a cyan hologram: orbiting arcs, a scan line, target reticles and HUD panels.",
+  "bestFor": "Tech, products, gaming, sci-fi and futuristic explainers",
+  "look": "the footage turned into a cyan hologram with orbiting arcs round the middle, a dashed scan line, readouts marked SIMULATED, translucent HUD panels and lock-on reticles",
+  "motion": "a hologram flickering on: arcs orbit, a scan line sweeps, panels flicker in",
+  "hookRule": "like a HUD scan title (\"Scan 01: / the drone\")",
+  "graphicsRule": "Callouts as reticle locks, lists as specs, counters as readouts. At most 1 slam.",
+  "ambient": "Orbiting arcs, a scan line and HUD readouts.",
+  "captions": "Spaced cyan capitals with a glow.",
+  "hook": "The hook is a HUD panel with a glow, on screen from the first frame.",
+  "graphics": "Translucent HUD panels, reticle callouts.",
+  "transition": "At each jump in the edit: a cyan scan line.",
+  "sound": "Blips, pulses and power-ups.",
+  "sfx": "sci",
+  "cover": {
+   "base": "product-dark",
+   "shown": "Product: tech",
+   "hook": [
+    "Scan 01:",
+    "the product"
+   ],
+   "lines": [
+    "the can",
+    "that started",
+    "it all*",
+    "taste it*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "lidar-scan",
+  "name": "Lidar Scan",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "any-footage",
+   "news"
+  ],
+  "source": "lemo-opuscar \"lidar-survey\"",
+  "accent": "#3AF2FF",
+  "fonts": [
+   [
+    "Exo2",
+    "600"
+   ],
+   [
+    "IBMPlexMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage as a cloud of laser points floating in the dark, coloured by height, with a cutting plane sweeping through.",
+  "bestFor": "Places, architecture, drones, tech, travel and mysterious reveals",
+  "look": "the footage seen only through a fine grid of points on black, coloured by height (cool low, warm high), a white cutting plane sweeping through with a glow, survey readouts",
+  "motion": "measured: the plane sweeps on a loop, points glow, a white scan at cuts",
+  "hookRule": "like a survey title (\"2.4 million points / of one street\")",
+  "graphicsRule": "Counters as measurements, callouts as markers. At most 1 slam.",
+  "ambient": "A point-cloud mask over the picture, a sweeping plane and readouts.",
+  "captions": "Spaced white capitals, emphasis in cyan.",
+  "hook": "A survey label in a cyan frame.",
+  "graphics": "Dark cards with cyan hairlines.",
+  "transition": "At each jump in the edit: a white scan.",
+  "sound": "Pulses and blips.",
+  "sfx": "sci",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: places",
+   "hook": [
+    "2.4M points",
+    "of one street"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "swiss-grid",
+  "name": "Swiss Grid",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "talking-head",
+   "art"
+  ],
+  "source": "lemo-opuscar \"swiss-motion\"",
+  "accent": "#E30613",
+  "fonts": [
+   [
+    "Inter",
+    "700"
+   ],
+   [
+    "Inter",
+    "400"
+   ]
+  ],
+  "tagline": "The International Typographic Style in motion: a visible grid, one typeface, flush-left type and one signal red.",
+  "bestFor": "Design, architecture, business, premium brands and clean talking heads",
+  "look": "a visible six-column grid over the footage, flush-left tight type in one typeface, an issue number and a red square; white blocks for titles, one signal red",
+  "motion": "exact like a printing press: blocks slide along grid lines, nothing bounces",
+  "hookRule": "like a poster headline (\"Less, / set exactly\")",
+  "graphicsRule": "Headlines set big, counters on red, lists flush left. At most 1 slam.",
+  "ambient": "A six-column grid, an issue number and a red square.",
+  "captions": "Tight white sans, emphasis in red.",
+  "hook": "A white block with a red bar, set tight.",
+  "graphics": "White blocks, red number plates, small red squares.",
+  "transition": "Black and red blocks slide down the grid.",
+  "sound": "Ticks and clicks.",
+  "sfx": "minimal",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: design",
+   "hook": [
+    "Less,",
+    "set exactly"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "bauhaus",
+  "name": "Bauhaus",
+  "layout": "window",
+  "category": "art",
+  "tags": [
+   "explainer",
+   "motion"
+  ],
+  "source": "lemo-opuscar \"bauhaus-shapes\"",
+  "accent": "#D7262E",
+  "fonts": [
+   [
+    "JosefinSans",
+    "700"
+   ],
+   [
+    "JosefinSans",
+    "500"
+   ]
+  ],
+  "tagline": "You inside a big circle on matte paper, with red, blue and yellow shapes turning on every beat of your talk.",
+  "bestFor": "Design, art, education, explainers and calm talking heads",
+  "look": "matte paper with the footage in a large black-rimmed circle, opaque primary shapes around it (a red square, a blue half-disc, a yellow triangle, black lines) turning on each beat",
+  "motion": "geometric and rhythmic: shapes turn a quarter on each caption beat with a spring",
+  "hookRule": "like a Bauhaus poster line (\"Form / follows function\")",
+  "graphicsRule": "Lists and counters on bold flat shapes. At most 1 slam.",
+  "ambient": "Primary shapes on paper, turning on the beats, round a circular window.",
+  "captions": "Geometric sans on paper, emphasis in red.",
+  "hook": "The hook is a blue block title, on screen from the first frame.",
+  "graphics": "Paper cards with heavy black borders, round red numbers.",
+  "transition": "A yellow wipe with a red circle.",
+  "sound": "Pops and clicks.",
+  "sfx": "print",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: design",
+   "hook": [
+    "Form",
+    "follows function"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "pictogram-grid",
+  "name": "Pictogram Grid",
+  "layout": "footage",
+  "category": "music",
+  "tags": [
+   "motion",
+   "art"
+  ],
+  "source": "lemo-opuscar \"pictogram-motion\"",
+  "accent": "#FF5A3C",
+  "fonts": [
+   [
+    "Outfit",
+    "800"
+   ],
+   [
+    "Outfit",
+    "600"
+   ]
+  ],
+  "tagline": "Bands of circles, half-discs and patterned cells slide one cell on every beat of your talk, framing your video.",
+  "bestFor": "Music, design, brands, product drops and rhythmic talking heads",
+  "look": "square-grid bands top and bottom made of circles, half-discs, quarters and striped cells in red, blue, yellow and black, sliding one cell on each beat",
+  "motion": "beat-locked: every caption beat slides the rows and flips cell colours with a snap",
+  "hookRule": "like a gig poster (\"On the beat, / every time\")",
+  "graphicsRule": "Pills and slams (at most 1) on bold blocks, counters on yellow.",
+  "ambient": "Patterned square-cell bands that slide on the beat.",
+  "captions": "Bold capitals on cream, emphasis in red.",
+  "hook": "The hook is a black block title, on screen from the first frame.",
+  "graphics": "Cream cards with black borders, yellow number plates.",
+  "transition": "At each jump in the edit: black blinds.",
+  "sound": "Kicks and claps.",
+  "sfx": "music",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: music",
+   "hook": [
+    "On the beat,",
+    "every time"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "liquid-chrome",
+  "name": "Liquid Chrome",
+  "layout": "footage",
+  "category": "motion",
+  "tags": [
+   "product",
+   "music"
+  ],
+  "source": "awesome-opus5-5-videos (chrome and liquid-metal motion pieces); HyperFrames liquid-metal, chrome-orb blocks",
+  "accent": "#9FD8FF",
+  "fonts": [
+   [
+    "Syne",
+    "800"
+   ],
+   [
+    "Syne",
+    "600"
+   ]
+  ],
+  "tagline": "Molten mirror metal: blobs of liquid chrome merge in the corners and every word is polished chrome.",
+  "bestFor": "Fashion, music, beauty, premium brands and Y2K aesthetics",
+  "look": "blobs of liquid chrome that merge and split in the corners (a gooey metaball look), chrome lettering with a moving highlight, a cool contrasty grade",
+  "motion": "fluid and bouncy: blobs morph, the highlight slides, cuts zoom",
+  "hookRule": "like a chrome logo line (\"Liquid / everything\")",
+  "graphicsRule": "Slams and counters in chrome (at most 1 slam), pills on metal capsules.",
+  "ambient": "Liquid chrome blobs merging in two corners.",
+  "captions": "Silver capitals with a dark edge, emphasis ice blue.",
+  "hook": "The hook is a chrome title, on screen from the first frame.",
+  "graphics": "Brushed metal capsules, chrome numbers.",
+  "transition": "At each jump in the edit: a fast zoom.",
+  "sound": "Shimmers and whooshes.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: fashion",
+   "hook": [
+    "Liquid",
+    "everything"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "low-poly",
+  "name": "Low-Poly Island",
+  "layout": "story",
+  "category": "motion",
+  "tags": [
+   "storytelling",
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"lowpoly-island\"",
+  "accent": "#FF7A45",
+  "fonts": [
+   [
+    "Baloo2",
+    "800"
+   ],
+   [
+    "Baloo2",
+    "600"
+   ]
+  ],
+  "tagline": "A tiny faceted island seen from above: blocks, trees and a lighthouse bounce into place while you tell the story.",
+  "bestFor": "Travel, adventure, kids stories, game-like stories and light explainers",
+  "look": "an orthographic isometric island made of faceted blocks (sand, grass, rock), a faceted sea, clouds, trees and a lighthouse bouncing in, a boat bobbing",
+  "motion": "everything arrives with a bounce; the sea shimmers; the boat bobs",
+  "hookRule": "like a game level name (\"Day 1 / on the island\")",
+  "graphicsRule": "Pills and lists suit it; counters in orange. No callouts.",
+  "ambient": "A faceted island with bouncing trees, a lighthouse and a bobbing boat.",
+  "captions": "Rounded white letters with a dark-blue outline.",
+  "hook": "A white rounded card with a deep shadow.",
+  "graphics": "White rounded cards, round markers.",
+  "transition": "At each jump in the edit: an iris into the sea.",
+  "sound": "Pops and bubbles.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: adventure",
+   "hook": [
+    "Day 1",
+    "on the island"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "firefly-dots",
+  "name": "Firefly Dots",
+  "layout": "story",
+  "category": "motion",
+  "tags": [
+   "storytelling",
+   "art"
+  ],
+  "source": "lemo-opuscar \"firefly-pointillism\"",
+  "accent": "#FFE7A3",
+  "fonts": [
+   [
+    "CormorantGaramond",
+    "300"
+   ],
+   [
+    "CormorantGaramond",
+    "400"
+   ]
+  ],
+  "tagline": "A world made only of breathing points of light on black: a moon, a deer, the grass and drifting fireflies.",
+  "bestFor": "Bedtime stories, poetry, calm storytelling, nature and reflection",
+  "look": "thousands of soft breathing points of light on black that make up a moon, a deer, a grass line and drifting fireflies; the picture is light alone",
+  "motion": "slow breathing: points pulse, the deer sways, fireflies drift",
+  "hookRule": "like a poem's first line (\"The night / the deer came\")",
+  "graphicsRule": "Headlines as lines of the story; very few graphics. No callouts.",
+  "ambient": "A moon, a deer and grass made of glowing points, and fireflies.",
+  "captions": "Thin serif with a warm glow.",
+  "hook": "The hook is a glowing serif line, on screen from the first frame.",
+  "graphics": "Dark cards with a warm hairline.",
+  "transition": "At each jump in the edit: an iris into darkness.",
+  "sound": "Soft chimes.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: bedtime",
+   "hook": [
+    "The night",
+    "the deer came"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "flow-field",
+  "name": "Flow Field",
+  "layout": "explainer",
+  "category": "motion",
+  "tags": [
+   "art",
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"flow-field\"",
+  "accent": "#C2552B",
+  "fonts": [
+   [
+    "Fraunces",
+    "400"
+   ],
+   [
+    "Fraunces",
+    "400"
+   ]
+  ],
+  "tagline": "An invisible flow made visible: ink streamlines on warm paper, darker where the flow is strong, with particles riding along.",
+  "bestFor": "Science, economics, climate, traffic, systems and calm explainers",
+  "look": "thin ink streamlines engraved on warm paper following a slowly changing field, darker where the flow is strong, rust particles riding along them",
+  "motion": "slow and organic: the field breathes, particles ride the lines, ink spreads at cuts",
+  "hookRule": "like a plate title in a science book (\"Where the wind / goes\")",
+  "graphicsRule": "Headlines and counters on paper cards; lists as notes. At most 1 slam.",
+  "ambient": "Ink streamlines on warm paper with riding particles.",
+  "captions": "Serif on paper, emphasis in rust.",
+  "hook": "The hook is a paper plate title, on screen from the first frame.",
+  "graphics": "Graphics sit on paper cards with ink borders.",
+  "transition": "An ink blot spreads and drains.",
+  "sound": "Soft swishes.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: science",
+   "hook": [
+    "Where the wind",
+    "goes"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "claymation",
+  "name": "Claymation",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "its-applied-ai #45 Claymation (HyperFrames rocket set)",
+  "accent": "#FF6F59",
+  "fonts": [
+   [
+    "Chewy",
+    "400"
+   ],
+   [
+    "Fredoka",
+    "600"
+   ]
+  ],
+  "tagline": "A stop-motion clay world at 12 frames a second: lumpy plasticine, fingerprints, a turning clay sun and a rocket with a smiling face.",
+  "bestFor": "Kids stories, playful explainers, family content and charming narration",
+  "look": "a stop-motion plasticine world animated on twos: lumpy shapes with fingerprint texture, a clay sun with triangle rays turning, clay clouds and hills, a rocket with a smiling face lifting off",
+  "motion": "stop-motion on twos: everything jitters a hair between frames and bounces into place",
+  "hookRule": "like a kids show title (\"Liftoff / in 3, 2, 1\")",
+  "graphicsRule": "Pills and lists on clay cards; counters in coral. No callouts.",
+  "ambient": "A clay sky with a turning sun, clouds, hills and a rocket lifting off.",
+  "captions": "Chunky cream letters with a brown outline.",
+  "hook": "A cream clay plate with a soft shadow.",
+  "graphics": "Clay cards, round clay markers.",
+  "transition": "At each jump in the edit: an iris in coral.",
+  "sound": "Pops and boings (bubbles).",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: kids",
+   "hook": [
+    "Liftoff",
+    "in 3, 2, 1"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "pastel-3d",
+  "name": "Pastel 3D",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "its-applied-ai #50 3D Cartoon, #41 (soft pastel 3D world; renamed, no creator name)",
+  "accent": "#FF6B8B",
+  "fonts": [
+   [
+    "Baloo2",
+    "800"
+   ],
+   [
+    "Nunito",
+    "700"
+   ]
+  ],
+  "tagline": "A soft, glossy kids' cartoon world: a blushing smiling moon, a ringed planet and a little round rocket gliding by.",
+  "bestFor": "Bedtime stories, kids education, gentle narration and cute brands",
+  "look": "a soft glossy pastel 3D cartoon world (an original look): a lilac starry sky, a smiling blushing moon, a teal ringed planet, round pink hills, a little round rocket gliding past",
+  "motion": "gentle bobbing and gliding; everything soft and rounded",
+  "hookRule": "like a bedtime story title (\"The moon / who couldn't sleep\")",
+  "graphicsRule": "Pills and lists on soft glossy cards. No callouts.",
+  "ambient": "A starry lilac sky with a smiling moon, a ringed planet and a gliding rocket.",
+  "captions": "Rounded white letters with a purple outline.",
+  "hook": "A rounded title with a soft purple shadow.",
+  "graphics": "Glossy white cards with a lilac shadow.",
+  "transition": "At each jump in the edit: an iris in lilac.",
+  "sound": "Soft chimes and pops.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: bedtime",
+   "hook": [
+    "The moon who",
+    "couldn't sleep"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "doodle",
+  "name": "Doodle",
+  "layout": "footage",
+  "category": "cartoon",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "its-applied-ai #64 Doodle",
+  "accent": "#FF4FA3",
+  "fonts": [
+   [
+    "Gluten",
+    "700"
+   ],
+   [
+    "Mali",
+    "600"
+   ]
+  ],
+  "tagline": "Hand-drawn doodles live round your video: wobbly stars, squiggles, hearts and sparkles in hot pink and aqua.",
+  "bestFor": "Fun talking heads, lifestyle, kids, creators and playful brands",
+  "look": "hand-drawn doodles round the footage (stars, squiggles, a heart, arrows, sparkles) with wobbly black outlines animated on twos, hot pink, aqua and yellow",
+  "motion": "boiling lines on twos; cards pop in tilted; wipes with an ink edge",
+  "hookRule": "playful and short (\"This changed / my mornings\")",
+  "graphicsRule": "Slams for the fun moments (at most 2), pills and lists on tilted cards.",
+  "ambient": "Wobbly doodles in the corners that boil and sparkle.",
+  "captions": "Bubbly white letters with a black outline and a pink shadow.",
+  "hook": "The hook is a tilted yellow sticker, on screen from the first frame.",
+  "graphics": "Tilted white cards with an aqua shadow, star bullets.",
+  "transition": "At each jump in the edit: an aqua wipe with an ink edge.",
+  "sound": "Pops and bubbles.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: lifestyle",
+   "hook": [
+    "This changed",
+    "my mornings"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "rubber-hose",
+  "name": "Rubber Hose",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "retro",
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"rubber-hose\"",
+  "accent": "#FFFFFF",
+  "fonts": [
+   [
+    "LuckiestGuy",
+    "400"
+   ],
+   [
+    "ComicNeue",
+    "700"
+   ]
+  ],
+  "tagline": "A black-and-white 1930s ink cartoon where everything is alive and swings to hot jazz: a grinning sun, a bouncing house, a tree with arms.",
+  "bestFor": "Comedy, nostalgia, stories, playful brands and vintage-themed videos",
+  "look": "black-and-white 1930s hand-inked cartoon (an original world): a grinning sun swaying, a cloud with a face, a bouncing house, a tree with arms, music notes floating up, film flicker and grain",
+  "motion": "everything swings to the beat in squash and stretch; on twos; iris cuts",
+  "hookRule": "like an old cartoon title (\"The house / that danced\")",
+  "graphicsRule": "Slams as big outlined words (at most 1), pills on round white cards. No callouts.",
+  "ambient": "A swinging ink-cartoon world with film flicker.",
+  "captions": "Fat white letters with a heavy black outline.",
+  "hook": "A round white title card with a heavy border.",
+  "graphics": "Round white cards with heavy borders.",
+  "transition": "At each jump in the edit: a round iris to black.",
+  "sound": "Pops and bubbles.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: vintage",
+   "hook": [
+    "The house",
+    "that danced"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "midcentury-toon",
+  "name": "Mid-Century Toon",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "retro",
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"midcentury-toon\"",
+  "accent": "#E76F51",
+  "fonts": [
+   [
+    "Shrikhand",
+    "400"
+   ],
+   [
+    "JosefinSans",
+    "600"
+   ]
+  ],
+  "tagline": "A 1950s \"follow along\" film: flat colour printed off its broken ink line, boomerangs, starbursts and a stylised little town.",
+  "bestFor": "How-tos, public-service style explainers, retro brands and playful stories",
+  "look": "a 1950s limited-animation town: flat teal, mustard and tomato shapes printed slightly off a broken ink line, boomerangs and starbursts in the sky, lollipop trees, a walking figure that holds poses",
+  "motion": "limited animation: poses held for several frames, things step rather than glide",
+  "hookRule": "like a 1950s film title (\"Let's learn / to save\")",
+  "graphicsRule": "Lists suit it best (follow-along steps), counters in tomato. No callouts.",
+  "ambient": "A flat 1950s town with boomerangs, a starburst and a walking figure.",
+  "captions": "Retro script on cream with a mustard offset.",
+  "hook": "A teal plate with a tomato offset.",
+  "graphics": "Cream cards with an offset mustard shadow, star bullets.",
+  "transition": "A mustard wipe with a tomato dot.",
+  "sound": "Ticks and pops.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: how-to",
+   "hook": [
+    "Let's learn",
+    "to save"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "scifi-toon",
+  "name": "Sci-Fi Toon",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"scifi-toon\"",
+  "accent": "#7CFF4F",
+  "fonts": [
+   [
+    "BagelFatOne",
+    "400"
+   ],
+   [
+    "Fredoka",
+    "600"
+   ]
+  ],
+  "tagline": "An adult-animation sci-fi look: thick boiling outlines, flat colour, a swirling green portal and a weird alien planet.",
+  "bestFor": "Sci-fi stories, comedy, gaming, philosophy and weird-fact narration",
+  "look": "an original adult-animation sci-fi world: a swirling green portal, an orange planet with a ring, a purple ground with odd glowing plants, thick boiling outlines, flat colour",
+  "motion": "outlines boil on threes, the portal swirls, plants sway; iris cuts in portal green",
+  "hookRule": "like an episode title (\"Dimension 35-C: / Tuesday\")",
+  "graphicsRule": "Slams as outlined words (at most 1), pills on white cards. No callouts.",
+  "ambient": "A swirling green portal on an alien planet with odd plants.",
+  "captions": "Chunky white letters with a heavy outline.",
+  "hook": "A green plate with a heavy border.",
+  "graphics": "White cards with heavy borders.",
+  "transition": "At each jump in the edit: a portal-green iris.",
+  "sound": "Zaps and pops.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: sci-fi",
+   "hook": [
+    "Dimension 35-C:",
+    "Tuesday"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "cel-anime",
+  "name": "Cel Anime",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "storytelling",
+   "retro"
+  ],
+  "source": "lemo-opuscar \"cel-anime-80s\"; its-applied-ai #43 90s Anime",
+  "accent": "#FFE14D",
+  "fonts": [
+   [
+    "MPLUSRounded1c",
+    "700,800"
+   ],
+   [
+    "MPLUSRounded1c",
+    "500"
+   ]
+  ],
+  "tagline": "Hand-painted cel animation from the 80s and 90s: an airbrushed dusk, a neon city skyline, rain and a two-tone cel rocket shaking on its flame.",
+  "bestFor": "Dramatic stories, music, nostalgia, gaming and anime-loving audiences",
+  "look": "an original 80s/90s OVA-style scene: an airbrushed dusk sky, a city skyline with backlit pink and cyan windows, diagonal rain, a two-tone cel rocket with ink outlines shaking on a jagged flame, film grain",
+  "motion": "cel-style motion: shaking on the flame, rain streaks, flash cuts",
+  "hookRule": "like a subtitle line (\"Don't / look back.\")",
+  "graphicsRule": "Headlines as subtitle lines, counters in yellow. No callouts.",
+  "ambient": "A dusk city with neon windows, rain and a lifting cel rocket.",
+  "captions": "Yellow italic subtitles with a black edge.",
+  "hook": "A white italic title with a pink and cyan offset.",
+  "graphics": "Graphics sit on navy cards with a pink glow.",
+  "transition": "At each jump in the edit: a white flash.",
+  "sound": "Whooshes and impacts.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: anime",
+   "hook": [
+    "Don't",
+    "look back."
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "manga-panels",
+  "name": "Manga Panels",
+  "layout": "footage",
+  "category": "cartoon",
+  "tags": [
+   "any-footage",
+   "art"
+  ],
+  "source": "lemo-opuscar \"manga-panels\"",
+  "accent": "#E0262E",
+  "fonts": [
+   [
+    "DelaGothicOne",
+    "400"
+   ],
+   [
+    "ZenMaruGothic",
+    "500"
+   ]
+  ],
+  "tagline": "Your footage inked as a black-and-white manga page: screentone dots, a heavy panel border, speed lines and one red.",
+  "bestFor": "Storytime, reactions, gaming, anime fans and dramatic moments",
+  "look": "the footage inked in black and white with screentone dots inside a heavy panel border and white gutter; speech-bubble captions; speed-line bursts behind slams; one spot red",
+  "motion": "panel to panel: new panels slide in at an angle, slams burst with speed lines",
+  "hookRule": "like a narration box (\"That day, / everything changed\")",
+  "graphicsRule": "Slams as sound effects with speed lines (up to 2), callouts as arrows to the action.",
+  "ambient": "Screentone, a panel border and a page number.",
+  "captions": "Black on white speech bubbles, emphasis in red.",
+  "hook": "The hook is a white narration box, on screen from the first frame.",
+  "graphics": "White panels with heavy borders, speed-line slams.",
+  "transition": "A new panel slides in at an angle.",
+  "sound": "Hits and whooshes.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: storytime",
+   "hook": [
+    "That day,",
+    "everything changed"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "game-show",
+  "name": "Game Show",
+  "layout": "footage",
+  "category": "cartoon",
+  "tags": [
+   "talking-head",
+   "gaming",
+   "music"
+  ],
+  "source": "lemo-opuscar \"game-show\"",
+  "accent": "#FFD23F",
+  "fonts": [
+   [
+    "LuckiestGuy",
+    "400"
+   ],
+   [
+    "Fredoka",
+    "600"
+   ]
+  ],
+  "tagline": "Your video as a candy-coloured game show: marquee bulbs chase round the frame, a sunburst spins and a score pops on every beat.",
+  "bestFor": "Quizzes, challenges, entertainment, \"guess what\" videos and hype talking heads",
+  "look": "a candy-coloured TV game-show set round the footage: marquee bulbs chasing round the frame, a spinning sunburst, a score counter that pops on every beat, thick ink outlines",
+  "motion": "bouncy and loud: everything lands with a bounce, the score pops each beat, stripes wipe",
+  "hookRule": "like a round title (\"Round 1: / guess the price\")",
+  "graphicsRule": "Slams for answers (at most 2, on a spinning wheel), counters for scores, lists for options.",
+  "ambient": "Chasing marquee bulbs, a spinning sunburst and a score counter.",
+  "captions": "Fat white letters with a navy outline.",
+  "hook": "A yellow sign with a heavy border.",
+  "graphics": "White cards with coloured hard shadows, star bullets.",
+  "transition": "At each jump in the edit: a candy-stripe wipe.",
+  "sound": "Dings, claps and pops.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: quiz",
+   "hook": [
+    "Round 1:",
+    "guess the price"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "pixel-fx",
+  "name": "Pixel FX",
+  "layout": "footage",
+  "category": "gaming",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "pixelfx (explosions, lightning, impacts, pickups, transitions); its-applied-ai #11, #15, #55, #70-72",
+  "accent": "#FFD23F",
+  "fonts": [
+   [
+    "PressStart2P",
+    "400"
+   ],
+   [
+    "Silkscreen",
+    "400"
+   ]
+  ],
+  "tagline": "Pixel-art effects from a game's VFX sheet land on your footage: hit sparks on every beat, lightning, coin bursts, explosions behind slams.",
+  "bestFor": "Gaming, streams, challenges, highlights and playful content",
+  "look": "pixel-art effects on a strict pixel grid over the footage: fire-coloured hit sparks on each beat, a pixel lightning strike every few beats, coin bursts on emphasis words, a pixel explosion behind slams, hearts in the corner",
+  "motion": "stepped like a game at 10 fps: effects burst and vanish in a few frames, cuts dissolve in pixels",
+  "hookRule": "like a game's dialog box (\"BOSS FIGHT: / day 30\")",
+  "graphicsRule": "Slams as hit words (K.O.!, CRIT!) on a pixel explosion (up to 2), counters as scores, pills as level labels.",
+  "ambient": "Pixel hit sparks, lightning and coins on the beats; hearts in the corner.",
+  "captions": "Pixel capitals with a hard shadow.",
+  "hook": "A pixel dialog box that types itself.",
+  "graphics": "Dark pixel boxes with white borders.",
+  "transition": "At each jump in the edit: a pixel dissolve.",
+  "sound": "Coins, zaps and power-ups.",
+  "sfx": "game",
+  "cover": {
+   "base": "game",
+   "shown": "Gameplay",
+   "hook": [
+    "BOSS FIGHT:",
+    "day 30"
+   ],
+   "lines": [
+    "jump",
+    "grab the",
+    "coins*",
+    "one more*"
+   ],
+   "graphic": true
+  },
+  "captionLimits": [
+   2,
+   12
+  ]
+ },
+ {
+  "id": "microgame",
+  "name": "Microgame",
+  "layout": "footage",
+  "category": "gaming",
+  "tags": [
+   "cartoon",
+   "music"
+  ],
+  "source": "lemo-opuscar \"microgame\"",
+  "accent": "#FFD23F",
+  "fonts": [
+   [
+    "BowlbyOne",
+    "400"
+   ],
+   [
+    "Fredoka",
+    "600"
+   ]
+  ],
+  "tagline": "A rapid-fire party game: every beat is a new microgame with a one-word command, a burning fuse and a whole new colour scheme.",
+  "bestFor": "Challenges, fast tips, quizzes, gaming and high-energy videos",
+  "look": "bold bars top and bottom that switch colour scheme on every beat, a one-word command (WATCH!, GO!) slamming in, a fuse timer burning down, a game counter",
+  "motion": "frantic but tidy: every beat swaps the scheme and slams a new command",
+  "hookRule": "like a game command (\"10 tips / in 60 seconds!\")",
+  "graphicsRule": "Pills and slams (at most 2) as commands, lists as fast tips.",
+  "ambient": "Colour bars with a command word, a fuse timer and a game counter.",
+  "captions": "Fat white capitals with a dark outline.",
+  "hook": "A white sign with a hard shadow.",
+  "graphics": "Graphics sit on white cards with hard shadows.",
+  "transition": "At each jump in the edit: a dark wipe down.",
+  "sound": "Pops, dings and whooshes.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: fast tips",
+   "hook": [
+    "10 tips",
+    "in 60 seconds!"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "pixel-diorama",
+  "name": "Pixel Diorama",
+  "layout": "story",
+  "category": "gaming",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"hd-2d\" (renamed)",
+  "accent": "#FFD98A",
+  "fonts": [
+   [
+    "PixelifySans",
+    "600"
+   ],
+   [
+    "PixelifySans",
+    "400"
+   ]
+  ],
+  "tagline": "Pixel sprites standing like paper cut-outs in a lit, foggy 3D diorama village, seen through a tilt-shift lens.",
+  "bestFor": "Game-like storytelling, fantasy, RPG fans and cosy narration",
+  "look": "a small 3D diorama village of blocks with red roofs, glowing lanterns and warm fog, a pixel hero sprite walking through it, blurred top and bottom like a tilt-shift lens",
+  "motion": "cosy and stepped: the hero walks on twos, lanterns flicker, cuts dissolve in pixels",
+  "hookRule": "like a quest title (\"Chapter 1: / the lantern\")",
+  "graphicsRule": "Lists as quest logs, pills as chapter names. No callouts.",
+  "ambient": "A foggy block village with flickering lanterns and a walking pixel hero.",
+  "captions": "Pixel capitals with a dark shadow.",
+  "hook": "A dialog box that types itself.",
+  "graphics": "Dark dialog boxes with cream borders.",
+  "transition": "At each jump in the edit: a pixel dissolve.",
+  "sound": "Blips and chimes.",
+  "sfx": "game",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: RPG",
+   "hook": [
+    "Chapter 1:",
+    "the lantern"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "pop-art",
+  "name": "Pop Art",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "any-footage",
+   "talking-head"
+  ],
+  "source": "lemo-opuscar \"pop-art\"; its-applied-ai #46 Comic Book (pop-art panels)",
+  "accent": "#FFE500",
+  "fonts": [
+   [
+    "Anton",
+    "400"
+   ],
+   [
+    "Oswald",
+    "500"
+   ]
+  ],
+  "tagline": "Your footage as a sixties screen-print poster: flat posterized colour, Ben-Day dots, heavy black keylines and speech-balloon captions.",
+  "bestFor": "Bold opinions, fashion, art, products and loud fun talking heads",
+  "look": "the footage posterized into flat bright colour with red Ben-Day dots fixed over it and a heavy black border; speech-balloon captions; slams on a yellow dot explosion",
+  "motion": "punchy: balloons pop in, slams burst, wipes of blue dots",
+  "hookRule": "like a pop-art caption (\"I can't believe / it worked!\")",
+  "graphicsRule": "Slams as pop-art words on a dot burst (up to 2), counters in red with a yellow shadow, lists on white cards.",
+  "ambient": "Ben-Day dots and a heavy black frame.",
+  "captions": "Capitals in white speech balloons, emphasis in red.",
+  "hook": "A yellow caption box with a blue shadow.",
+  "graphics": "White cards with red hard shadows, dot bursts behind slams.",
+  "transition": "At each jump in the edit: a blue wipe of yellow dots.",
+  "sound": "Pops and hits.",
+  "sfx": "print",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: bold",
+   "hook": [
+    "I can't believe",
+    "it worked!"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "risograph",
+  "name": "Risograph",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "any-footage",
+   "music"
+  ],
+  "source": "lemo-opuscar \"risograph\"",
+  "accent": "#FF48B0",
+  "fonts": [
+   [
+    "Staatliches",
+    "400"
+   ],
+   [
+    "SpaceMono",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage printed on a stencil duplicator: two translucent spot inks, fluorescent pink over blue, a little off register every frame.",
+  "bestFor": "Zines, indie brands, music, art and design-led creators",
+  "look": "the footage printed in two translucent spot inks (fluorescent pink over blue) on warm paper, slightly misregistered and shifting every frame, grainy halftone",
+  "motion": "printed on twos: the second ink wobbles off register, blinds of pink at cuts",
+  "hookRule": "like a zine cover line (\"Issue 04: / small print\")",
+  "graphicsRule": "Counters and slams in pink with a blue offset, lists on paper cards. At most 1 slam.",
+  "ambient": "A pink ink pass slightly off register, halftone and paper grain.",
+  "captions": "Blue capitals with a pink misprint.",
+  "hook": "A two-ink headline off register.",
+  "graphics": "Paper cards with a blue border and pink offset.",
+  "transition": "At each jump in the edit: pink blinds.",
+  "sound": "Clicks and taps.",
+  "sfx": "print",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: zine",
+   "hook": [
+    "Issue 04:",
+    "small print"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "woodcut",
+  "name": "Woodcut",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "retro",
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"woodcut\"",
+  "accent": "#B3261E",
+  "fonts": [
+   [
+    "Ultra",
+    "400"
+   ],
+   [
+    "OldStandardTT",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage printed as a woodcut: black ink on warm paper with a hard edge, gouge strokes, wood grain and one red block.",
+  "bestFor": "Folk tales, history, craft, bold quotes and dramatic storytelling",
+  "look": "the footage printed as a black-and-cream relief print with a hard edge, carved gouge strokes and wood grain in the blacks, a heavy black border and a red seal",
+  "motion": "bold and still: cards stamp in, ink spreads at cuts",
+  "hookRule": "like a broadside headline (\"The year / the river froze\")",
+  "graphicsRule": "Headlines and slams (at most 1, on red) as printed blocks; lists on cream.",
+  "ambient": "Gouge strokes, wood grain, a heavy border and a red seal.",
+  "captions": "Cream capitals on black blocks.",
+  "hook": "A cream block with a heavy black border.",
+  "graphics": "Cream cards with heavy borders, red slams.",
+  "transition": "At each jump in the edit: an ink blot.",
+  "sound": "Thuds and page sounds.",
+  "sfx": "print",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: story",
+   "hook": [
+    "The year",
+    "the river froze"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "copper-engraving",
+  "name": "Copper Engraving",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "retro",
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"engraving\"",
+  "accent": "#B5651D",
+  "fonts": [
+   [
+    "IMFellEnglish",
+    "400"
+   ],
+   [
+    "IMFellEnglish",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage as an engraved plate: sepia ink, fine hatching lines for tone, a plate mark pressed into thick paper.",
+  "bestFor": "History, science, nature, books and old-world storytelling",
+  "look": "the footage printed in warm sepia ink with fine crossing hatch lines over it like engraved tone, inside a pressed plate mark on thick paper with a figure caption",
+  "motion": "quiet and scholarly: fades, fine blinds at cuts",
+  "hookRule": "like a plate title (\"A study / of the common crow\")",
+  "graphicsRule": "Headlines as plate captions, lists as annotations, counters in sepia. At most 1 slam.",
+  "ambient": "Engraved hatching, a plate mark and a figure caption.",
+  "captions": "Italic serif on cream between fine rules.",
+  "hook": "The hook is a double-ruled title plate, on screen from the first frame.",
+  "graphics": "Graphics sit on cream cards with double rules.",
+  "transition": "At each jump in the edit: fine paper blinds.",
+  "sound": "Page turns.",
+  "sfx": "paper",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: history",
+   "hook": [
+    "A study of",
+    "the common crow"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "urban-sketch",
+  "name": "Urban Sketch",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"urban-sketch\"",
+  "accent": "#D9643A",
+  "fonts": [
+   [
+    "ReenieBeanie",
+    "400"
+   ],
+   [
+    "Kalam",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage traced into a sketchbook: wobbly sepia fineliner lines found from the picture, loose watercolour washes, a spiral binding.",
+  "bestFor": "Travel, cafés, cities, food and slow vlogs",
+  "look": "the footage turned into sepia line art (its edges traced like a fineliner) on cream paper, loose transparent watercolour washes that do not stay in the lines, a spiral binding and a handwritten note",
+  "motion": "hand-made: notes write in, washes drift, pages tear at cuts",
+  "hookRule": "like a sketchbook note (\"Tuesday, / from the café\")",
+  "graphicsRule": "Pills as notes, lists as sketchbook jottings. At most 1 slam.",
+  "ambient": "Watercolour washes, paper grain, a spiral binding and a note.",
+  "captions": "Handwriting in sepia, emphasis in terracotta.",
+  "hook": "A handwritten title over a wash.",
+  "graphics": "Paper cards with a sepia border, scribbled bullets.",
+  "transition": "At each jump in the edit: a page tear.",
+  "sound": "Page and pencil sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: travel",
+   "hook": [
+    "Tuesday,",
+    "from the café"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "coloured-pencil",
+  "name": "Coloured Pencil",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling",
+   "explainer"
+  ],
+  "source": "lemo-opuscar \"colored-pencil\"",
+  "accent": "#D9643A",
+  "fonts": [
+   [
+    "Gaegu",
+    "700"
+   ],
+   [
+    "Gaegu",
+    "400"
+   ]
+  ],
+  "tagline": "A cutaway world drawn in coloured pencil: soil layers, roots, a sleeping rabbit in its burrow, the meadow and sky above.",
+  "bestFor": "Nature, kids stories, science of the ground, gentle narration",
+  "look": "a cutaway world redrawn as a coloured-pencil plate on toothy paper: sky, meadow, soil layers with stones and roots, a rabbit sleeping in its burrow, directional hatching that re-strikes each frame",
+  "motion": "the hatching boils on twos, the rabbit breathes, pages tear at cuts",
+  "hookRule": "like a picture-book title (\"Under / the meadow\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A cutaway meadow in coloured pencil with a sleeping rabbit.",
+  "captions": "Rounded handwriting on paper, emphasis in terracotta.",
+  "hook": "The hook is a handwritten title, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: a page tear.",
+  "sound": "Pencil and page sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: nature",
+   "hook": [
+    "Under",
+    "the meadow"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "crayon-book",
+  "name": "Crayon Book",
+  "layout": "story",
+  "category": "cartoon",
+  "tags": [
+   "storytelling",
+   "art"
+  ],
+  "source": "lemo-opuscar \"crayon-book\", \"crayon-world\"",
+  "accent": "#E63946",
+  "fonts": [
+   [
+    "CabinSketch",
+    "700"
+   ],
+   [
+    "Mali",
+    "600"
+   ]
+  ],
+  "tagline": "A picture-book page drawn live in wax crayon by a child's hand, a watercolour wash sweeping in to reveal the colour.",
+  "bestFor": "Kids stories, family memories, birthdays and heartfelt narration",
+  "look": "a picture-book page in wax crayon on toothy paper, redrawn twelve times a second: a sun, a house, a big tree, a dog and a kite; a watercolour wash sweeps in under the crayon",
+  "motion": "wobbly and alive: the crayon boils, the kite dances, the wash sweeps across",
+  "hookRule": "like a kid's drawing title (\"The best / day ever\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A crayon drawing with a sun, a house, a tree, a dog and a kite, a wash sweeping in.",
+  "captions": "Sketchy letters on paper, emphasis in red crayon.",
+  "hook": "The hook is a blue crayon title, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: a page tear.",
+  "sound": "Pops and pencil sounds.",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: kids",
+   "hook": [
+    "The best",
+    "day ever"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "one-line",
+  "name": "One Line",
+  "layout": "explainer",
+  "category": "art",
+  "tags": [
+   "explainer",
+   "motion"
+  ],
+  "source": "lemo-opuscar \"one-line\"; its-applied-ai #38 and #69 (thin-line styles, folded in)",
+  "accent": "#E0402A",
+  "fonts": [
+   [
+    "Manrope",
+    "300,400"
+   ],
+   [
+    "Manrope",
+    "300"
+   ]
+  ],
+  "tagline": "A single ink line that never leaves the paper draws your idea: a face becomes a bird becomes a house, morphing instead of cutting.",
+  "bestFor": "Philosophy, design, minimal explainers, wellbeing and calm talking",
+  "look": "a single continuous ink line on warm paper that draws a face, then morphs into a bird, then into a house with a heart, a red pen tip glowing where it draws",
+  "motion": "one unbroken line: it draws, holds, then morphs into the next drawing",
+  "hookRule": "one calm line (\"One line, / one idea\")",
+  "graphicsRule": "Headlines in thin type, very few graphics. At most 1 slam.",
+  "ambient": "One line morphing from a face to a bird to a house.",
+  "captions": "Thin sans on paper, emphasis in red.",
+  "hook": "The hook is a thin, quiet title, on screen from the first frame.",
+  "graphics": "Graphics sit on paper cards with a hairline.",
+  "transition": "At each jump in the edit: a paper wipe with an ink edge.",
+  "sound": "Soft swishes.",
+  "sfx": "minimal",
+  "cover": {
+   "base": "scene",
+   "shown": "Explainer: ideas",
+   "hook": [
+    "One line,",
+    "one idea"
+   ],
+   "lines": [
+    "here is",
+    "how it",
+    "really works*",
+    "step by step*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "ukiyo-e",
+  "name": "Ukiyo-e",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"ukiyoe\"",
+  "accent": "#B83A2E",
+  "fonts": [
+   [
+    "ZenAntique",
+    "400"
+   ],
+   [
+    "ShipporiMincho",
+    "600"
+   ]
+  ],
+  "tagline": "An Edo-period woodblock print come to life: a great curling wave, a distant mountain, boats riding the swell (an original print).",
+  "bestFor": "History, Japan, nature, legends and dramatic storytelling",
+  "look": "an original woodblock print: flat colour blocks with carved outlines, a bokashi sky fading from deep blue, a great curling wave with claw-like foam, a snow-capped mountain, two boats, a cartouche and a red seal",
+  "motion": "the wave rolls, the boats bob, paper grain everywhere",
+  "hookRule": "like a print's title (\"The great wave / and three boats\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A woodblock wave rolling before a distant mountain with boats.",
+  "captions": "Serif on cream with a blue rule, emphasis in red.",
+  "hook": "A cream cartouche with a blue border.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "An indigo wipe with a foam edge.",
+  "sound": "Soft whooshes.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: legend",
+   "hook": [
+    "The great wave",
+    "and three boats"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "stained-glass",
+  "name": "Stained Glass",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"stained-glass\"; its-applied-ai #10 Glass Mosaic",
+  "accent": "#F2D16B",
+  "fonts": [
+   [
+    "CinzelDecorative",
+    "700"
+   ],
+   [
+    "CormorantGaramond",
+    "600"
+   ]
+  ],
+  "tagline": "A stained-glass window in a dark stone hall, alive only where the sun touches it: a band of light crosses the glass and the floor.",
+  "bestFor": "Legends, history, faith and fantasy stories, epic narration",
+  "look": "an arched stained-glass window of seeded glass pieces in black lead (a bird on a branch, a sun, blue sky) in a dark stone wall; a band of sunlight crosses it, the pieces it touches flare, coloured light falls on the floor",
+  "motion": "slow: light moves across the glass, pieces flare and fade",
+  "hookRule": "like an inscription (\"The bird / in the window\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A stained-glass window with a moving band of sunlight.",
+  "captions": "Serif in warm white with a dark edge.",
+  "hook": "The hook is a gold-framed panel, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: dark blinds.",
+  "sound": "Chimes and shimmers.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: legend",
+   "hook": [
+    "The bird",
+    "in the window"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "illuminated",
+  "name": "Illuminated Manuscript",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling",
+   "retro"
+  ],
+  "source": "lemo-opuscar \"gilded-illumination\"",
+  "accent": "#D4A637",
+  "fonts": [
+   [
+    "MedievalSharp",
+    "400"
+   ],
+   [
+    "IMFellEnglish",
+    "400"
+   ]
+  ],
+  "tagline": "The whole frame is a gilded miniature on vellum: a burnished gold sky that glints, a castle on a hill, a vine border and a decorated initial.",
+  "bestFor": "History, fantasy, legends, books and once-upon-a-time narration",
+  "look": "a gilded miniature painting on vellum: flat mineral pigments in firm ink outlines, a burnished gold sky with a moving glint, a castle on a green hill, a small figure, a lapis and vermilion vine border, a decorated initial",
+  "motion": "still like a page: the gold glints, the figure strolls, blinds of vellum at cuts",
+  "hookRule": "like a chapter heading (\"Once, in a / gold country\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A gilded miniature with a castle, a vine border and a decorated initial.",
+  "captions": "Serif in ink on vellum between gold rules.",
+  "hook": "A lapis plate with a gold border.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: vellum blinds.",
+  "sound": "Chimes and page sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: fantasy",
+   "hook": [
+    "Once, in a",
+    "gold country"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "shadow-puppets",
+  "name": "Shadow Puppets",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"shadow-puppet\"",
+  "accent": "#FFD27A",
+  "fonts": [
+   [
+    "KaiseiDecol",
+    "700"
+   ],
+   [
+    "KaiseiDecol",
+    "500"
+   ]
+  ],
+  "tagline": "Shadow theatre: translucent dyed-hide puppets carved like lace, pressed against a cotton screen lit by flickering oil lamps.",
+  "bestFor": "Folk tales, legends, history and atmospheric storytelling",
+  "look": "a cotton shadow-theatre screen lit from behind by flickering lamps; translucent red, green and ochre hide puppets carved like lace (a rider on a horse, a tree) with jointed limbs swinging on rods",
+  "motion": "puppet motion: jointed limbs swing, the rider crosses, the light breathes",
+  "hookRule": "like a theatre bill (\"The rider / at dawn\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A lamp-lit screen with carved hide puppets of a rider and a tree.",
+  "captions": "Warm cream letters with a dark edge.",
+  "hook": "The hook is a glowing title, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: an iris to the dark.",
+  "sound": "Soft drums (thuds) and chimes.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: folk tale",
+   "hook": [
+    "The rider",
+    "at dawn"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "paper-lantern",
+  "name": "Paper Lantern",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"paper-lantern\"",
+  "accent": "#FFE3A8",
+  "fonts": [
+   [
+    "ZenAntique",
+    "400"
+   ],
+   [
+    "ShipporiMincho",
+    "500"
+   ]
+  ],
+  "tagline": "A layered paper-cut shadow box lit from behind: six sheets of cut card glowing in different depths of amber.",
+  "bestFor": "Calm stories, festivals, memories, meditation and gentle narration",
+  "look": "a shadow box of six layered paper cut-outs (mountains, a pagoda, a bridge, trees, birds) lit from behind so each layer glows a different amber, the moon pale above, layers swaying slightly apart",
+  "motion": "the light breathes, layers sway, birds drift; iris cuts",
+  "hookRule": "like a lantern inscription (\"The pagoda / on the hill\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "Glowing layered paper-cut scenery in a shadow box.",
+  "captions": "Warm cream letters with a dark glow.",
+  "hook": "The hook is a glowing title, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: an iris to the dark.",
+  "sound": "Soft chimes.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: calm",
+   "hook": [
+    "The pagoda",
+    "on the hill"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "pop-up-book",
+  "name": "Pop-Up Book",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling",
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"paper-popup\"; its-applied-ai #58 Paper Pop-Up (three.js, redone in CSS 3D)",
+  "accent": "#D64545",
+  "fonts": [
+   [
+    "Fraunces",
+    "700"
+   ],
+   [
+    "Fraunces",
+    "400"
+   ]
+  ],
+  "tagline": "A pop-up book on a wooden desk: the pages open and a paper house, trees, mountains and a sun spring up from the fold.",
+  "bestFor": "Kids stories, travel memories, announcements and cosy narration",
+  "look": "a pop-up book on a wooden desk: the pages open and paper pieces spring up from the fold one after another (mountains, a house with a red roof, trees, a rising sun) with paper thickness and soft shadows",
+  "motion": "pieces spring up on hinges with a little bounce; page-wipe cuts",
+  "hookRule": "like a storybook title (\"Turn / the page\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A pop-up book whose paper scenery springs up from the fold.",
+  "captions": "Serif on paper slips, emphasis in red.",
+  "hook": "The hook is a paper title slip, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: a page wipe.",
+  "sound": "Page and pop sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: kids",
+   "hook": [
+    "Turn",
+    "the page"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "red-paper-cut",
+  "name": "Red Paper-Cut",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"papercut-red\"",
+  "accent": "#C8102E",
+  "fonts": [
+   [
+    "MaShanZheng",
+    "400"
+   ],
+   [
+    "ZenMaruGothic",
+    "500"
+   ]
+  ],
+  "tagline": "Window-flower paper-cuts come to life: a red carp leaping over waves inside a round lattice frame, lotus flowers and cloud scrolls.",
+  "bestFor": "Festivals, New Year, folk stories, luck and celebration",
+  "look": "red cut-paper on cream where the cuts are the drawing: a jointed carp leaping over scalloped waves inside a round lattice frame, lotus flowers and cloud scrolls swaying on their joints",
+  "motion": "jointed paper motion: the carp leaps and its tail swings, flowers sway",
+  "hookRule": "like a festival greeting (\"The carp / that leapt\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A red paper-cut carp leaping in a lattice frame with lotus flowers.",
+  "captions": "Cream letters on red cut-paper strips.",
+  "hook": "A cream plate with a red border.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: a red wipe of cut-out dots.",
+  "sound": "Pops and chimes.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: festival",
+   "hook": [
+    "The carp",
+    "that leapt"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "scratchboard",
+  "name": "Scratchboard",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"printed-long-take\"",
+  "accent": "#D2332A",
+  "fonts": [
+   [
+    "Grenze",
+    "700"
+   ],
+   [
+    "Grenze",
+    "400"
+   ]
+  ],
+  "tagline": "A scratchboard print in one unbroken camera move: white lines scratched from black, a lighthouse on a cliff, a sea of moving wave lines, rain.",
+  "bestFor": "Dark tales, mysteries, the sea, history and moody narration",
+  "look": "a scratchboard print: white lines scratched out of black ink with one red, a lighthouse on a cross-hatched cliff, a sea of moving wave lines, scratched rain, a beam sweeping; one slow push-in",
+  "motion": "one unbroken push-in; waves move, rain falls, the beam sweeps",
+  "hookRule": "like an old engraving title (\"The last / keeper\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A scratched lighthouse, sea and rain on black.",
+  "captions": "Spaced white capitals, emphasis in red.",
+  "hook": "The hook is a white-framed title, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: an ink blot.",
+  "sound": "Low wind (sweeps) and hits.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: dark tale",
+   "hook": [
+    "The last",
+    "keeper"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "screen-print",
+  "name": "Screen Print Poster",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling",
+   "retro"
+  ],
+  "source": "lemo-opuscar \"silkscreen-poster\"; its-applied-ai #24 Travel Poster",
+  "accent": "#B5502E",
+  "fonts": [
+   [
+    "BebasNeue",
+    "400"
+   ],
+   [
+    "JosefinSans",
+    "600"
+   ]
+  ],
+  "tagline": "A screen-printed travel poster: opaque flat inks, stepped colour bands, layered mountains, a trail to the summit and a big title band.",
+  "bestFor": "Travel, outdoors, places, adventure and destination stories",
+  "look": "an original screen-printed travel poster: opaque flat inks, stepped sky bands instead of gradients, layered teal and navy mountains, a dashed trail drawing to the summit, a rising rust sun, a lake and pines, title and footer bands",
+  "motion": "the sun rises, the trail draws, mountains drift slightly; blinds cuts",
+  "hookRule": "like a poster title (\"Visit / the high pass\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A screen-printed mountain poster with a trail to the summit.",
+  "captions": "Spaced cream capitals on navy, emphasis in ochre.",
+  "hook": "The poster title in the top band.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: navy blinds.",
+  "sound": "Whooshes and chimes.",
+  "sfx": "print",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: travel",
+   "hook": [
+    "Visit",
+    "the high pass"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "memphis",
+  "name": "Memphis Diorama",
+  "layout": "story",
+  "category": "art",
+  "tags": [
+   "storytelling",
+   "cartoon"
+  ],
+  "source": "lemo-opuscar \"memphis-diorama\" (style by EianLu, redrawn)",
+  "accent": "#5B7CFA",
+  "fonts": [
+   [
+    "Galindo",
+    "400"
+   ],
+   [
+    "Nunito",
+    "700"
+   ]
+  ],
+  "tagline": "A place built as a tabletop model in flat Memphis colours: squiggles, confetti, pastel blocks, a striped tower and a palm springing up.",
+  "bestFor": "Places, design, playful brands, city guides and fun stories",
+  "look": "an organic grainy frame on warm paper holding a small model world in flat Memphis colours (pink, mint, yellow, blue) with ink outlines: blocks, a striped tower, a palm, squiggles and spinning confetti",
+  "motion": "playful springs: blocks pop up, confetti spins, squiggles wave",
+  "hookRule": "like a town sign (\"Welcome / to town\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "A Memphis-style tabletop model springing up inside an organic frame.",
+  "captions": "Rounded letters on a yellow strip with a pink shadow.",
+  "hook": "A mint sign with a hard shadow.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: a pink wipe of dots.",
+  "sound": "Pops and boings (bubbles).",
+  "sfx": "cartoon",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: places",
+   "hook": [
+    "Welcome",
+    "to town"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "art-deco",
+  "name": "Art Deco",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "retro",
+   "talking-head"
+  ],
+  "source": "lemo-opuscar \"art-deco\"",
+  "accent": "#D8B25A",
+  "fonts": [
+   [
+    "Limelight",
+    "400"
+   ],
+   [
+    "PoiretOne",
+    "400"
+   ]
+  ],
+  "tagline": "Black lacquer and engraved gold: a symmetrical stepped gold frame with sunburst fans round your video, gold lettering, elevator-door cuts.",
+  "bestFor": "Luxury, events, fashion, history, hotels and elegant talking heads",
+  "look": "a 1930s poster frame round the footage: black lacquer vignette, a stepped engraved-gold border with sunburst fans and a glint running round it, gold lettering on a centre axis",
+  "motion": "elegant and symmetrical: the glint travels, cards fade, cuts are elevator doors",
+  "hookRule": "like a grand opening card (\"The grand / opening\")",
+  "graphicsRule": "Headlines and counters in gold, lists on black cards. At most 1 slam.",
+  "ambient": "A stepped gold frame with sunburst fans and a travelling glint.",
+  "captions": "Spaced cream capitals between gold rules.",
+  "hook": "A gold-lettered card with double borders.",
+  "graphics": "Black cards with gold borders, gold numbers.",
+  "transition": "At each jump in the edit: elevator doors close and open.",
+  "sound": "Chimes and shimmers.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: luxury",
+   "hook": [
+    "The grand",
+    "opening"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "vintage-collage",
+  "name": "Vintage Collage",
+  "layout": "window",
+  "category": "art",
+  "tags": [
+   "any-footage",
+   "retro"
+  ],
+  "source": "lemo-opuscar \"vintage-collage\"",
+  "accent": "#B5502E",
+  "fonts": [
+   [
+    "AbrilFatface",
+    "400"
+   ],
+   [
+    "Lora",
+    "400"
+   ]
+  ],
+  "tagline": "Your footage cut out and taped onto a paper table among stamps, ticket stubs, a map scrap, a torn page and a pressed flower.",
+  "bestFor": "Travel diaries, memories, scrapbooks, fashion and storytelling vlogs",
+  "look": "a magazine collage on a paper table: the footage cut out with a white margin and taped down, surrounded by a torn page of type, a map scrap, a stamp, a ticket stub and a pressed flower; ransom-note captions",
+  "motion": "scrappy and tactile: pieces pop in tilted, paper tears at cuts",
+  "hookRule": "like a scrapbook label (\"Found in / a flea market\")",
+  "graphicsRule": "Pills as paper labels, lists as notes, counters on paper scraps. At most 1 slam.",
+  "ambient": "A paper table with stamps, tickets, a map scrap and tape.",
+  "captions": "Ransom-note cut-out words, emphasis on red paper.",
+  "hook": "The hook is a tilted paper label, on screen from the first frame.",
+  "graphics": "Tilted paper cards, star bullets.",
+  "transition": "At each jump in the edit: a paper tear.",
+  "sound": "Page and tape sounds.",
+  "sfx": "paper",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: travel diary",
+   "hook": [
+    "Found in",
+    "a flea market"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "double-exposure",
+  "name": "Double Exposure",
+  "layout": "window",
+  "category": "art",
+  "tags": [
+   "storytelling",
+   "motion"
+  ],
+  "source": "lemo-opuscar \"double-exposure\"",
+  "accent": "#C97B4A",
+  "fonts": [
+   [
+    "JosefinSans",
+    "300"
+   ],
+   [
+    "JosefinSans",
+    "400"
+   ]
+  ],
+  "tagline": "Two exposures on one frame: your footage shows through a great deer's silhouette against a foggy forest and mountains.",
+  "bestFor": "Reflective stories, nature, music, poetry and cinematic intros",
+  "look": "a double exposure: a foggy forest-and-mountain landscape fills the frame and the footage shows through the silhouette of a great deer's head, with a soft fog edge where the two images meet",
+  "motion": "slow and dreamy: the landscape drifts in parallax, flashes of fog at cuts",
+  "hookRule": "like a poetic title (\"What the forest / remembers\")",
+  "graphicsRule": "Headlines in thin type, very few graphics. At most 1 slam.",
+  "ambient": "A foggy landscape round a deer-shaped window of your footage.",
+  "captions": "Thin spaced capitals on fog.",
+  "hook": "The hook is a thin spaced title, on screen from the first frame.",
+  "graphics": "Fog-white cards with a hairline.",
+  "transition": "At each jump in the edit: a fog flash.",
+  "sound": "Soft swells.",
+  "sfx": "soft",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: reflective",
+   "hook": [
+    "What the forest",
+    "remembers"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "felt-wool",
+  "name": "Felt & Wool",
+  "layout": "footage",
+  "category": "art",
+  "tags": [
+   "cartoon",
+   "talking-head"
+  ],
+  "source": "its-applied-ai #60 Fur (ring of hairs on knitted wool); awesome-opus5-5-videos felt pieces",
+  "accent": "#E2A93B",
+  "fonts": [
+   [
+    "Chewy",
+    "400"
+   ],
+   [
+    "Mali",
+    "500"
+   ]
+  ],
+  "tagline": "Cosy craft: a knitted wool frame, felt cards with blanket stitches, fuzzy yarn letters and a tuft of soft hairs swaying.",
+  "bestFor": "Crafts, cosy vlogs, kids, home and handmade brands",
+  "look": "a knitted red wool frame round the footage, felt-cut cards with dashed blanket stitches, fuzzy yarn lettering with a fibre halo, a tuft of soft cream hairs swaying in the corner",
+  "motion": "soft and bouncy: cards bounce, hairs sway, iris cuts",
+  "hookRule": "like a craft label (\"Made / by hand\")",
+  "graphicsRule": "Pills and lists on felt cards, counters in fuzzy red. At most 1 slam.",
+  "ambient": "A knitted frame and a swaying tuft of soft hairs.",
+  "captions": "Soft cream letters with a brown edge.",
+  "hook": "A felt label with a stitched border.",
+  "graphics": "Felt cards with stitches, round markers.",
+  "transition": "At each jump in the edit: a red iris.",
+  "sound": "Soft pops.",
+  "sfx": "soft",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: crafts",
+   "hook": [
+    "Made",
+    "by hand"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "isometric-town",
+  "name": "Isometric Town",
+  "layout": "story",
+  "category": "explainer",
+  "tags": [
+   "storytelling",
+   "data"
+  ],
+  "source": "lemo-opuscar \"isometric-picture-book\"; its-applied-ai #19 Isometric (power to your home), #28 bean to cup",
+  "accent": "#E76F51",
+  "fonts": [
+   [
+    "Lexend",
+    "700"
+   ],
+   [
+    "Lexend",
+    "400"
+   ]
+  ],
+  "tagline": "A calm picture-book town drawn in true isometric: shops, a park, a bus going round and small people walking.",
+  "bestFor": "Everyday rules, civic explainers, city life, kids and calm stories",
+  "look": "a picture-book town in true isometric with flat colour: a crossroads, coloured shops whose windows warm up, a park tree, a bus going round the block, small faceless people walking",
+  "motion": "calm and steady: people walk, the bus loops, windows light up",
+  "hookRule": "like a picture-book title (\"How our town / says good morning\")",
+  "graphicsRule": "Headlines and pills as lines of the story; counters only for a key number. No callouts (no footage).",
+  "ambient": "An isometric town with shops, a bus and walking people.",
+  "captions": "Clean sans on white, emphasis in coral.",
+  "hook": "The hook is a white rounded title card, on screen from the first frame.",
+  "graphics": "Cards in the medium, matching markers.",
+  "transition": "At each jump in the edit: light blinds.",
+  "sound": "Soft chimes and pops.",
+  "sfx": "soft",
+  "cover": {
+   "base": "scene",
+   "shown": "Story: everyday",
+   "hook": [
+    "How our town",
+    "says good morning"
+   ],
+   "lines": [
+    "once upon a",
+    "time far*",
+    "away there",
+    "was a story*"
+   ],
+   "graphic": false
+  }
+ },
+ {
+  "id": "beat-cards",
+  "name": "Beat Cards",
+  "layout": "footage",
+  "category": "music",
+  "tags": [
+   "talking-head",
+   "motion"
+  ],
+  "source": "its-applied-ai #81 Beat Counter, #83 Kinetic Text (librosa beat cutting)",
+  "accent": "#FFD60A",
+  "fonts": [
+   [
+    "Anton",
+    "400"
+   ],
+   [
+    "SpaceMono",
+    "400"
+   ]
+  ],
+  "tagline": "The top of the frame cuts to a new bold card on every beat of your talk, with a waveform strip running along the bottom.",
+  "bestFor": "Fast tips, hype talking heads, music, sport and countdowns",
+  "look": "a band at the top that cuts to a new bold card on every beat (a counting number, a bullseye, a striped ON THE BEAT banner, a ring of dots) in black, yellow, cream and red-orange, a waveform strip with beat markers at the bottom",
+  "motion": "cut on the beat: every caption line swaps the card with a snap",
+  "hookRule": "like a countdown card (\"5 rules, / one per beat\")",
+  "graphicsRule": "Lists and counters suit it; keep graphics in the middle band. At most 1 slam.",
+  "ambient": "A beat-cut card band on top and a waveform strip below.",
+  "captions": "Black capitals on yellow strips.",
+  "hook": "The hook is a black block title, on screen from the first frame.",
+  "graphics": "Cream cards with black borders.",
+  "transition": "At each jump in the edit: a fast black shutter.",
+  "sound": "Kicks and claps.",
+  "sfx": "music",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: fast tips",
+   "hook": [
+    "5 rules,",
+    "one per beat"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "audiogram",
+  "name": "Audiogram",
+  "layout": "window",
+  "category": "music",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "its-applied-ai #82 Audio Waveform (librosa spectrogram and playhead)",
+  "accent": "#FF6F61",
+  "fonts": [
+   [
+    "Outfit",
+    "700"
+   ],
+   [
+    "Outfit",
+    "400"
+   ]
+  ],
+  "tagline": "Your podcast clip as an audiogram: the video on an episode card, a spectrogram and coral waveform moving with your voice, a playhead.",
+  "bestFor": "Podcasts, interviews, voice-led clips and audio content",
+  "look": "a podcast audiogram: the footage in a rounded card like an episode cover on deep purple, a spectrogram and a coral waveform under it moving with the voice, a white playhead, the show name and a tempo readout",
+  "motion": "calm and audio-led: the waveform moves with the voice, the playhead travels",
+  "hookRule": "like an episode pull-quote (\"The one habit / that changed me\")",
+  "graphicsRule": "Pills for the episode, headlines for quotes. Few graphics: the audio is the star.",
+  "ambient": "An episode card, a spectrogram, a waveform and a playhead.",
+  "captions": "White on dark rounded strips, emphasis in orange.",
+  "hook": "The hook is a dark rounded quote card, on screen from the first frame.",
+  "graphics": "Dark cards with a coral border.",
+  "transition": "At each jump in the edit: a soft coral flash.",
+  "sound": "Soft notifications.",
+  "sfx": "soft",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: podcast",
+   "hook": [
+    "The one habit",
+    "that changed me"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "kinetic-type",
+  "name": "Kinetic Type",
+  "layout": "footage",
+  "category": "music",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "awesome-opus5-5-videos (kinetic typography and lyric videos); its-applied-ai #83 Kinetic Text; ShotCraft typography moves",
+  "accent": "#FFD23F",
+  "fonts": [
+   [
+    "Anton",
+    "400"
+   ],
+   [
+    "Inter",
+    "500"
+   ]
+  ],
+  "tagline": "Lyric-video typography: every word lands on its own the moment it is said, stacked big and tight, with colour fields that swap on the beat.",
+  "bestFor": "Music, motivation, quotes, speeches and punchy talking heads",
+  "look": "big tight stacked words in a heavy condensed face, each word arriving on its own when it is said, colour fields top and bottom swapping on every beat, the footage darkened between them",
+  "motion": "word by word on the voice; fields swap each beat; fast zoom cuts",
+  "hookRule": "like a lyric line (\"Say it / like you mean it\")",
+  "graphicsRule": "Few graphics: the words are the show. Counters as huge numbers, at most 1 slam.",
+  "ambient": "Colour fields that swap on the beat and a big beat counter.",
+  "captions": "Huge stacked capitals, each word arriving on its own.",
+  "hook": "The hook is a huge stacked title, on screen from the first frame.",
+  "graphics": "Graphics sit on cream cards.",
+  "transition": "At each jump in the edit: a fast zoom.",
+  "sound": "Kicks and swooshes.",
+  "sfx": "music",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: motivation",
+   "hook": [
+    "Say it",
+    "like you mean it"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  },
+  "captionLimits": [
+   3,
+   18
+  ]
+ },
+ {
+  "id": "city-symphony",
+  "name": "City Symphony",
+  "layout": "footage",
+  "category": "music",
+  "tags": [
+   "any-footage"
+  ],
+  "source": "lemo-opuscar \"city-symphony\"",
+  "accent": "#FFB347",
+  "fonts": [
+   [
+    "JosefinSans",
+    "300"
+   ],
+   [
+    "Inter",
+    "400"
+   ]
+  ],
+  "tagline": "A city cut like minimalist music: time-lapse light trails stream along the bottom, clouds race, a white pulse on every beat.",
+  "bestFor": "City vlogs, travel, b-roll edits, music and mood pieces",
+  "look": "time-lapse light trails (red tail lights, white headlights) streaming along the bottom of the footage, clouds racing over the top, a fast time-lapse clock, a thin white pulse on each beat",
+  "motion": "rhythmic: trails stream, the clock races, the frame pulses on the beat",
+  "hookRule": "like a film title (\"24 hours, / one street\")",
+  "graphicsRule": "Headlines in thin type, counters for times. Few graphics.",
+  "ambient": "Streaming light trails, racing clouds, a fast clock and beat pulses.",
+  "captions": "Thin spaced capitals.",
+  "hook": "The hook is a thin, spaced title, on screen from the first frame.",
+  "graphics": "Graphics sit on dark glass cards.",
+  "transition": "At each jump in the edit: a white flash.",
+  "sound": "Pulses and whooshes.",
+  "sfx": "music",
+  "cover": {
+   "base": "city-night",
+   "shown": "Night b-roll",
+   "hook": [
+    "24 hours,",
+    "one street"
+   ],
+   "lines": [
+    "3 a.m.",
+    "downtown",
+    "every light*",
+    "still on*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "sunset-silhouette",
+  "name": "Sunset Silhouette",
+  "layout": "footage",
+  "category": "music",
+  "tags": [
+   "any-footage",
+   "storytelling"
+  ],
+  "source": "lemo-opuscar \"silhouette-rhythm\"",
+  "accent": "#FEB47B",
+  "fonts": [
+   [
+    "Unbounded",
+    "700"
+   ],
+   [
+    "Inter",
+    "500"
+   ]
+  ],
+  "tagline": "Your footage turned to pure black silhouettes against a saturated sunset, with a big sun that pulses on every beat.",
+  "bestFor": "Music, travel, motivation, romance and dramatic moments",
+  "look": "the footage cut to a flat black silhouette, everything bright replaced by a slowly turning purple-pink-orange sunset gradient, a big sun that pulses on each beat",
+  "motion": "the sun pulses on the beat, the sky turns slowly; warm flash cuts",
+  "hookRule": "like a poster line (\"Golden hour, / every day\")",
+  "graphicsRule": "Headlines and slams (at most 1) in warm white; few graphics.",
+  "ambient": "A sunset gradient behind black silhouettes and a pulsing sun.",
+  "captions": "Warm white capitals with a purple shadow.",
+  "hook": "The hook is a warm white title, on screen from the first frame.",
+  "graphics": "Graphics sit on purple glass cards.",
+  "transition": "At each jump in the edit: a warm flash.",
+  "sound": "Swells and chimes.",
+  "sfx": "music",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: music",
+   "hook": [
+    "Golden hour,",
+    "every day"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "tilt-shift",
+  "name": "Tilt-Shift",
+  "layout": "footage",
+  "category": "any-footage",
+  "tags": [
+   "motion"
+  ],
+  "source": "lemo-opuscar \"tilt-shift\"",
+  "accent": "#FF5D73",
+  "fonts": [
+   [
+    "Nunito",
+    "700"
+   ],
+   [
+    "Nunito",
+    "600"
+   ]
+  ],
+  "tagline": "A real place made to look like a tabletop model: strong lens blur top and bottom, a sharp band through the middle, toy-bright colour.",
+  "bestFor": "Cities, travel, drone shots, events and b-roll",
+  "look": "a tilt-shift look: strong lens blur over the top and bottom of the footage with a sharp band across the middle, colours pushed bright and toy-like, labels like a model railway's signs",
+  "motion": "bouncy little labels, quick zoom cuts",
+  "hookRule": "like a model sign (\"Tiny city, / big day\")",
+  "graphicsRule": "Pills and callouts as little signs; counters on white. At most 1 slam.",
+  "ambient": "Tilt-shift blur bands and a scale label.",
+  "captions": "Dark sans on white chips, emphasis in coral.",
+  "hook": "The hook is a white sign with a grey edge, on screen from the first frame.",
+  "graphics": "Graphics sit on white sign cards.",
+  "transition": "At each jump in the edit: a quick zoom.",
+  "sound": "Pops and clicks.",
+  "sfx": "soft",
+  "cover": {
+   "base": "city-day",
+   "shown": "Any footage: city",
+   "hook": [
+    "Tiny city,",
+    "big day"
+   ],
+   "lines": [
+    "the bus",
+    "was late",
+    "again*",
+    "so I ran*"
+   ],
+   "graphic": true
+  }
+ },
+ {
+  "id": "light-leak",
+  "name": "Light Leak",
+  "layout": "footage",
+  "category": "any-footage",
+  "tags": [
+   "talking-head"
+  ],
+  "source": "HyperFrames blocks: organic-light-leak-overlay, light-leak, flash-through-white",
+  "accent": "#FFB070",
+  "fonts": [
+   [
+    "Fraunces",
+    "500,600"
+   ],
+   [
+    "Inter",
+    "400"
+   ]
+  ],
+  "tagline": "A warm cinematic vlog: orange and pink light leaks drifting across the frame, soft grain, and cuts that burn through white like film.",
+  "bestFor": "Vlogs, lifestyle, travel, weddings and warm storytelling",
+  "look": "warm organic light leaks drifting across the footage in orange and pink, soft film grain and a vignette, a warm grade, film-burn cuts",
+  "motion": "soft and cinematic: leaks drift, cuts burn through white",
+  "hookRule": "like a vlog title (\"Sunday / in the city\")",
+  "graphicsRule": "Headlines and pills on soft glass; few graphics.",
+  "ambient": "Drifting light leaks, grain and a warm vignette.",
+  "captions": "Warm white serif-free letters with a soft shadow.",
+  "hook": "The hook is a warm italic title, on screen from the first frame.",
+  "graphics": "Graphics sit on soft warm glass cards.",
+  "transition": "At each jump in the edit: a film burn.",
+  "sound": "Soft whooshes.",
+  "sfx": "cinematic",
+  "cover": {
+   "base": "talking",
+   "shown": "Talking head: vlog",
+   "hook": [
+    "Sunday",
+    "in the city"
+   ],
+   "lines": [
+    "this is",
+    "the part",
+    "nobody tells*",
+    "you about*"
+   ],
+   "graphic": true
+  }
+ }
+]

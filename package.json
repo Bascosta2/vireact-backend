@@ -10,7 +10,7 @@
     "test": "node --test --test-concurrency=1 test/**/*.test.js",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "qstash:dev": "qstash dev",
+    "qstash:dev": "npx --yes @upstash/qstash-cli@latest dev",
     "stripe:listen": "node scripts/stripe-listen.js"
   },
   "repository": {
@@ -26,7 +26,6 @@
   "homepage": "https://github.com/hafizasad419/affiniti-solutions-backend#readme",
   "description": "",
   "devDependencies": {
-    "@upstash/qstash-cli": "^2.37.18",
     "mongodb-memory-server-core": "^10.1.4",
     "nodemon": "^3.1.10"
   },
@@ -53,7 +52,7 @@
     "express-session": "^1.18.2",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
-    "file-type": "^19.6.0",
+    "file-type": "^22.3.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.18.0",

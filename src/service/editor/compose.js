@@ -33,6 +33,7 @@ export const SFX_FOR_GRAPHIC = Object.freeze({
     list: ['pop', 'tap', 'blip'],
     callout: ['pop', 'snap', 'blip'],
     cta: ['notify', 'chime', 'success'],
+    chart: ['swoosh', 'pop', 'sweep_up'],
 });
 export const SFX_FOR_TRANSITION = Object.freeze({ punch: ['swoosh', 'swish', 'thud'], whip: ['whoosh', 'whip', 'sweep_down'], flash: ['hit', 'shutter', 'impact'], glitch: ['glitch', 'static', 'zap'] });
 export const SFX_FOR_EFFECT = Object.freeze({ shake: ['hit', 'thud', 'impact'], flash: ['shutter', 'zap'] });
@@ -104,10 +105,13 @@ const SFX_REPEAT_FRAMES = 90;
 export const COUNTER_SEC = 1.1;
 export const LIST_FIRST_SEC = 0.35;
 export const LIST_STEP_SEC = 0.45;
+/** When each bar of a chart starts to grow (the composition's CHART_FIRST_SEC / CHART_STEP_SEC). */
+export const CHART_FIRST_SEC = 0.35;
+export const CHART_STEP_SEC = 0.4;
 
 const JUMP_ZOOM = 1.08;
 /** Graphics drawn in the top area, where the hook card sits during the first seconds. */
-const TOP_GRAPHICS = new Set(['pill', 'headline', 'counter', 'list', 'visual']);
+const TOP_GRAPHICS = new Set(['pill', 'headline', 'counter', 'list', 'visual', 'chart']);
 /** Graphics drawn in the strip under the captions. */
 const LOW_GRAPHICS = new Set(['lower_third', 'cta']);
 /** Graphics that sit behind the speaker once a background matte exists (otherwise they stay in front, as before). */
@@ -447,6 +451,12 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
             const last = next('list_end', ss?.listEnd ?? SFX_FOR_LIST_END);
             // The items of one list tick with the same sound on purpose (`series`), then the last one rings.
             g.items.forEach((_, k) => sound(k === g.items.length - 1 ? last : item, g.startFrame + f(LIST_FIRST_SEC + k * LIST_STEP_SEC), 2, 0.45, null, true));
+        }
+        if (g.type === 'chart') {
+            const bars = g.items.filter((x) => /\d/.test(x)).slice(0, 6);
+            const item = next('list_item', ss?.listItem ?? SFX_FOR_LIST_ITEM);
+            const last = next('list_end', ss?.listEnd ?? SFX_FOR_LIST_END);
+            bars.forEach((_, k) => sound(k === bars.length - 1 ? last : item, g.startFrame + f(CHART_FIRST_SEC + k * CHART_STEP_SEC), 2, 0.4, null, true));
         }
         if (g.type === 'slam') rotate('before_slam', SFX_BEFORE_SLAM, Math.max(0, g.startFrame - 6), 0, 0.35);
     }

@@ -227,9 +227,11 @@ export const redeemPromo = async (req, res, next) => {
     try {
         const userId = req.user._id;
         const result = await redeemPromoCode(userId, req.body?.code);
-        captureServerEvent(userId, 'promo_redeemed', { code: result.promo?.code, plan: result.plan, source: 'server' });
+        // Never the code itself: a short hash and the label are enough to tell codes apart.
+        const { codeRef, ...body } = result;
+        captureServerEvent(userId, 'promo_redeemed', { codeRef, label: result.label, plan: result.plan, source: 'server' });
         res.status(200).json(
-            ApiResponse.success(200, `Promo code applied: ${result.label}.`, result)
+            ApiResponse.success(200, `Promo code applied: ${result.label}.`, body)
         );
     } catch (error) {
         next(error);

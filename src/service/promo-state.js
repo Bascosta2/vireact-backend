@@ -1,4 +1,5 @@
 import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS } from '../constants.js';
+import { promoCodeRef } from '../config/promo-codes.js';
 
 /**
  * Plain rules about a subscription's promo grant. No database access except `expirePromoIfDue`,
@@ -52,7 +53,7 @@ export const expirePromoIfDue = async (subscription, now = new Date()) => {
         subscription.usage.videosUsed = 0;
         subscription.usage.chatMessagesUsed = 0;
         subscription.usage.lastResetAt = now;
-        console.log(`[Promo] ${promo.code} ended for user ${subscription.userId}; back to FREE`);
+        console.log(`[Promo] code ${promoCodeRef(promo.code)} ended for user ${subscription.userId}; back to FREE`);
     }
     subscription.promo = null;
     await subscription.save();

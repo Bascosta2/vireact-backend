@@ -15,6 +15,7 @@ import {
     assertLifetimeFreeTrialAvailable,
     getOrCreateSubscription,
 } from './subscription.service.js';
+import { effectivePlan } from './access.service.js';
 import mongoose from 'mongoose';
 import { AWS_S3_BUCKET_NAME, TWELVELABS_USER_INDEX } from '../config/index.js';
 import TwelveLabsClient from '../lib/twelve-labs.js';
@@ -536,7 +537,7 @@ const filterFeaturesForUser = async (userId, selectedFeatures) => {
         return selectedFeatures;
     }
     const subscription = await getOrCreateSubscription(userId);
-    const allowed = allowedFeaturesForPlan(subscription.plan);
+    const allowed = allowedFeaturesForPlan(effectivePlan(subscription));
     return selectedFeatures.filter(f => allowed.includes(f));
 };
 

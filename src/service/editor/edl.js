@@ -75,7 +75,7 @@ export const VISUALS = Object.freeze({
 });
 export const VISUAL_NAMES = Object.keys(VISUALS);
 
-export const GRAPHIC_TYPES = ['slam', 'pill', 'headline', 'lower_third', 'counter', 'list', 'callout', 'cta', 'visual'];
+export const GRAPHIC_TYPES = ['slam', 'pill', 'headline', 'lower_third', 'counter', 'list', 'callout', 'cta', 'visual', 'chart'];
 export const TRANSITION_STYLES = ['punch', 'whip', 'flash', 'glitch', 'none'];
 export const EFFECT_TYPES = ['shake', 'flash'];
 export const GRADES = ['vivid', 'warm', 'cool', 'punchy_bw', 'none'];
@@ -126,7 +126,7 @@ const edlSchema = (v2, screen = false) => obj({
         end: num,
         text: str,
         subtext: str,
-        items: { type: 'string', description: 'list: items separated by " | "; visual: the illustration name' },
+        items: { type: 'string', description: 'list: items separated by " | "; chart: "label: value" bars separated by " | "; visual: the illustration name' },
         focusX: num,
         focusY: num,
     })),
@@ -197,10 +197,10 @@ const pick = (v, values, fallback) => (values.includes(v) ? v : fallback);
 const inSegments = (t, segments) => segments.some((s) => t >= s.start && t < s.end);
 
 /** What a graphic needs before it is worth showing: an illustration we can draw, list items, or text. */
-const graphicHasContent = (g) => (g.type === 'visual' ? Boolean(g.visual) : g.type === 'list' ? g.items.length > 0 : Boolean(g.text));
+const graphicHasContent = (g) => (g.type === 'visual' ? Boolean(g.visual) : g.type === 'list' ? g.items.length > 0 : g.type === 'chart' ? g.items.filter((x) => /\d/.test(x)).length >= 2 : Boolean(g.text));
 
 /** Shortest and longest on-screen time per graphic type, in seconds. */
-const GRAPHIC_DURATION = { slam: [0.6, 2.5], pill: [0.8, 4], headline: [1.2, 5], lower_third: [1.5, 5], counter: [1.2, 4], list: [1.5, 8], callout: [0.8, 3.5], cta: [1.5, 5], visual: [1.4, 4.5] };
+const GRAPHIC_DURATION = { slam: [0.6, 2.5], pill: [0.8, 4], headline: [1.2, 5], lower_third: [1.5, 5], counter: [1.2, 4], list: [1.5, 8], callout: [0.8, 3.5], cta: [1.5, 5], visual: [1.4, 4.5], chart: [2.2, 7] };
 
 /** "Light Bulb" / "light-bulb" → a known illustration name, or null. */
 const visualName = (v) => {
@@ -214,8 +214,8 @@ export function normalizeGraphic(g) {
     const start = r3(g?.start);
     const rawItems = Array.isArray(g?.items) ? g.items : String(g?.items ?? '').split('|');
     const items = rawItems.map((x) => clip(x, 40)).filter(Boolean).slice(0, LIMITS.listItems);
-    // A list needs time to reveal every item.
-    const minDur = type === 'list' ? Math.max(lo, 0.6 + items.length * 0.45) : lo;
+    // A list needs time to reveal every item, a chart to grow every bar.
+    const minDur = type === 'list' ? Math.max(lo, 0.6 + items.length * 0.45) : type === 'chart' ? Math.max(lo, 1.4 + items.length * 0.4) : lo;
     const out = {
         type,
         start,

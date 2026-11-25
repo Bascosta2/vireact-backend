@@ -24,6 +24,18 @@ const allowedMimes = [
     'video/x-matroska'
 ];
 const allowedMimeSet = new Set(allowedMimes);
+/**
+ * MIME types the magic-byte check accepts. file-type 21+ reports Matroska (.mkv) as video/matroska
+ * (it was video/x-matroska before), so both spellings are accepted.
+ */
+const detectedMimeSet = new Set([...allowedMimes, 'video/matroska']);
+
+/** The detected MIME type of a file on disk when it is an allowed video, otherwise null. */
+export const detectAllowedVideoMime = async (filePath) => {
+    const detected = await fileTypeFromFile(filePath);
+    const mime = detected?.mime;
+    return mime && detectedMimeSet.has(mime) ? mime : null;
+};
 
 const SAFE_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mpeg', '.mpg', '.avi', '.webm', '.mkv']);
 
@@ -77,9 +89,8 @@ export const uploadSingle = (req, res, next) => {
             return next();
         }
         try {
-            const detected = await fileTypeFromFile(req.file.path);
-            const mime = detected?.mime;
-            if (!mime || !allowedMimeSet.has(mime)) {
+            const mime = await detectAllowedVideoMime(req.file.path);
+            if (!mime) {
                 await removeUploadedFile(req.file);
                 return next(
                     new Error(

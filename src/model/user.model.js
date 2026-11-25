@@ -1,9 +1,8 @@
 import bcrypt, { compare } from "bcryptjs";
 import mongoose from "mongoose"
-import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } from "../config/index.js";
-import { OAUTH_PROVIDERS, ROLES } from "../constants.js";
+import { signToken, TOKEN_TYPE } from "../utils/jwt.js";
+import { BCRYPT_COST, OAUTH_PROVIDERS, ROLES } from "../constants.js";
 
 const userSchema = new mongoose.Schema({
     name: {
@@ -54,6 +53,27 @@ const userSchema = new mongoose.Schema({
         select: false
     },
     passwordResetRequestedAt: {
+        type: Date,
+        default: null,
+        select: false
+    },
+    /**
+     * Email change waiting for confirmation (profile PATCH). `email` and Google sign-in keep using the
+     * current address until the link sent to pendingEmail is opened (auth.service confirmEmailChangeService).
+     * The token is stored as a SHA-256 hash, like password reset.
+     */
+    pendingEmail: {
+        type: String,
+        default: null,
+        lowercase: true,
+        trim: true
+    },
+    emailChangeTokenHash: {
+        type: String,
+        default: null,
+        select: false
+    },
+    emailChangeExpires: {
         type: Date,
         default: null,
         select: false
@@ -207,6 +227,8 @@ userSchema.set("toJSON", {
         delete ret.passwordResetTokenHash;
         delete ret.passwordResetExpires;
         delete ret.passwordResetRequestedAt;
+        delete ret.emailChangeTokenHash;
+        delete ret.emailChangeExpires;
         delete ret.__v;
         return ret;
     }
@@ -216,7 +238,7 @@ userSchema.set("toJSON", {
 userSchema.pre("save", async function (next) {
     // Only hash password if it exists and has been modified
     if (this.isModified("password") && this.password) {
-        this.password = await bcrypt.hash(this.password, 10);
+        this.password = await bcrypt.hash(this.password, BCRYPT_COST);
     }
     next();
 });
@@ -233,28 +255,12 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 
 
 userSchema.methods.generateAccessToken = function () {
-    const signOptions = {
-        expiresIn: "30m"
-    };
-
-    return jwt.sign(
-        { _id: this._id, email: this.email },
-        ACCESS_TOKEN_SECRET,
-        signOptions
-    );
+    return signToken(TOKEN_TYPE.ACCESS, { _id: this._id, email: this.email }, "30m");
 };
 
 userSchema.methods.generateRefreshToken = function () {
-    const signOptions = {
-        expiresIn: "30d"
-    };
-
     // jti makes every refresh token unique, even two issued in the same second.
-    return jwt.sign(
-        { _id: this._id, email: this.email, jti: crypto.randomUUID() },
-        REFRESH_TOKEN_SECRET,
-        signOptions
-    );
+    return signToken(TOKEN_TYPE.REFRESH, { _id: this._id, email: this.email, jti: crypto.randomUUID() }, "30d");
 };
 
 // Utility methods for OAuth users
@@ -300,17 +306,26 @@ userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) 
     }
 
     // Existing account with this (Google-verified) email: link the Google identity to it.
+    // Matches the CURRENT email only, never pendingEmail: an email change only takes effect once the
+    // new inbox confirms it. An account whose address was never verified is taken over by the
+    // Google-proven owner below, with everything the earlier registrant set up dropped.
     user = await this.findOne({ email: String(email).trim().toLowerCase() });
     if (user) {
         if (!user.googleId) user.googleId = googleId;
         if (!user.avatar && photos && photos[0]) user.avatar = photos[0].value;
         if (!user.isEmailVerified) {
             // Nobody had proven they own this address until now. Someone may have registered it
-            // first with a password of their choosing ("pre-hijacking"), so that password is dropped;
-            // the owner can add their own later through Forgot password.
+            // first with a password of their choosing ("pre-hijacking"), so that password, any
+            // device they signed in on and any email change they started are dropped; the owner
+            // can add their own password later through Forgot password.
             user.password = undefined;
             user.emailVerificationToken = null;
             user.isEmailVerified = true;
+            user.refreshSessions = [];
+            user.refreshToken = undefined;
+            user.pendingEmail = null;
+            user.emailChangeTokenHash = null;
+            user.emailChangeExpires = null;
         }
         await user.save({ validateBeforeSave: false });
         return user;
@@ -330,8 +345,9 @@ userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) 
 };
 
 
-// Emailed-link lookups (verify email, reset password). Partial: only users with a live token are indexed.
+// Emailed-link lookups (verify email, reset password, confirm email change). Partial: only users with a live token are indexed.
 userSchema.index({ emailVerificationToken: 1 }, { partialFilterExpression: { emailVerificationToken: { $type: 'string' } } });
 userSchema.index({ passwordResetTokenHash: 1 }, { partialFilterExpression: { passwordResetTokenHash: { $type: 'string' } } });
+userSchema.index({ emailChangeTokenHash: 1 }, { partialFilterExpression: { emailChangeTokenHash: { $type: 'string' } } });
 
 export const User = mongoose.model("User", userSchema);

@@ -8,12 +8,12 @@ import {
     refreshTokenService,
     forgotPasswordService,
     resetPasswordService,
+    confirmEmailChangeService,
     revokeRefreshSession,
     revokeAdminRefreshToken,
     VERIFICATION_EMAIL
 } from "../service/auth.service.js";
-import jwt from "jsonwebtoken";
-import { REFRESH_TOKEN_SECRET } from "../config/index.js";
+import { verifyRefreshToken } from "../utils/jwt.js";
 import { Admin } from "../model/admin.model.js";
 import { User } from "../model/user.model.js";
 import { COOKIE_OPTIONS, OAUTH_PROVIDERS, ROLES } from "../constants.js";
@@ -72,12 +72,8 @@ const getProviderDisplayName = (provider) => {
 // Signup User
 export const signupUser = async (req, res, next) => {
     try {
-        const {
-            name,
-            email,
-            password,
-            provider = OAUTH_PROVIDERS.LOCAL
-        } = req.body;
+        // Any client-supplied `provider` is ignored: email + password signups are always local accounts.
+        const { name, email, password } = req.body;
 
         if (!name || !email || !password) {
             throw new ApiError(400, "All fields are required.")
@@ -91,7 +87,7 @@ export const signupUser = async (req, res, next) => {
             name,
             email,
             password,
-            provider,
+            OAUTH_PROVIDERS.LOCAL,
             attribution
         )
 
@@ -343,7 +339,7 @@ const resolveLogoutAccount = async (user, refreshTokenIn) => {
     if (!refreshTokenIn) return null;
     let id;
     try {
-        id = jwt.verify(refreshTokenIn, REFRESH_TOKEN_SECRET, { ignoreExpiration: true })?._id;
+        id = verifyRefreshToken(refreshTokenIn, { ignoreExpiration: true })?._id;
     } catch {
         return null;
     }
@@ -571,6 +567,18 @@ export const forgotPassword = async (req, res, next) => {
 export const resetPassword = async (req, res, next) => {
     try {
         const result = await resetPasswordService(req.body?.token, req.body?.password);
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(ApiResponse.success(200, result.message, { email: result.email }));
+    } catch (error) {
+        next(error);
+    }
+};
+
+/** Open the link sent to a new email address: the change applies and every device is signed out. */
+export const confirmEmailChange = async (req, res, next) => {
+    try {
+        const result = await confirmEmailChangeService(req.body?.token);
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
         res.status(200).json(ApiResponse.success(200, result.message, { email: result.email }));

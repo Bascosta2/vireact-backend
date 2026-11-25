@@ -1,5 +1,5 @@
 import './config/load-env.js'; // Load environment variables FIRST (.env.local over .env in dev)
-import { runStartupGuards } from './config/env-guards.js';
+import { runStartupGuards, jwtSecretProblems } from './config/env-guards.js';
 try {
   runStartupGuards();
 } catch (err) {
@@ -141,6 +141,15 @@ const startServer = async () => {
       console.log('   Host: [hidden]');
     } else {
       console.warn('⚠️ MongoDB connection status unclear, but continuing...');
+    }
+
+    // Weak or shared JWT secrets: loud error, but never stop the server (a refusal would take production down).
+    // Runs after error tracking and the database are up, so captureError actually records it.
+    const jwtProblems = NODE_ENV === 'test' ? [] : jwtSecretProblems();
+    if (jwtProblems.length > 0) {
+      const message = `SECURITY: weak JWT secrets: ${jwtProblems.join('; ')}. Set two different random values of 32+ characters (e.g. openssl rand -hex 32). Changing them signs everyone out once.`;
+      console.error(`\n🚨🚨 ${message} 🚨🚨\n`);
+      captureError(new Error(message), { source: 'server', route: 'startup' });
     }
     
     // Start server after MongoDB connection

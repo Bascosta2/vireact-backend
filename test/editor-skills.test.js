@@ -26,7 +26,7 @@ const words = [
 const durationSec = 6;
 const cutCandidates = buildCutCandidates({ words, durationSec });
 const ctx = { durationSec, wordCount: words.length, candidateIds: cutCandidates.map((c) => c.id), candidateRanges: Object.fromEntries(cutCandidates.map((c) => [c.id, c])), trackIds: ['t1'] };
-const plan = () => validateEdl({
+const rawPlan = () => ({
     summary: 'Tight cut with a text hook.',
     hookStrategy: 'Promise the editor up front.',
     segments: [{ id: 's1', start: 0.3, end: 4.8, role: 'hook', reason: 'all of it' }],
@@ -44,7 +44,8 @@ const plan = () => validateEdl({
     sfx: [],
     changes: [],
     expectedEffect: 'Clearer opening.',
-}, ctx).plan;
+});
+const plan = () => validateEdl(rawPlan(), ctx).plan;
 const media = (skill) => ({ words, silences: [], durationSec, cutCandidates, skill });
 
 test('skill registry and helpers', () => {
@@ -105,11 +106,13 @@ test('hook variant is an edit the creator can change; the planner gets the skill
 
 const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d', 'watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime'];
 
-test('the twenty animation and painted styles are skills with planner rules, render rules and built-in sounds only', async () => {
+test('every style (the twenty hand-made ones and the library) is a skill with planner rules, render rules and built-in sounds only', async () => {
     const { ANIMATION_STYLE_IDS, isAnimationStyle } = await import('../src/service/editor/skills.js');
     const { SFX_TYPES } = await import('../src/service/editor/edl.js');
-    assert.deepEqual([...ANIMATION_STYLE_IDS], STYLE_IDS, 'ids match the composition (vireact-frontend/src/remotion/styles/ids.ts)');
-    for (const id of STYLE_IDS) {
+    const { STYLE_LIBRARY } = await import('../src/service/editor/skills.js');
+    assert.deepEqual([...ANIMATION_STYLE_IDS], [...STYLE_IDS, ...STYLE_LIBRARY.map((e) => e.id)], 'ids match the composition (vireact-frontend/src/remotion/styles/ids.ts)');
+    assert.equal(STYLE_LIBRARY.length, 111);
+    for (const id of ANIMATION_STYLE_IDS) {
         const s = SKILLS[id];
         assert.ok(isSkill(id) && isAnimationStyle(id), id);
         assert.equal(s.kind, 'animation');
@@ -119,7 +122,7 @@ test('the twenty animation and painted styles are skills with planner rules, ren
         for (const type of sounds) assert.ok(SFX_TYPES.includes(type), `${id}: ${type} is a built-in sound`);
     }
     assert.equal(isAnimationStyle('remotion-reel'), false);
-    assert.ok(!/lego|ps2|playstation|ghibli/i.test(STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked names');
+    assert.ok(!/lego|ps2|playstation|ghibli|hd-2d|backrooms|dan koe|zackd|clawd|reuters/i.test(ANIMATION_STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked or creator names');
 });
 
 test('an animation style sets the palette, its sounds and captions, and keeps the plan\'s structure', () => {
@@ -738,4 +741,43 @@ test('a slow run keeps its claim with a heartbeat; a stalled run that lost it ne
     assert.equal(sumLedger([doc], new Date(0), 'seconds'), 60);
     assert.equal(doc.status, 'ok', 'the stalled run did not overwrite the winner');
     setStorageForTests(null);
+});
+
+test('library styles: scene layouts for storytelling and explainers, explainer rules, sound palettes', async () => {
+    const { STYLE_LIBRARY, SFX_PALETTES, styleLayout } = await import('../src/service/editor/skills.js');
+    for (const e of STYLE_LIBRARY) {
+        const s = SKILLS[e.id];
+        assert.ok(SFX_PALETTES[e.sfx], `${e.id}: palette ${e.sfx}`);
+        assert.equal(s.render.accent, e.accent);
+        assert.equal(s.category, e.category);
+        assert.equal(styleLayout(e.id), e.layout);
+        assert.equal(s.render.layout, e.layout === 'story' || e.layout === 'explainer' ? 'scene' : 'footage', e.id);
+        if (e.layout === 'explainer') assert.match(s.plannerRules, /EXPLAINER: the style draws its own scene/);
+        if (e.layout === 'story') assert.match(s.plannerRules, /ANIMATED STORYTELLING/);
+    }
+    // An explainer edit shows its scene (the creator in a bubble) and drops callouts like storytelling does.
+    const p = plan();
+    p.graphics.push({ type: 'callout', start: 3.3, end: 4.3, text: 'Look', subtext: '', items: [], focusX: 0.5, focusY: 0.4 });
+    const props = buildRenderProps(p, {}, media('blueprint'), { density: null });
+    assert.equal(props.skill.layout, 'scene');
+    assert.ok(!props.graphics.some((g) => g.type === 'callout'));
+    assert.equal(buildRenderProps(plan(), {}, media('microscope')).skill.layout, 'footage');
+});
+
+test('chart graphic: bars from "label: value" items, top area, a sound per bar', () => {
+    const withChart = validateEdl({
+        ...JSON.parse(JSON.stringify(rawPlan())),
+        graphics: [{ type: 'chart', start: 1.0, end: 4.5, text: 'Revenue by year', subtext: '', items: '2023: $1.2M | 2024: $2.6M | 2025: $4.4M', focusX: 0.5, focusY: 0.5 }],
+    }, ctx);
+    assert.ok(withChart.ok, withChart.issues.join('; '));
+    const g = withChart.plan.graphics.find((x) => x.type === 'chart');
+    assert.deepEqual(g.items, ['2023: $1.2M', '2024: $2.6M', '2025: $4.4M']);
+    const props = buildRenderProps(withChart.plan, {}, media('coin-stacks'), { density: null });
+    const chart = props.graphics.find((x) => x.type === 'chart');
+    assert.ok(chart, 'chart kept');
+    const bars = props.sfx.filter((x) => x.frame >= chart.startFrame + 9 && x.frame <= chart.startFrame + 36);
+    assert.ok(bars.length >= 2, 'bar sounds');
+    // A chart with fewer than two numbers is not worth showing.
+    const empty = validateEdl({ ...JSON.parse(JSON.stringify(rawPlan())), graphics: [{ type: 'chart', start: 1, end: 4, text: 'x', subtext: '', items: 'a | b', focusX: 0.5, focusY: 0.5 }] }, ctx);
+    assert.ok(!empty.plan.graphics.some((x) => x.type === 'chart'));
 });

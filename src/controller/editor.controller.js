@@ -17,6 +17,7 @@ import { isRenderConfigured, renderProgress, startRender } from '../service/edit
 import { uploadVideoUrlToTwelveLabsService } from '../service/video.service.js';
 import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
+import { effectivePlan } from '../service/access.service.js';
 import { hasEditorAccess, isBgRemovalEnabled, isEditorFeaturesV2 } from '../config/flags.js';
 import { User } from '../model/user.model.js';
 import { buildStoryboard, storyboardBlocksExport, swapBeat } from '../service/editor/storyboard.js';
@@ -578,7 +579,7 @@ export const scoreEditRender = async (req, res, next) => {
         if (!render) throw new ApiError(400, 'Export the edit first, then score it.');
         const subscription = await getOrCreateSubscription(req.user._id);
         const url = await storage.presignDownload(render.key, { expiresIn: 3 * 60 * 60 });
-        const video = await uploadVideoUrlToTwelveLabsService(req.user._id, url, `${project.title} (edited).mp4`, allowedFeaturesForPlan(subscription?.plan));
+        const video = await uploadVideoUrlToTwelveLabsService(req.user._id, url, `${project.title} (edited).mp4`, allowedFeaturesForPlan(effectivePlan(subscription)));
         project.linkedVideoId = video._id;
         await project.save();
         captureServerEvent(String(req.user._id), 'edit_scored', { project_id: String(project._id), video_id: String(video._id) });

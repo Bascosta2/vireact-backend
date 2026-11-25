@@ -1,7 +1,7 @@
-import { PromoRedemption } from '../model/promo-redemption.model.js';
+import { PromoRedemption, PromoCodeCounter } from '../model/promo-redemption.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS } from '../constants.js';
-import { getPromoCode, normalizePromoCode } from '../config/promo-codes.js';
+import { getPromoCode, normalizePromoCode, promoCodeRef } from '../config/promo-codes.js';
 import { getOrCreateSubscription } from './subscription.service.js';
 import { promoInfo, promoIsActive } from './promo-state.js';
 
@@ -10,6 +10,31 @@ const PLAN_NAMES = { free: 'Free', premium: 'Premium', pro: 'Pro', enterprise: '
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const fail = (status, message, code) => new ApiError(status, message, { code });
+
+/**
+ * Reserves one redemption of a capped code. The conditional $inc is atomic, so parallel requests
+ * cannot take the code past `max`. The counter is first raised to the redemptions already recorded
+ * (covers codes redeemed before the counter existed, or while they had no cap).
+ */
+export async function claimPromoSlot(code, max) {
+    const redeemed = await PromoRedemption.countDocuments({ code });
+    try {
+        await PromoCodeCounter.updateOne({ _id: code }, { $max: { count: redeemed } }, { upsert: true });
+    } catch (err) {
+        // A parallel request created the counter first; it exists now, which is all we need.
+        if (err?.code !== 11000) throw err;
+    }
+    const claimed = await PromoCodeCounter.findOneAndUpdate(
+        { _id: code, count: { $lt: max } },
+        { $inc: { count: 1 } },
+        { new: true }
+    );
+    return Boolean(claimed);
+}
+
+/** Gives back a slot reserved by claimPromoSlot when the redemption did not go through. */
+export const releasePromoSlot = (code) =>
+    PromoCodeCounter.updateOne({ _id: code, count: { $gt: 0 } }, { $inc: { count: -1 } });
 
 /**
  * Redeem a promo code for the signed-in account and switch its plan.
@@ -26,6 +51,7 @@ export async function redeemPromoCode(userId, rawCode, now = new Date()) {
     if (await PromoRedemption.exists({ userId, code })) {
         throw fail(409, 'You have already used this promo code.', 'PROMO_USED');
     }
+    // Quick early answer; the atomic claim below is what actually enforces the cap.
     if (promo.maxRedemptions != null && (await PromoRedemption.countDocuments({ code })) >= promo.maxRedemptions) {
         throw fail(410, 'This promo code has been fully claimed.', 'PROMO_EXHAUSTED');
     }
@@ -45,10 +71,16 @@ export async function redeemPromoCode(userId, rawCode, now = new Date()) {
         throw fail(409, `Your ${PLAN_NAMES[subscription.plan]} plan already includes everything this code unlocks.`, 'PROMO_NOT_NEEDED');
     }
 
+    const capped = promo.maxRedemptions != null;
+    if (capped && !(await claimPromoSlot(code, promo.maxRedemptions))) {
+        throw fail(410, 'This promo code has been fully claimed.', 'PROMO_EXHAUSTED');
+    }
+
     const endsAt = promo.days ? new Date(now.getTime() + promo.days * DAY_MS) : null;
     try {
         await PromoRedemption.create({ userId, code, plan: promo.plan, grantedAt: now, endsAt });
     } catch (err) {
+        if (capped) await releasePromoSlot(code);
         if (err?.code === 11000) throw fail(409, 'You have already used this promo code.', 'PROMO_USED');
         throw err;
     }
@@ -68,6 +100,6 @@ export async function redeemPromoCode(userId, rawCode, now = new Date()) {
     subscription.paymentFailedAt = null;
     await subscription.save();
 
-    console.log(`[Promo] user ${userId} redeemed ${code}: ${promo.plan}${endsAt ? ` until ${endsAt.toISOString()}` : ' for life'}`);
-    return { label: promo.label, plan: promo.plan, promo: promoInfo(subscription, now) };
+    console.log(`[Promo] user ${userId} redeemed code ${promoCodeRef(code)} (${promo.label}): ${promo.plan}${endsAt ? ` until ${endsAt.toISOString()}` : ' for life'}`);
+    return { label: promo.label, plan: promo.plan, codeRef: promoCodeRef(code), promo: promoInfo(subscription, now) };
 }

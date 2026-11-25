@@ -8,6 +8,7 @@ import {
     releaseChatMessageSlot,
     getOrCreateSubscription,
 } from './subscription.service.js';
+import { effectivePlan } from './access.service.js';
 import { buildTranscriptBlock, transcriptToPlainText } from './transcript.service.js';
 import { retrieveKnowledge, formatKnowledgeContext } from './analyzer/retrieve-knowledge.js';
 import { SPECIFICITY_CONTRACT } from './analyzer/run-feedback-analyzer.js';
@@ -161,7 +162,7 @@ export const sendChatMessageService = async (videoId, userId, messageText) => {
         let userPlan = SUBSCRIPTION_PLANS.FREE;
         try {
             const subscription = await getOrCreateSubscription(userId);
-            if (subscription?.plan) userPlan = subscription.plan;
+            if (subscription?.plan) userPlan = effectivePlan(subscription);
         } catch {
             /* least-privilege default */
         }

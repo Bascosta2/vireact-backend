@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 /**
  * Editing skills (Skills tab). A skill is a packaged editing style: rules the AI planner follows and a
  * set of render changes applied to the plan (captions, hook, sound, graphics). The composition draws a
@@ -69,7 +71,7 @@ export const SKILLS = {
  * `transition`, `countEnd`, `listItem`, `listEnd`, `hook` (one sound on the first frame, or null for
  * none) and `volume` (scales every sound).
  */
-export const ANIMATION_STYLES = Object.freeze({
+const HAND_STYLES = {
     'glow-sketch': {
         name: 'Glow Sketch',
         accent: '#FFC24B',
@@ -313,7 +315,58 @@ export const ANIMATION_STYLES = Object.freeze({
         dropGraphicTypes: [],
         sfx: { graphic: ['pop', 'bubble', 'blip'], slam: ['pop', 'impact'], transition: ['swoosh', 'bubble'], countEnd: ['ding', 'coin'], listItem: ['pop'], listEnd: ['success'], hook: 'pop' },
     },
+};
+
+/**
+ * Sound palettes for the library styles (built-in sounds only), by name in styles-library.json.
+ */
+export const SFX_PALETTES = Object.freeze({
+    paper: { graphic: ['page', 'swish', 'tap'], slam: ['thud', 'clap'], transition: ['page', 'swish'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'page' },
+    chalk: { graphic: ['tap', 'tick', 'swish'], slam: ['tap', 'thud'], transition: ['swish', 'page'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'tap' },
+    digital: { graphic: ['blip', 'click', 'notify'], slam: ['glitch', 'impact'], transition: ['glitch', 'static', 'swoosh'], countEnd: ['success', 'ding'], listItem: ['blip'], listEnd: ['success'], hook: 'blip' },
+    game: { graphic: ['blip', 'coin', 'power_up'], slam: ['zap', 'power_up'], transition: ['zap', 'glitch'], countEnd: ['coin'], listItem: ['blip'], listEnd: ['success'], hook: 'power_up' },
+    cinematic: { graphic: ['whoosh', 'shimmer', 'sweep_up'], slam: ['impact', 'boom'], transition: ['whoosh', 'riser', 'sweep_down'], countEnd: ['shimmer', 'chime'], listItem: ['tick'], listEnd: ['chime'], hook: 'shimmer' },
+    cartoon: { graphic: ['pop', 'bubble', 'snap'], slam: ['boom', 'pop'], transition: ['swoosh', 'bubble'], countEnd: ['ding', 'coin'], listItem: ['pop'], listEnd: ['success'], hook: 'pop' },
+    news: { graphic: ['swoosh', 'notify', 'tick'], slam: ['impact', 'hit'], transition: ['whoosh', 'swoosh'], countEnd: ['ding'], listItem: ['tick'], listEnd: ['notify'], hook: 'alert' },
+    film: { graphic: ['shutter', 'page', 'tick'], slam: ['thud', 'impact'], transition: ['shutter', 'static'], countEnd: ['ding'], listItem: ['tick'], listEnd: ['bell'], hook: 'shutter' },
+    neon: { graphic: ['shimmer', 'zap', 'sweep_up'], slam: ['zap', 'impact'], transition: ['zap', 'sweep_up', 'shimmer'], countEnd: ['shimmer', 'chime'], listItem: ['blip'], listEnd: ['chime'], hook: 'zap' },
+    minimal: { graphic: ['tick', 'click'], slam: ['tick'], transition: ['swish'], countEnd: ['tick'], listItem: ['tick'], listEnd: ['click'], hook: null, volume: 0.7 },
+    print: { graphic: ['snap', 'page', 'tap'], slam: ['thud', 'clap'], transition: ['page', 'swish'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'snap' },
+    music: { graphic: ['kick', 'clap', 'snap'], slam: ['bass_drop', 'kick'], transition: ['kick', 'whoosh'], countEnd: ['clap'], listItem: ['kick'], listEnd: ['clap'], hook: 'kick' },
+    sci: { graphic: ['blip', 'pulse', 'sweep_up'], slam: ['zap', 'power_up'], transition: ['sweep_up', 'pulse'], countEnd: ['chime', 'success'], listItem: ['blip'], listEnd: ['success'], hook: 'pulse' },
+    soft: { graphic: ['chime', 'bubble', 'sparkle'], slam: ['pop', 'chime'], transition: ['swoosh', 'swish'], countEnd: ['chime'], listItem: ['bubble'], listEnd: ['chime'], hook: 'chime', volume: 0.85 },
+    mechanical: { graphic: ['click', 'snap', 'tick'], slam: ['thud', 'impact'], transition: ['click', 'whoosh'], countEnd: ['ding'], listItem: ['click'], listEnd: ['success'], hook: 'click' },
 });
+
+/**
+ * The library styles (2026-11-24): every editing skill found in the Claude animation repos and prompt
+ * collections, described once in styles-library.json (the same file as vireact-frontend
+ * src/remotion/styles/library.json, copied as is). Layouts: footage, window (the footage in a window of
+ * the style's world), story (a drawn scene in place of the camera) and explainer (the scene with the
+ * creator in a bubble).
+ */
+export const STYLE_LIBRARY = Object.freeze(JSON.parse(readFileSync(new URL('./styles-library.json', import.meta.url), 'utf8')));
+const LIBRARY_BY_ID = new Map(STYLE_LIBRARY.map((e) => [e.id, e]));
+
+const LIBRARY_STYLES = Object.fromEntries(
+    STYLE_LIBRARY.map((e) => [
+        e.id,
+        {
+            name: e.name,
+            accent: e.accent,
+            look: e.look,
+            bestFor: e.bestFor.charAt(0).toLowerCase() + e.bestFor.slice(1),
+            motion: e.motion,
+            hook: e.hookRule,
+            graphics: e.graphicsRule,
+            captions: { maxWords: e.captionLimits?.[0] ?? 3, maxChars: e.captionLimits?.[1] ?? 16 },
+            dropGraphicTypes: e.drop ?? [],
+            sfx: SFX_PALETTES[e.sfx] ?? SFX_PALETTES.soft,
+        },
+    ]),
+);
+
+export const ANIMATION_STYLES = Object.freeze({ ...HAND_STYLES, ...LIBRARY_STYLES });
 
 export const ANIMATION_STYLE_IDS = Object.freeze(Object.keys(ANIMATION_STYLES));
 export const isAnimationStyle = (id) => typeof id === 'string' && Object.hasOwn(ANIMATION_STYLES, id);
@@ -328,9 +381,24 @@ export const isAnimationStyle = (id) => typeof id === 'string' && Object.hasOwn(
  */
 const TALKING_HEAD_STYLES = new Set(['chalkboard', 'minimal-line', 'flat-vector']);
 const STORYTELLING_STYLES = new Set(['watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime']);
-export const styleCategory = (id) => (STORYTELLING_STYLES.has(id) ? 'storytelling' : TALKING_HEAD_STYLES.has(id) ? 'talking-head' : 'any-footage');
+export const styleCategory = (id) => LIBRARY_BY_ID.get(id)?.category ?? (STORYTELLING_STYLES.has(id) ? 'storytelling' : TALKING_HEAD_STYLES.has(id) ? 'talking-head' : 'any-footage');
+
+/** How a style lays out the picture: 'footage', 'window', 'story' or 'explainer'. */
+export const styleLayout = (id) => LIBRARY_BY_ID.get(id)?.layout ?? (STORYTELLING_STYLES.has(id) ? 'story' : 'footage');
+
+/** Which planner rules apply: storytelling and explainer scenes, else talking head or any footage. */
+const ruleKind = (id) => {
+    const layout = styleLayout(id);
+    if (layout === 'story') return 'storytelling';
+    if (layout === 'explainer') return 'explainer';
+    return styleCategory(id) === 'talking-head' ? 'talking-head' : 'any-footage';
+};
 
 const CATEGORY_RULES = {
+    explainer: [
+        '- EXPLAINER: the style draws its own scene (a board, a blueprint, a map, a machine) and the creator stays on screen in a small bubble in the lower right. The graphics carry the explanation: lists for steps, counters and charts for numbers, headlines for each new idea, illustrations (visual) for things named.',
+        '- Do not use callouts (the footage is small). Keep graphics in the top part of the frame, clear of the bubble.',
+    ].join('\n'),
     'talking-head': '- This style is made for a person talking to camera: keep the face clear, hooks above the head, graphics around it.',
     'any-footage': '- This style restyles whatever the footage is (talking head, gameplay, product shots, b-roll, a screen recording). Read the frames to see which, and place graphics where they do not cover the action.',
     storytelling: [
@@ -358,10 +426,11 @@ for (const [id, s] of Object.entries(ANIMATION_STYLES)) {
         version: 1,
         kind: 'animation',
         category: styleCategory(id),
-        plannerRules: `${stylePlannerRules(s)}\n${CATEGORY_RULES[styleCategory(id)]}`,
+        plannerRules: `${stylePlannerRules(s)}\n${CATEGORY_RULES[ruleKind(id)]}${styleLayout(id) === 'window' ? "\n- The footage sits in a window of the style's world, not the full frame; callouts point at things inside the footage as usual." : ''}`,
         render: {
-            // Storytelling styles paint a scene in place of the camera (see compose.js).
-            layout: styleCategory(id) === 'storytelling' ? 'scene' : 'footage',
+            // Storytelling and explainer styles draw a scene in place of the camera (see compose.js);
+            // explainers keep the creator in a bubble, which the composition places.
+            layout: styleLayout(id) === 'story' || styleLayout(id) === 'explainer' ? 'scene' : 'footage',
             captions: { maxWords: s.captions.maxWords, maxChars: s.captions.maxChars, casual: s.captions.casual === true },
             dropGraphicTypes: s.dropGraphicTypes,
             accent: s.accent,

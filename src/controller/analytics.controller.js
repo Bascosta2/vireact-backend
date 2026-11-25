@@ -6,6 +6,7 @@ import { Video } from '../model/video.model.js';
 import { ContentStrategy, STRATEGY_STATUS, SLOT_STATUS } from '../model/content-strategy.model.js';
 import { STRATEGY_LIMITS, SUBSCRIPTION_PLANS } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
+import { effectivePlan } from '../service/access.service.js';
 import { buildOverview, buildVideoRows, loadAnalyticsVideos, RANGES } from '../service/analytics.service.js';
 import { normalizeCreatorProfileInput, resolveCreatorProfile } from '../service/creator-profile.service.js';
 import { generateStrategy, loadStrategyVideos } from '../service/content-strategy.service.js';
@@ -71,7 +72,7 @@ const startOfNextMonth = (now = new Date()) => new Date(Date.UTC(now.getUTCFullY
 /** Plan cap for this billing period. Failed generations never count. */
 export const strategyUsage = async (userId) => {
     const subscription = await getOrCreateSubscription(userId);
-    const plan = subscription?.plan ?? SUBSCRIPTION_PLANS.FREE;
+    const plan = effectivePlan(subscription);
     const limit = STRATEGY_LIMITS[plan] ?? 0;
     const paid = plan !== SUBSCRIPTION_PLANS.FREE;
     const periodStart = paid && subscription.currentPeriodStart ? subscription.currentPeriodStart : startOfMonth();
