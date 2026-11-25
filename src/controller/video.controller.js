@@ -31,6 +31,7 @@ import { removeUploadedFile } from '../middleware/fileUpload.js';
 import { alertFailure } from '../service/ops-monitoring.service.js';
 import { startHeartbeat } from '../service/analysis-recovery.service.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
+import { effectivePlan } from '../service/access.service.js';
 import { analyzeHook } from '../service/analyzer/hook.analyzer.js';
 import { analyzeCaption } from '../service/analyzer/caption.analyzer.js';
 import { analyzePacing } from '../service/analyzer/pacing.analyzer.js';
@@ -268,7 +269,7 @@ export const getVideoFeedback = async (req, res, next) => {
         try {
             const subscription = await getOrCreateSubscription(userId);
             if (subscription?.plan) {
-                userPlan = subscription.plan;
+                userPlan = effectivePlan(subscription);
             }
         } catch {
             // least-privilege: Free allowed set
@@ -306,7 +307,7 @@ export const getVideoById = async (req, res, next) => {
         try {
             const subscription = await getOrCreateSubscription(userId);
             if (subscription?.plan) {
-                userPlan = subscription.plan;
+                userPlan = effectivePlan(subscription);
             }
         } catch {
             // least-privilege: Free allowed set; DTO will strip Pro-only fields
@@ -527,7 +528,7 @@ export const processVideoAnalysis = async (req, res) => {
             try {
                 const uploaderId = video.uploader_id || userId;
                 const subscription = await getOrCreateSubscription(uploaderId);
-                allowedFeatures = allowedFeaturesForPlan(subscription.plan);
+                allowedFeatures = allowedFeaturesForPlan(effectivePlan(subscription));
             } catch (gateError) {
                 console.error(
                     `[QStash] Dispatch-time gate failed to load subscription, defaulting to FREE allowed set:`,
@@ -931,7 +932,7 @@ const scriptGenerationsInFlight = new Set();
 /** The creator's plan decides how many full scripts are sent. A failed read falls back to Free (least access). */
 const scriptPlanFor = async (userId) => {
     try {
-        return (await getOrCreateSubscription(userId))?.plan ?? SUBSCRIPTION_PLANS.FREE;
+        return effectivePlan(await getOrCreateSubscription(userId));
     } catch (error) {
         console.warn('[Scripts] Could not load the subscription, using Free access:', error?.message);
         return SUBSCRIPTION_PLANS.FREE;

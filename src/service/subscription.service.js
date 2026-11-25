@@ -8,6 +8,7 @@ import defaultStripe from '../lib/stripe.js';
 import { FRONTEND_URL, BACKEND_URL } from '../config/index.js';
 import { isTrialBillingEnabled, getTrialConfig } from '../config/flags.js';
 import { expirePromoIfDue, planAfterBillingEnds } from './promo-state.js';
+import { effectivePlan, isPastDue } from './access.service.js';
 
 let stripe = defaultStripe;
 /** Tests swap in a fake Stripe client; null restores the real one. */
@@ -17,12 +18,39 @@ export const setStripeForTests = (client) => {
 
 const minCap = (planCap, trialCap) => (planCap === null ? trialCap : Math.min(planCap, trialCap));
 
+/** Stripe subscription status -> local status. Unknown statuses map to null (left unchanged). */
+const STRIPE_STATUS_MAP = Object.freeze({
+    trialing: SUBSCRIPTION_STATUS.TRIAL,
+    active: SUBSCRIPTION_STATUS.ACTIVE,
+    past_due: SUBSCRIPTION_STATUS.PAST_DUE,
+    unpaid: SUBSCRIPTION_STATUS.UNPAID,
+    paused: SUBSCRIPTION_STATUS.PAUSED,
+    incomplete: SUBSCRIPTION_STATUS.INCOMPLETE,
+    incomplete_expired: SUBSCRIPTION_STATUS.INCOMPLETE_EXPIRED,
+    canceled: SUBSCRIPTION_STATUS.CANCELLED,
+});
+export const mapStripeStatus = (stripeStatus) =>
+    (Object.hasOwn(STRIPE_STATUS_MAP, stripeStatus ?? '') ? STRIPE_STATUS_MAP[stripeStatus] : null);
+
+/** Stripe statuses during which a second checkout would create a duplicate subscription. */
+const LIVE_STRIPE_STATUSES = new Set(['active', 'trialing', 'past_due']);
+
+/**
+ * The Stripe subscription id an invoice belongs to. Older API versions put it at
+ * invoice.subscription; 2025-03-31+ moved it to invoice.parent.subscription_details.subscription.
+ * Either may be an id string or an expanded object.
+ */
+export const invoiceSubscriptionId = (invoice) => {
+    const ref = invoice?.subscription ?? invoice?.parent?.subscription_details?.subscription ?? null;
+    return (typeof ref === 'string' ? ref : ref?.id) || null;
+};
+
 /**
  * The caps that apply to a subscription right now. While trialing, the trial caps apply
  * (TRIAL_VIDEO_LIMIT / TRIAL_CHAT_MESSAGE_LIMIT) unless the plan's own cap is lower.
  */
 export const effectiveLimits = (subscription) => {
-    const plan = PLAN_LIMITS[subscription?.plan] ?? PLAN_LIMITS[SUBSCRIPTION_PLANS.FREE];
+    const plan = PLAN_LIMITS[effectivePlan(subscription)] ?? PLAN_LIMITS[SUBSCRIPTION_PLANS.FREE];
     if (subscription?.status !== SUBSCRIPTION_STATUS.TRIAL) return { ...plan };
     const trial = getTrialConfig();
     return {
@@ -98,6 +126,11 @@ export const getOrCreateSubscription = async (userId) => {
 // Check and reset period if needed
 export const checkAndResetPeriod = async (subscription) => {
     const now = new Date();
+
+    // Stripe is retrying a failed renewal: keep access, but no fresh allowance until it is paid.
+    if (now >= subscription.currentPeriodEnd && isPastDue(subscription)) {
+        return subscription;
+    }
 
     // If period ended, reset usage
     if (now >= subscription.currentPeriodEnd) {
@@ -219,7 +252,7 @@ export const incrementLifetimeFreeVideoCount = async (userId) => {
  */
 export const assertLifetimeFreeTrialAvailable = async (userId) => {
     const subscription = await getOrCreateSubscription(userId);
-    if (subscription.plan !== SUBSCRIPTION_PLANS.FREE) {
+    if (effectivePlan(subscription) !== SUBSCRIPTION_PLANS.FREE) {
         return;
     }
     const user = await User.findById(userId).select('lifetimeFreeVideosUsed').lean();
@@ -290,6 +323,27 @@ export const releaseChatMessageSlot = async (userId) => {
 };
 
 
+/**
+ * Refuses a second checkout while the account already pays (or trials) through Stripe; a second
+ * subscription would bill the card twice. Checks the local record and asks Stripe about the customer.
+ */
+async function assertNoLiveSubscription(subscription) {
+    const localLive = Boolean(subscription.stripeSubscriptionId)
+        && [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIAL, SUBSCRIPTION_STATUS.PAST_DUE].includes(subscription.status);
+    let live = localLive;
+    if (!live && subscription.stripeCustomerId) {
+        const existing = await stripe.subscriptions.list({ customer: subscription.stripeCustomerId, status: 'all', limit: 20 });
+        live = (existing?.data ?? []).some((s) => LIVE_STRIPE_STATUSES.has(s.status));
+    }
+    if (live) {
+        throw new ApiError(
+            409,
+            'You already have a subscription. To switch plans, use Change plan or Manage billing instead of buying a second one.',
+            { code: 'ALREADY_SUBSCRIBED' }
+        );
+    }
+}
+
 // Create Stripe checkout session
 /**
  * `trial: true` starts the plan with a free trial (card collected, first charge when the trial ends).
@@ -310,6 +364,7 @@ export const createCheckoutSession = async (userId, userEmail, plan, { trial = f
     }
 
     const subscription = await getOrCreateSubscription(userId);
+    await assertNoLiveSubscription(subscription);
 
     // Create or get Stripe customer
     let customerId = subscription.stripeCustomerId;
@@ -561,7 +616,9 @@ export const handleStripeWebhook = async (event) => {
             await handleSubscriptionDeleted(event.data.object);
             break;
 
+        // Stripe sends both for the same paid invoice; handlePaymentSucceeded runs once per invoice.
         case 'invoice.payment_succeeded':
+        case 'invoice.paid':
             await handlePaymentSucceeded(event.data.object);
             break;
 
@@ -611,7 +668,11 @@ async function handleCheckoutCompleted(session) {
     const [, periodEnd] = extractSubscriptionPeriod(stripeSubscription);
     const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
     const trialing = stripeSubscription.status === 'trialing';
-    const status = trialing ? SUBSCRIPTION_STATUS.TRIAL : SUBSCRIPTION_STATUS.ACTIVE;
+    // A paid (or free-to-start trial) session is a started plan, whatever an early subscription snapshot says.
+    // Otherwise (e.g. an async payment still pending) no paid access until Stripe reports it active.
+    const sessionPaid = ['paid', 'no_payment_required'].includes(session.payment_status);
+    const startedStatus = trialing ? SUBSCRIPTION_STATUS.TRIAL : SUBSCRIPTION_STATUS.ACTIVE;
+    const status = sessionPaid ? startedStatus : (mapStripeStatus(stripeSubscription.status) ?? SUBSCRIPTION_STATUS.ACTIVE);
     const trialEndsAt = trialing && stripeSubscription.trial_end ? new Date(stripeSubscription.trial_end * 1000) : null;
 
     if (!subscription) {
@@ -662,44 +723,68 @@ async function handleCheckoutCompleted(session) {
     console.log(`[Stripe Webhook] Upgraded user ${userId} to ${plan} plan${trialing ? ' (free trial)' : ''}`);
 }
 
+/** Statuses a subscription can only reach after it started; it never goes from these back to incomplete. */
+const PAID_START_STATUSES = [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIAL, SUBSCRIPTION_STATUS.PAST_DUE, SUBSCRIPTION_STATUS.UNPAID, SUBSCRIPTION_STATUS.PAUSED];
+
+/** The subscription as Stripe has it now; the event's own copy only when Stripe can't be reached. */
+async function liveStripeSubscription(eventSubscription) {
+    try {
+        const live = stripe ? await stripe.subscriptions.retrieve(eventSubscription.id) : null;
+        if (live?.id) return live;
+    } catch (err) {
+        console.warn(`[Stripe Webhook] Could not fetch subscription ${eventSubscription.id}, using the event copy: ${err?.message}`);
+    }
+    return eventSubscription;
+}
+
 // Handle subscription updated.
 // Also handles Stripe Customer Portal tier changes: if the line item's price id
 // maps to a different local plan, update the plan and reset usage counters so
 // a downgrade does not leave the user over-quota against the new lower limit.
-async function handleSubscriptionUpdated(stripeSubscription) {
+async function handleSubscriptionUpdated(eventSubscription) {
     const subscription = await Subscription.findOne({
-        stripeSubscriptionId: stripeSubscription.id
+        stripeSubscriptionId: eventSubscription.id
     });
 
     if (!subscription) {
-        console.error(`[Stripe Webhook] Subscription not found for Stripe subscription ${stripeSubscription.id}`);
+        console.error(`[Stripe Webhook] Subscription not found for Stripe subscription ${eventSubscription.id}`);
         return;
     }
+
+    // Stripe events can arrive late, out of order or retried (e.g. created/incomplete after the invoice
+    // was paid), so act on the subscription as it is now, not on the event's snapshot.
+    const stripeSubscription = await liveStripeSubscription(eventSubscription);
 
     // Update period dates. Stripe API 2025-03-31+ moved current_period_* onto items[].
     // Helper reads item-level first, falls back to top-level; null guards prevent
     // overwriting valid existing dates if Stripe sends a payload with neither populated.
     const [periodStart, periodEnd] = extractSubscriptionPeriod(stripeSubscription);
+    const previousStart = subscription.currentPeriodStart ? new Date(subscription.currentPeriodStart) : null;
+    const periodAdvanced = Boolean(periodStart && previousStart && periodStart > previousStart);
     if (periodStart) subscription.currentPeriodStart = periodStart;
     if (periodEnd) subscription.currentPeriodEnd = periodEnd;
 
-    // Update status (two-branch mapping preserved from previous behavior —
-    // unrecognized Stripe statuses leave the local status unchanged).
-    if (stripeSubscription.status === 'trialing') {
-        subscription.status = SUBSCRIPTION_STATUS.TRIAL;
-        if (stripeSubscription.trial_end) subscription.trialEndsAt = new Date(stripeSubscription.trial_end * 1000);
-    } else if (stripeSubscription.status === 'active') {
-        // Trial converted to paid: the full plan allowance starts now.
-        if (subscription.status === SUBSCRIPTION_STATUS.TRIAL) {
-            subscription.usage.videosUsed = 0;
-            subscription.usage.chatMessagesUsed = 0;
-            subscription.usage.lastResetAt = new Date();
-        }
-        subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
-        subscription.trialEndsAt = null;
-    } else if (stripeSubscription.status === 'canceled') {
-        subscription.status = SUBSCRIPTION_STATUS.CANCELLED;
+    // Mirror Stripe's status; unrecognized statuses leave the local status unchanged.
+    let status = mapStripeStatus(stripeSubscription.status);
+    if (status === SUBSCRIPTION_STATUS.INCOMPLETE && PAID_START_STATUSES.includes(subscription.status)) {
+        // Stripe never moves a started subscription back to incomplete: this is a stale snapshot.
+        console.warn(`[Stripe Webhook] Ignored stale incomplete status for user ${subscription.userId}`);
+        status = null;
     }
+    const resetUsage = () => {
+        subscription.usage.videosUsed = 0;
+        subscription.usage.chatMessagesUsed = 0;
+        subscription.usage.lastResetAt = new Date();
+    };
+    if (status === SUBSCRIPTION_STATUS.TRIAL) {
+        if (stripeSubscription.trial_end) subscription.trialEndsAt = new Date(stripeSubscription.trial_end * 1000);
+    } else if (status === SUBSCRIPTION_STATUS.ACTIVE) {
+        // Trial converted to paid, or a new paid period started (renewal): the full allowance starts now.
+        // Not for past_due and the like: no fresh allowance until the renewal is paid.
+        if (subscription.status === SUBSCRIPTION_STATUS.TRIAL || periodAdvanced) resetUsage();
+        subscription.trialEndsAt = null;
+    }
+    if (status) subscription.status = status;
 
     // Detect Portal-driven plan changes via the current line-item price id.
     const newPriceId = stripeSubscription.items?.data?.[0]?.price?.id;
@@ -765,38 +850,48 @@ async function handleSubscriptionDeleted(stripeSubscription) {
 }
 
 // Handle payment succeeded (renew period)
+// Runs once per invoice: invoice.payment_succeeded and invoice.paid both arrive for the same invoice,
+// so the update only matches while lastPaidInvoiceId is a different invoice (atomic, retry-safe).
 async function handlePaymentSucceeded(invoice) {
-    if (!invoice.subscription) return;
+    const stripeSubscriptionId = invoiceSubscriptionId(invoice);
+    if (!stripeSubscriptionId || !invoice?.id) return;
 
-    const subscription = await Subscription.findOne({
-        stripeSubscriptionId: invoice.subscription
-    });
+    const now = new Date();
+    const subscription = await Subscription.findOneAndUpdate(
+        { stripeSubscriptionId, lastPaidInvoiceId: { $ne: invoice.id } },
+        {
+            $set: {
+                'usage.videosUsed': 0,
+                'usage.chatMessagesUsed': 0,
+                'usage.lastResetAt': now,
+                paymentFailed: false,
+                paymentFailedAt: null,
+                lastPaidInvoiceId: invoice.id
+            }
+        },
+        { new: true }
+    );
 
     if (!subscription) {
-        console.error(`[Stripe Webhook] Subscription not found for invoice ${invoice.id}`);
+        console.log(`[Stripe Webhook] Invoice ${invoice.id}: no subscription to update, or already processed`);
         return;
     }
 
-    // Reset usage for new billing period
-    const now = new Date();
-    subscription.usage.videosUsed = 0;
-    subscription.usage.chatMessagesUsed = 0;
-    subscription.usage.lastResetAt = now;
-    subscription.paymentFailed = false;
-    subscription.paymentFailedAt = null;
-
-    await subscription.save();
+    // A paid invoice brings a past-due or unpaid subscription back; Stripe's own update event confirms it.
+    if ([SUBSCRIPTION_STATUS.PAST_DUE, SUBSCRIPTION_STATUS.UNPAID, SUBSCRIPTION_STATUS.INCOMPLETE].includes(subscription.status)) {
+        subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
+        await subscription.save();
+    }
 
     console.log(`[Stripe Webhook] Reset usage for user ${subscription.userId} after payment`);
 }
 
 // Handle payment failed
 async function handlePaymentFailed(invoice) {
-    if (!invoice.subscription) return;
+    const stripeSubscriptionId = invoiceSubscriptionId(invoice);
+    if (!stripeSubscriptionId) return;
 
-    const subscription = await Subscription.findOne({
-        stripeSubscriptionId: invoice.subscription
-    });
+    const subscription = await Subscription.findOne({ stripeSubscriptionId });
 
     if (!subscription) {
         console.error(`[Stripe Webhook] Subscription not found for invoice ${invoice.id}`);
