@@ -243,3 +243,17 @@ export const STRIPE_PRICE_ID_TO_PLAN = Object.freeze(
     ].filter(([priceId]) => Boolean(priceId))
   )
 );
+
+/**
+ * Per-IP rate limits for the public auth endpoints, each with its own counter, so verifying an email or
+ * resending a link never uses up someone's login attempts. Refresh, /me, logout and Google are not limited.
+ */
+const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
+export const AUTH_RATE_LIMITS = Object.freeze({
+    '/api/v1/auth/login': { windowMs: AUTH_RATE_WINDOW_MS, max: 20 },
+    '/api/v1/auth/signup': { windowMs: AUTH_RATE_WINDOW_MS, max: 10 },
+    '/api/v1/auth/verify-email': { windowMs: AUTH_RATE_WINDOW_MS, max: 60 },
+    '/api/v1/auth/resend-verification': { windowMs: AUTH_RATE_WINDOW_MS, max: 10 },
+    '/api/v1/auth/forgot-password': { windowMs: AUTH_RATE_WINDOW_MS, max: 10 },
+    '/api/v1/auth/reset-password': { windowMs: AUTH_RATE_WINDOW_MS, max: 20 },
+});

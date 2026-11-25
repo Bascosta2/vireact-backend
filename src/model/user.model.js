@@ -69,10 +69,29 @@ const userSchema = new mongoose.Schema({
         default: ROLES.USER,
         required: true
     },
+    /**
+     * The token in verification emails. Reused by every resend and kept after verification, so earlier
+     * links keep working and a second click answers "already verified" (see auth.service verifyEmailService).
+     */
     emailVerificationToken: {
         type: String,
         default: null
     },
+    /** When the verification link stops working (7 days after it was issued). Null on older tokens until their next email. */
+    emailVerificationTokenExpiresAt: {
+        type: Date,
+        default: null,
+        select: false
+    },
+    /**
+     * Pending re-signup of an unverified account. The name and password typed the second time are only
+     * applied when the link emailed for that attempt is opened (the token is stored as a SHA-256 hash), so
+     * a stranger re-signing up with someone else's address can never set the password that gets verified.
+     */
+    pendingPasswordHash: { type: String, default: null, select: false },
+    pendingName: { type: String, default: null, select: false },
+    pendingVerificationTokenHash: { type: String, default: null, select: false },
+    pendingVerificationTokenExpiresAt: { type: Date, default: null, select: false },
     isEmailVerified: {
         type: Boolean,
         default: false
@@ -176,6 +195,11 @@ userSchema.set("toJSON", {
         delete ret.password;
         delete ret.refreshToken;
         delete ret.emailVerificationToken;
+        delete ret.emailVerificationTokenExpiresAt;
+        delete ret.pendingPasswordHash;
+        delete ret.pendingName;
+        delete ret.pendingVerificationTokenHash;
+        delete ret.pendingVerificationTokenExpiresAt;
         delete ret.refreshSessions;
         delete ret.passwordResetTokenHash;
         delete ret.passwordResetExpires;
@@ -186,10 +210,14 @@ userSchema.set("toJSON", {
 });
 
 
+/** The one way passwords are hashed (save hook and pending re-signups). */
+const hashPassword = (password) => bcrypt.hash(password, 10);
+userSchema.statics.hashPassword = hashPassword;
+
 userSchema.pre("save", async function (next) {
     // Only hash password if it exists and has been modified
     if (this.isModified("password") && this.password) {
-        this.password = await bcrypt.hash(this.password, 10);
+        this.password = await hashPassword(this.password);
     }
     next();
 });
@@ -283,6 +311,10 @@ userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) 
             // the owner can add their own later through Forgot password.
             user.password = undefined;
             user.emailVerificationToken = null;
+            user.pendingPasswordHash = null;
+            user.pendingName = null;
+            user.pendingVerificationTokenHash = null;
+            user.pendingVerificationTokenExpiresAt = null;
             user.isEmailVerified = true;
         }
         await user.save({ validateBeforeSave: false });
@@ -306,5 +338,6 @@ userSchema.statics.findOrCreateByGoogleProfile = async function (googleProfile) 
 // Emailed-link lookups (verify email, reset password). Partial: only users with a live token are indexed.
 userSchema.index({ emailVerificationToken: 1 }, { partialFilterExpression: { emailVerificationToken: { $type: 'string' } } });
 userSchema.index({ passwordResetTokenHash: 1 }, { partialFilterExpression: { passwordResetTokenHash: { $type: 'string' } } });
+userSchema.index({ pendingVerificationTokenHash: 1 }, { partialFilterExpression: { pendingVerificationTokenHash: { $type: 'string' } } });
 
 export const User = mongoose.model("User", userSchema);
