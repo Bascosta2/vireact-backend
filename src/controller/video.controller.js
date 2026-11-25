@@ -51,7 +51,7 @@ import {
     SCRIPT_SET_VERSION,
     MAX_SCRIPT_REGENERATIONS,
 } from '../service/script-suggestions.service.js';
-import { fetchIndexedVideoMedia } from '../service/transcript.service.js';
+import { fetchIndexedThumbnail, fetchIndexedVideoMedia } from '../service/transcript.service.js';
 import { TWELVELABS_USER_INDEX } from '../config/index.js';
 import { withAiContext, newTraceId } from '../lib/ai-tracking.js';
 import { addSnapshot, deleteSnapshot, setPostDetails, getPerformance } from '../service/performance.service.js';
@@ -135,6 +135,54 @@ export const deleteVideo = async (req, res, next) => {
                 null
             )
         );
+    } catch (error) {
+        next(error);
+    }
+};
+
+const TITLE_MAX = 100;
+const OBJECT_ID = /^[0-9a-f]{24}$/i;
+
+/** PATCH /videos/:videoId/title { title } — rename a video in the app. An empty title clears it. */
+export const renameVideo = async (req, res, next) => {
+    try {
+        const { videoId } = req.params;
+        if (!OBJECT_ID.test(String(videoId ?? ''))) throw new ApiError(400, 'Video ID is invalid');
+        const raw = req.body?.title;
+        if (raw != null && typeof raw !== 'string') throw new ApiError(400, 'Title must be text');
+        const title = (raw ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (title.length > TITLE_MAX) throw new ApiError(400, `Keep the name under ${TITLE_MAX} characters`);
+        const video = await Video.findOneAndUpdate(
+            { _id: videoId, uploader_id: req.user._id },
+            { $set: { title: title || null } },
+            { new: true, projection: { _id: 1, title: 1 } }
+        ).lean();
+        if (!video) throw new ApiError(404, 'Video not found');
+        res.status(200).json(ApiResponse.success(200, 'Video renamed', { video: { _id: video._id, title: video.title ?? null } }));
+    } catch (error) {
+        next(error);
+    }
+};
+
+const THUMB_REFRESH_MAX = 24;
+
+/**
+ * POST /videos/thumbnails/refresh { ids } — new thumbnail links for videos whose saved link stopped loading.
+ * Returns { thumbnails: { [id]: url | null } }; null means there is no picture to show.
+ */
+export const refreshVideoThumbnails = async (req, res, next) => {
+    try {
+        const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(String))].filter((id) => OBJECT_ID.test(id)) : [];
+        if (ids.length === 0) throw new ApiError(400, 'Send the ids of the videos to refresh');
+        if (ids.length > THUMB_REFRESH_MAX) throw new ApiError(400, `Refresh at most ${THUMB_REFRESH_MAX} videos at a time`);
+        const videos = await Video.find({ _id: { $in: ids }, uploader_id: req.user._id }).select('_id twelveLabsVideoId').lean();
+        const thumbnails = {};
+        await Promise.all(videos.map(async (v) => {
+            const url = v.twelveLabsVideoId ? await fetchIndexedThumbnail(TWELVELABS_USER_INDEX, v.twelveLabsVideoId) : null;
+            thumbnails[String(v._id)] = url;
+            await Video.updateOne({ _id: v._id }, { $set: { thumbnailUrl: url } });
+        }));
+        res.status(200).json(ApiResponse.success(200, 'Thumbnails refreshed', { thumbnails }));
     } catch (error) {
         next(error);
     }

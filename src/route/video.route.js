@@ -17,7 +17,9 @@ import {
     updateVideoPost,
     getVideoPerformance,
     createPerformanceSnapshot,
-    removePerformanceSnapshot
+    removePerformanceSnapshot,
+    renameVideo,
+    refreshVideoThumbnails
 } from '../controller/video.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { uploadSingle } from '../middleware/fileUpload.js';
@@ -40,6 +42,12 @@ videoRoutes.patch('/:videoId/confirm', confirmVideoUpload);
 
 // Get user's videos
 videoRoutes.get('/', getUserVideos);
+
+// Expired thumbnail links get fresh ones (before /:videoId routes).
+videoRoutes.post('/thumbnails/refresh', refreshVideoThumbnails);
+
+// Rename a video in the app.
+videoRoutes.patch('/:videoId/title', renameVideo);
 
 // Delete video
 videoRoutes.delete('/:videoId', deleteVideo);

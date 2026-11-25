@@ -99,6 +99,26 @@ export const fetchIndexedVideoMedia = async (indexId, indexedVideoId) => {
 };
 
 /**
+ * A fresh thumbnail link for an indexed video. Twelve Labs thumbnail links are signed and expire, so the
+ * one saved at analysis time stops loading after a while. Null when the video is gone from the index.
+ */
+export const fetchIndexedThumbnail = async (indexId, indexedVideoId) => {
+    if (!indexId || !indexedVideoId) return null;
+    const attempts = [
+        () => TwelveLabsClient.indexes.indexedAssets.retrieve(indexId, indexedVideoId, {}, { timeoutInSeconds: 20 }),
+        () => TwelveLabsClient.indexes.videos.retrieve(indexId, indexedVideoId, {}, { timeoutInSeconds: 20 }),
+    ];
+    for (const run of attempts) {
+        try {
+            return mapHls((await run())?.hls).thumbnailUrl;
+        } catch {
+            // try the next API shape
+        }
+    }
+    return null;
+};
+
+/**
  * Prompt block for analyzers/chat. Timecodes and seconds are both shown so the
  * model can cite a range without converting formats.
  */

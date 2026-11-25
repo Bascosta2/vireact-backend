@@ -19,7 +19,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export const ANALYTICS_VIDEO_FIELDS = [
-    '_id', 'filename', 'sourceTitle', 'thumbnailUrl', 'createdAt', 'duration', 'viralityScore', 'analysis.feature',
+    '_id', 'filename', 'title', 'sourceTitle', 'thumbnailUrl', 'createdAt', 'duration', 'viralityScore', 'analysis.feature',
     'analysis.score', 'predictedViewsLow', 'predictedViewsExpected', 'predictedViewsHigh', 'viewPredictionMethod',
     'creatorFollowers', 'creatorPlatform', 'postedAt', 'postUrl', 'performanceSnapshots', 'actualViews',
     'actualViewsReportedAt', 'viewLearning', 'scenes.startTime', 'scenes.endTime', 'scenes.audioSummary',
@@ -31,7 +31,7 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : nu
 const median = (xs) => percentile([...xs].sort((a, b) => a - b), 0.5);
 const time = (d) => (d ? new Date(d).getTime() : NaN);
 
-export const videoTitle = (v) => v.sourceTitle || v.filename || 'Untitled video';
+export const videoTitle = (v) => v.title || v.sourceTitle || v.filename || 'Untitled video';
 
 export const checkScores = (v) => {
     const out = {};
