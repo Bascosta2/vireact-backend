@@ -3,6 +3,7 @@ import { ScheduledPost, POST_STATUS, TARGET_STATUS, PUBLISH_PLATFORMS, PUBLISH_M
 import { ConnectedAccount, ACCOUNT_STATUS } from '../../model/connected-account.model.js';
 import { EditProject, EDIT_STATUS, RENDER_STATUS } from '../../model/edit-project.model.js';
 import { storage } from '../../lib/storage.js';
+import { ffprobe } from '../../lib/ffmpeg.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { hasPublishingAccess, isPublishingDryRun } from '../../config/flags.js';
 import { PROVIDERS, accessTokenFor } from '../accounts/accounts.service.js';
@@ -146,6 +147,26 @@ export const mediaDurationSec = async (userId, key, { findProject } = {}) => {
     const render = (project.renders ?? []).find((r) => r.key === key);
     const value = render ? render.durationSec : ([project.source?.key, project.source?.masterKey].includes(key) ? project.source?.durationSec : null);
     return Number(value) > 0 ? Number(value) : null;
+};
+
+/** Containers a Vireact video can be in; ffprobe refuses anything else (no playlists that fetch other URLs). */
+const PROBE_FORMATS = 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm';
+
+/**
+ * Length in seconds read from the file itself, for videos whose length was never stored: ffprobe reads only the
+ * headers through a short-lived signed URL. Null when it cannot be read.
+ */
+export const probeMediaDurationSec = async (key, { storageImpl = storage, ffprobeImpl = ffprobe } = {}) => {
+    try {
+        const url = await storageImpl.presignDownload(key, { expiresIn: 300 });
+        const { stdout } = await ffprobeImpl(['-v', 'error', '-protocol_whitelist', 'https,tls,tcp', '-format_whitelist', PROBE_FORMATS,
+            '-show_entries', 'format=duration', '-of', 'csv=p=0', url], { timeoutMs: 30_000 });
+        const value = Number(String(stdout).trim());
+        return Number.isFinite(value) && value > 0 ? value : null;
+    } catch (e) {
+        console.error('[publish] could not read video length:', e.message);
+        return null;
+    }
 };
 
 // ---- validation (pure)
@@ -341,14 +362,17 @@ export const getTikTokCreatorInfo = async (userId, { dryRun = isPublishingDryRun
 };
 
 /**
- * Validated TikTok settings to store on the target, from a fresh creator_info. `media.durationSec` is filled in
- * when it can be found. Throws a 400 with a plain-English reason.
+ * Validated TikTok settings to store on the target, from a fresh creator_info, stamped with the time the creator
+ * agreed. `media.durationSec` is filled in (stored length, else read once from the file); a video whose length
+ * cannot be found is refused, since TikTok's length limit could not be checked. Throws a 400 with a plain reason.
  */
-export const checkTikTokSettings = async ({ userId, input, account, dryRun, media, now, loadCreator = loadTikTokCreator }) => {
+export const checkTikTokSettings = async ({ userId, input, account, dryRun, media, now, loadCreator = loadTikTokCreator, probeDuration = probeMediaDurationSec }) => {
     if (input == null) throw tiktokError('tiktok', 'Choose your TikTok settings (who can watch, comments, duets and stitches) before posting to TikTok.');
     const { view, creator } = await loadCreator({ account, dryRun });
     if (!view.canPost) throw new ApiError(400, view.reason, { code: 'TIKTOK_CANNOT_POST', field: 'tiktok' });
     if (media.durationSec == null) media.durationSec = await mediaDurationSec(userId, media.key);
+    if (media.durationSec == null) media.durationSec = await probeDuration(media.key);
+    if (media.durationSec == null) throw tiktokError('media', 'We could not check how long this video is, so it cannot be posted to TikTok. Export it again, then schedule it.');
     return { ...validateTikTokSettings(input, creator, { durationSec: media.durationSec }), confirmedAt: new Date(now) };
 };
 
@@ -452,6 +476,22 @@ const notChangeable = (post) => (post.status === POST_STATUS.PUBLISHING
     ? new ApiError(409, 'This post is already being published, so it can no longer be changed.')
     : new ApiError(409, post.status === POST_STATUS.CANCELLED ? 'This post was cancelled.' : 'This post has already been sent and can no longer be changed.'));
 
+/** PATCH fields that change a post. */
+const EDITABLE_FIELDS = ['caption', 'scheduledAt', 'platforms', 'pageId', 'tiktok'];
+
+/**
+ * TikTok's guidelines tie the creator's choices and declaration to the post as it will go out, so any change to a
+ * TikTok Direct Post (even just the caption or time) needs the `tiktok` settings sent again; they are checked
+ * against fresh creator_info and the agreement is stamped again. Returns that input, or null when the edit does
+ * not involve a TikTok Direct Post (nothing to change, a draft, or TikTok removed).
+ */
+export const tiktokInputForUpdate = ({ mode, platforms, body = {} }) => {
+    if (mode !== 'publish' || !platforms.includes('tiktok')) return null;
+    if (!EDITABLE_FIELDS.some((k) => body[k] !== undefined)) return null;
+    if (body.tiktok == null) throw tiktokError('tiktok', 'Confirm your TikTok settings (who can watch, comments, duets and stitches) again to change this TikTok post.');
+    return body.tiktok;
+};
+
 /** Caption, time, platforms or TikTok settings, only while the post is still scheduled. */
 export const updateScheduledPost = async (userId, id, body = {}, { now = Date.now(), dryRun = isPublishingDryRun() } = {}) => {
     const post = await ownedPost(userId, id);
@@ -460,8 +500,7 @@ export const updateScheduledPost = async (userId, id, body = {}, { now = Date.no
     const platforms = body.platforms !== undefined ? validatePlatforms(body.platforms) : post.targets.map((t) => t.platform);
     if (body.caption !== undefined || body.platforms !== undefined) set.caption = validateCaption(body.caption !== undefined ? body.caption : post.caption, platforms);
     const testMode = dryRun || Boolean(post.dryRun);
-    const currentTikTok = post.targets.find((t) => t.platform === 'tiktok') ?? null;
-    const tiktokDirect = post.mode === 'publish' && platforms.includes('tiktok');
+    const tiktokInput = tiktokInputForUpdate({ mode: post.mode, platforms, body });
     const media = { ...post.media };
     if (body.platforms !== undefined || body.pageId !== undefined) {
         const { accounts, capabilities } = await readiness(userId, testMode);
@@ -469,17 +508,12 @@ export const updateScheduledPost = async (userId, id, body = {}, { now = Date.no
         const currentPage = post.targets.find((t) => t.platform === 'facebook')?.pageId ?? null;
         const pageId = platforms.includes('facebook') ? await resolveFacebookPage({ account: accounts.facebook, pageId: body.pageId ?? currentPage, dryRun: testMode }) : null;
         set.targets = buildTargets({ platforms, mode: post.mode, accounts, capabilities, dryRun: testMode, pageId });
-        const target = tiktokDirect ? set.targets.find((t) => t.platform === 'tiktok') : null;
-        // New settings, or the stored ones checked again against the creator's options today.
-        if (target) {
-            const kept = body.tiktok === undefined && currentTikTok?.tiktok ? currentTikTok.tiktok : null;
-            const checked = await checkTikTokSettings({ userId, input: kept ? publicTikTok(kept) : body.tiktok, account: accounts.tiktok, dryRun: testMode, media, now });
-            // Kept settings keep the time the creator agreed to the declaration.
-            target.tiktok = kept?.confirmedAt ? { ...checked, confirmedAt: kept.confirmedAt } : checked;
-        }
-    } else if (body.tiktok !== undefined && tiktokDirect && currentTikTok) {
-        const account = currentTikTok.accountId ? await ConnectedAccount.findOne({ _id: currentTikTok.accountId, userId }).lean() : null;
-        const tiktok = await checkTikTokSettings({ userId, input: body.tiktok, account, dryRun: testMode, media, now });
+        const target = tiktokInput ? set.targets.find((t) => t.platform === 'tiktok') : null;
+        if (target) target.tiktok = await checkTikTokSettings({ userId, input: tiktokInput, account: accounts.tiktok, dryRun: testMode, media, now });
+    } else if (tiktokInput) {
+        const currentTikTok = post.targets.find((t) => t.platform === 'tiktok');
+        const account = currentTikTok?.accountId ? await ConnectedAccount.findOne({ _id: currentTikTok.accountId, userId }).lean() : null;
+        const tiktok = await checkTikTokSettings({ userId, input: tiktokInput, account, dryRun: testMode, media, now });
         set.targets = post.targets.map((t) => (t.platform === 'tiktok' ? { ...t, tiktok } : t));
     }
     if (media.durationSec != null && media.durationSec !== post.media?.durationSec) set['media.durationSec'] = media.durationSec;
