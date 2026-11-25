@@ -108,3 +108,27 @@ export async function prepareMedia(srcPath, workDir, { onStage = () => {} } = {}
 
     return { info, proxyPath, masterPath, audioPath, thumbPath, silences, loudnessLufs, sceneCuts, sheets };
 }
+
+/**
+ * Screen recording (EDITOR_FEATURES_V2): the same limits and the same proxy / render master as the
+ * talking head, silent (the speaker's voice is the soundtrack), plus one contact sheet for the planner.
+ */
+export async function prepareScreenRecording(srcPath, workDir) {
+    await fs.promises.mkdir(workDir, { recursive: true });
+    const info = await probe(srcPath);
+    if (!info.durationSec || info.durationSec < LIMITS.minDurationSec) throw new MediaError('This screen recording is too short. Upload at least 3 seconds.');
+    if (info.durationSec > LIMITS.maxDurationSec + 1) throw new MediaError('Screen recordings can be up to 3 minutes long. Trim it and try again.');
+    const fps = Math.min(30, Math.round(info.fps || 30));
+    const encode = (out, edge, crf, g, rate) => ffmpeg([
+        '-i', srcPath, '-vf', `${longEdge(edge)}${rate}`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-pix_fmt', 'yuv420p', '-g', String(g), '-an', '-movflags', '+faststart', out,
+    ]);
+    const proxyPath = path.join(workDir, 'screen-proxy.mp4');
+    const masterPath = path.join(workDir, 'screen-master.mp4');
+    await encode(proxyPath, PROXY_LONG_EDGE, 26, fps, `,fps=${fps}`);
+    await encode(masterPath, MASTER_LONG_EDGE, 18, 30, ',fps=30');
+    // 9 frames spread over the whole recording, so the planner can see what is on screen and where.
+    const sheetPath = path.join(workDir, 'screen-sheet.jpg');
+    await ffmpeg(['-i', proxyPath, '-vf', `fps=9/${info.durationSec.toFixed(3)},${longEdge(CELL_LONG_EDGE)},tile=${SHEET_COLS}x${SHEET_ROWS}`, '-frames:v', '1', '-q:v', '4', sheetPath]);
+    return { info, proxyPath, masterPath, sheetPath, intervalSec: Math.max(1, Math.round(info.durationSec / 9)) };
+}

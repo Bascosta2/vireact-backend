@@ -57,6 +57,7 @@ export function buildStoryboard(plan, edits = {}) {
             sounds: (live.sfx ?? []).filter((e) => within(e.at, s)).map((e) => ({ type: e.type, at: e.at })),
             effects: (live.effects ?? []).filter((e) => within(e.at, s)).map((e) => ({ type: e.type, at: e.at })),
             zooms: (plan.zooms ?? []).filter((z) => within(z.at, s)).length,
+            ...(plan.screens?.length ? { screens: plan.screens.filter((x) => within(x.start, s)).map((x) => ({ start: x.start, end: x.end, zoom: Math.max(x.fromZoom, x.toZoom) })) } : {}),
             framing,
         })),
     };

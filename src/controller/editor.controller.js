@@ -26,6 +26,7 @@ export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
 export const MAX_BEAT_SWAPS = 5;
 export const MAX_PROJECT_SWAPS = 20;
+export const MAX_SCREEN_ATTACHES = 3;
 const ALLOWED_TYPES = new Map([
     ['video/mp4', '.mp4'],
     ['video/quicktime', '.mov'],
@@ -94,6 +95,8 @@ const mediaFor = (p, brand = null) => ({
     cutCandidates: p.media?.cutCandidates ?? [],
     durationSec: p.source?.durationSec ?? 0,
     skill: p.skill ?? null,
+    screenRecordingSec: isEditorFeaturesV2() && p.screenRecording?.proxyKey ? p.screenRecording.durationSec ?? 0 : 0,
+    screenAspect: p.screenRecording?.width && p.screenRecording?.height ? p.screenRecording.width / p.screenRecording.height : 16 / 9,
 });
 
 /** media for buildRenderProps plus a signed URL of the background matte (only with the flag on and a finished matte). */
@@ -101,6 +104,98 @@ const mediaWithMatte = async (p, brand = null) => {
     const base = mediaFor(p, brand);
     const key = p.media?.matte?.status === 'ok' ? p.media.matte.key : null;
     return isBgRemovalEnabled() && key ? { ...base, matteUrl: await storage.presignDownload(key, { expiresIn: 3 * 60 * 60 }) } : base;
+};
+
+/**
+ * Screen recording (EDITOR_FEATURES_V2): a second upload per edit. attach = presigned upload, confirm = prepare it and
+ * re-plan (it does not use a regeneration), detach = remove it and its shots right away.
+ */
+const assertScreenFeature = () => {
+    if (!isEditorFeaturesV2()) throw new ApiError(404, 'Not found');
+};
+
+export const attachScreenRecording = async (req, res, next) => {
+    try {
+        assertScreenFeature();
+        assertConfigured();
+        const { fileName = '', contentType = '', sizeBytes } = req.body ?? {};
+        const ext = ALLOWED_TYPES.get(String(contentType).toLowerCase());
+        if (!ext) throw new ApiError(400, 'Upload an MP4, MOV, WebM or MKV screen recording.', { code: 'BAD_TYPE' });
+        const size = Number(sizeBytes);
+        if (!Number.isFinite(size) || size <= 0) throw new ApiError(400, 'File size is missing.');
+        if (size > MAX_UPLOAD_BYTES) throw new ApiError(413, 'Screen recordings can be up to 500 MB.', { code: 'TOO_LARGE' });
+        const project = await ownedProject(req, { status: EDIT_STATUS.READY });
+        if ((project.screenAttaches ?? 0) >= MAX_SCREEN_ATTACHES) throw new ApiError(429, 'You have replaced the screen recording on this edit too many times. Start a new edit to try again.', { code: 'SCREEN_ATTACHES_USED' });
+        const key = editorKey('sources', project.userId, project._id, `screen${ext}`);
+        const old = project.screenRecording ?? {};
+        // The previous recording (and its prepared files) is replaced. awaitingUpload lets confirm run once per upload.
+        const claimed = await EditProject.updateOne(
+            { _id: project._id, status: EDIT_STATUS.READY, screenAttaches: project.screenAttaches ?? 0 },
+            { $set: { screenRecording: { key, contentType, sizeBytes: size, originalName: String(fileName).slice(0, 200), awaitingUpload: true } }, $inc: { screenAttaches: 1 } }
+        );
+        if (!claimed.modifiedCount) throw new ApiError(409, 'This edit is being updated. Try again in a moment.');
+        for (const k of [old.key, old.proxyKey, old.masterKey, old.sheetKey].filter((x) => x && x !== key)) await storage.deletePrefix(k).catch((err) => console.warn(`[Editor] Could not delete ${k}:`, err.message));
+        const uploadUrl = await storage.presignUpload({ key, contentType, sizeBytes: size });
+        ok(res, 'Upload ready', { upload: { url: uploadUrl, method: 'PUT', headers: { 'Content-Type': contentType } } }, 201);
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const confirmScreenRecording = async (req, res, next) => {
+    try {
+        assertScreenFeature();
+        assertConfigured();
+        const project = await ownedProject(req, { status: EDIT_STATUS.READY });
+        const rec = project.screenRecording;
+        if (!rec?.key || !rec.awaitingUpload) throw new ApiError(400, 'Add a screen recording first.', { code: 'NO_SCREEN_RECORDING' });
+        const head = await storage.head(rec.key);
+        if (!head || !head.sizeBytes) throw new ApiError(400, 'We could not find your upload. Try uploading again.', { code: 'UPLOAD_MISSING' });
+        if (!ALLOWED_TYPES.has(String(head.contentType ?? '').toLowerCase())) {
+            await EditProject.updateOne({ _id: project._id }, { $unset: { screenRecording: 1 } });
+            await storage.deletePrefix(rec.key).catch(() => {});
+            throw new ApiError(400, 'Upload an MP4, MOV, WebM or MKV screen recording.', { code: 'BAD_TYPE' });
+        }
+        if (head.sizeBytes > MAX_UPLOAD_BYTES) {
+            await EditProject.updateOne({ _id: project._id }, { $unset: { screenRecording: 1 } });
+            await storage.deletePrefix(rec.key).catch(() => {});
+            throw new ApiError(413, 'Screen recordings can be up to 500 MB.', { code: 'TOO_LARGE' });
+        }
+        const note = 'The creator attached a screen recording. Keep the edit as it is and add screen recording shots where they help.';
+        const queued = await EditProject.updateOne(
+            { _id: project._id, status: EDIT_STATUS.READY, 'screenRecording.awaitingUpload': true },
+            { $set: { 'screenRecording.sizeBytes': head.sizeBytes, 'screenRecording.awaitingUpload': false, status: EDIT_STATUS.QUEUED, inFlight: true, stage: 'queued', progress: 75, attempts: 0, heartbeatAt: new Date(), error: null, pendingRevision: { note, previousPlan: project.plan, screenAttach: true, keepEdits: { disabledSegments: project.edits?.disabledSegments ?? [], beatSwaps: project.edits?.beatSwaps ?? {} } } } }
+        ).catch((err) => {
+            if (err?.code === 11000) throw new ApiError(409, 'You already have an edit in progress. Wait for it to finish first.', { code: 'EDIT_IN_PROGRESS' });
+            throw err;
+        });
+        if (!queued.modifiedCount) throw new ApiError(409, 'This edit is already being updated.');
+        try {
+            await publishEditJob(project._id);
+        } catch (err) {
+            await EditProject.updateOne({ _id: project._id }, { $set: { status: EDIT_STATUS.READY, inFlight: false, pendingRevision: null, stage: 'ready', progress: 100, 'screenRecording.awaitingUpload': true } });
+            throw new ApiError(503, 'We could not start the update. Try again in a minute.');
+        }
+        captureServerEvent(String(req.user._id), 'edit_screen_recording_added', { project_id: String(project._id), size_mb: Math.round(head.sizeBytes / 1e6) });
+        ok(res, 'Adding your screen recording', { id: String(project._id), status: EDIT_STATUS.QUEUED });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const detachScreenRecording = async (req, res, next) => {
+    try {
+        assertScreenFeature();
+        const project = await ownedProject(req, { status: EDIT_STATUS.READY });
+        if (!project.screenRecording?.key) throw new ApiError(404, 'There is no screen recording on this edit.');
+        const keys = [project.screenRecording.key, project.screenRecording.proxyKey, project.screenRecording.masterKey, project.screenRecording.sheetKey].filter(Boolean);
+        // The shots go with it; the rest of the edit is untouched.
+        await EditProject.updateOne({ _id: project._id, status: EDIT_STATUS.READY }, { $unset: { screenRecording: 1 }, $set: { 'plan.screens': [], 'edits.storyboardApproved': false } });
+        for (const key of keys) await storage.deletePrefix(key).catch((err) => console.warn(`[Editor] Could not delete ${key}:`, err.message));
+        ok(res, 'Screen recording removed', { id: String(project._id) });
+    } catch (error) {
+        next(error);
+    }
 };
 
 const trackIdSet = async () => new Set((await SoundAsset.find({ kind: 'music', active: true }).select('slug').lean()).map((t) => t.slug));
@@ -127,6 +222,7 @@ async function toDetail(p, brand = null) {
     const base = await toListItem(p);
     const detail = {
         ...base,
+        ...(isEditorFeaturesV2() && p.screenRecording?.key ? { screenRecording: { name: p.screenRecording.originalName ?? null, durationSec: p.screenRecording.durationSec ?? null, ready: Boolean(p.screenRecording.proxyKey) } } : {}),
         source: p.source ? { durationSec: p.source.durationSec, width: p.source.width, height: p.source.height, hasAudio: p.source.hasAudio } : null,
         regenerationsLeft: Math.max(0, MAX_REGENERATIONS - (p.revisions?.length ?? 0)),
         billing: p.billing?.kind ?? null,
@@ -162,7 +258,7 @@ async function toDetail(p, brand = null) {
             graphics: full.graphics.map((g) => ({ type: g.type, text: g.text || g.items.join(', ') })),
             look: full.look,
         };
-        detail.props = { ...props, ...(await soundUrls(props)) };
+        detail.props = { ...props, ...(await soundUrls(props)), ...(props.screens?.length ? { screenUrl: await sign(p.screenRecording?.proxyKey) } : {}) };
         detail.proxyUrl = await sign(p.source?.proxyKey);
         const accepted = new Set(p.plan.acceptedCandidateIds);
         detail.candidates = (p.media?.cutCandidates ?? []).filter((c) => accepted.has(c.id)).map((c) => ({ id: c.id, kind: c.kind, start: c.start, end: c.end, text: c.text ?? null }));
@@ -420,7 +516,7 @@ export const startEditRender = async (req, res, next) => {
         const props = buildRenderProps(project.plan, project.edits ?? {}, await mediaWithMatte(project, brandFor(req.user)));
         const sounds = await soundUrls(props);
         // The final render uses the full-quality render master (the original upload for older edits), not the preview proxy.
-        const inputProps = { ...props, ...sounds, videoUrl: await storage.presignDownload(project.source.masterKey || project.source.key, { expiresIn: 3 * 60 * 60 }) };
+        const inputProps = { ...props, ...sounds, videoUrl: await storage.presignDownload(project.source.masterKey || project.source.key, { expiresIn: 3 * 60 * 60 }), ...(props.screens?.length ? { screenUrl: await storage.presignDownload(project.screenRecording.masterKey, { expiresIn: 3 * 60 * 60 }) } : {}) };
         const id = crypto.randomBytes(6).toString('hex');
         const outKey = editorKey('renders', project.userId, project._id, `${id}.mp4`);
         const { remotionRenderId, bucketName } = await startRender({ inputProps, outKey });

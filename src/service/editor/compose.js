@@ -1,4 +1,4 @@
-import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
+import { VISUALS, captionPreset, normalizeGraphic, validateScreens } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
 import { HOOK_VARIANTS, sanitizeBrand, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
 import { removeRepeats } from './no-repeats.js';
@@ -451,6 +451,19 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         if (g.type === 'slam') rotate('before_slam', SFX_BEFORE_SLAM, Math.max(0, g.startFrame - 6), 0, 0.35);
     }
 
+    // Screen recording shots (EDITOR_FEATURES_V2 + an attached, prepared recording): re-validated against the recording as it is now.
+    const framingOut = framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true);
+    const screens = media.v2 && media.screenRecordingSec > 0
+        ? validateScreens(plan.screens, plan.segments, media.screenRecordingSec).map((x) => {
+            const r = mapRange(x.start, x.end, timeline);
+            if (!r) return null;
+            const startFrame = f(r.start);
+            const durationFrames = Math.min(total - startFrame, f(r.end - r.start));
+            // Split screen on: the recording takes the lower half and the speaker stays on top. Off: it fills the 4:5 safe area.
+            return durationFrames > 6 ? { aspect: Math.round((Number(media.screenAspect) || 16 / 9) * 1000) / 1000, startFrame, durationFrames, recStartSec: x.recStart, from: { x: x.fromX, y: x.fromY, zoom: x.fromZoom }, to: { x: x.toX, y: x.toY, zoom: x.toZoom }, layout: framingOut.mode === 'split' ? 'bottom' : 'safe' } : null;
+        }).filter(Boolean)
+        : [];
+
     const effects = edits.effectsOff ? [] : thin(plan.effects
         .map((e) => {
             const t = mapPoint(e.at, timeline);
@@ -495,6 +508,7 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         music,
         ...(brand ? { brand } : {}),
         framing,
+        ...(screens.length ? { screens } : {}),
         ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [], ...(sr?.layout ? { layout: sceneOn ? 'scene' : 'footage' } : {}) } } : {}),
     };
 }
