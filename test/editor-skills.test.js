@@ -324,7 +324,7 @@ test('screen recording: focus points are clamped, shots validated, planner rules
 
     // Through validateEdl: only with the flag on and ctx.screenDurationSec.
     const withScreens = { ...plan(), screens: [shot()] };
-    assert.deepEqual(validateEdl(withScreens, { ...ctx, screenDurationSec: 20 }).plan.screens, []);
+    assert.equal('screens' in validateEdl(withScreens, { ...ctx, screenDurationSec: 20 }).plan, false, 'flag off: plan shape unchanged');
     process.env.EDITOR_FEATURES_V2 = 'true';
     try {
         assert.equal(validateEdl(withScreens, { ...ctx, screenDurationSec: 20 }).plan.screens.length, 1);

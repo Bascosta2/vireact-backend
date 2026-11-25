@@ -261,6 +261,7 @@ async function prepareScreenFor(project, userId, prepareScreen) {
         await EditProject.updateOne({ _id: project._id }, { $set: set });
     } catch (err) {
         await EditProject.updateOne({ _id: project._id }, { $unset: { screenRecording: 1 }, $set: { pendingRevision: null } });
+        await storage.deletePrefix(rec.key).catch(() => {});
         throw err;
     } finally {
         await fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => {});

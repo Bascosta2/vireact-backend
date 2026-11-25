@@ -327,7 +327,7 @@ export function validateEdl(edl, ctx) {
         textOverlays: [],
         framing: { mode: edl.framing?.mode === 'fit_blur' || (edl.framing?.mode === 'split' && isEditorFeaturesV2()) ? edl.framing.mode : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)), detailX: r3(clamp(edl.framing?.detailX ?? 0.5, 0, 1)), detailY: r3(clamp(edl.framing?.detailY ?? 0.62, 0, 1)) },
         // Only with the flag on and a recording attached (ctx.screenDurationSec); otherwise always empty.
-        screens: isEditorFeaturesV2() ? validateScreens(edl.screens, kept, Number(ctx.screenDurationSec) || 0) : [],
+        ...(isEditorFeaturesV2() ? { screens: validateScreens(edl.screens, kept, Number(ctx.screenDurationSec) || 0) } : {}),
         music: { trackId: musicId || null, volume: r3(clamp(edl.music?.volume ?? 0.15, 0, 0.6)), reason: clip(edl.music?.reason, 200) },
         sfx: sfxIn.filter((s) => SFX_TYPES.includes(s.type) && inSegments(s.at, kept)).slice(0, LIMITS.sfx).map((s) => ({ type: s.type, at: r3(s.at) })),
         changes: (edl.changes ?? []).slice(0, 24).map((c) => ({ kind: pick(c.kind, CHANGE_KINDS, 'cut'), label: clip(c.label, 120), why: clip(c.why, 300), evidence: pick(c.evidence, EVIDENCE, 'footage') })),

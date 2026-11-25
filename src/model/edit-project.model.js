@@ -77,7 +77,11 @@ const editProjectSchema = new mongoose.Schema({
         proxyKey: String,
         masterKey: String,
         sheetKey: String,
+        /** True from attach until confirm, so each upload is confirmed (and planned) once. */
+        awaitingUpload: Boolean,
     },
+    /** How many screen recordings were attached to this edit (capped, see MAX_SCREEN_ATTACHES). */
+    screenAttaches: { type: Number, default: 0 },
 
     media: {
         words: { type: [wordSchema], default: undefined },
