@@ -20,13 +20,24 @@ const num = (value, fallback) => {
     return Number.isFinite(n) ? n : fallback;
 };
 
+/**
+ * Owner decision 2026-11: 0.6 keeps well-reviewed items the old 0.7 floor dropped. Unset, null, blank and
+ * non-numeric values use 0.6; numeric values are clamped to [0.5, 1].
+ */
+const confidenceFloor = (value) => {
+    if (value === undefined || value === null || String(value).trim() === '') return 0.6;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0.6;
+    return Math.min(1, Math.max(0.5, n));
+};
+
 /** Runtime settings (read on every call so tests and Railway changes apply without a restart). */
 export const researchConfig = (env = process.env) => ({
     enabled: env.RESEARCH_INGEST_ENABLED === 'true',
     minScore: num(env.RESEARCH_MIN_SCORE, 75),
     dailyCap: Math.max(0, Math.floor(num(env.RESEARCH_DAILY_CAP, 30))),
     maxShare: Math.min(0.9, Math.max(0, num(env.RESEARCH_MAX_SHARE, 0.35))),
-    minConfidence: 0.7,
+    minConfidence: confidenceFloor(env.RESEARCH_MIN_CONFIDENCE),
     duplicateCosine: 0.92,
     metricsMaxAgeMonths: 24,
     repo: env.RESEARCH_REPO || 'Bascosta2/vireact-research',
