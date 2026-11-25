@@ -13,7 +13,8 @@ import {
     getMe,
     saveAttribution,
     forgotPassword,
-    resetPassword
+    resetPassword,
+    confirmEmailChange
 } from '../controller/auth.controller.js';
 import { authenticateToken, optionalAuth } from '../middleware/auth.js';
 
@@ -33,6 +34,8 @@ authRoutes.post('/verify-email', verifyEmail);
 authRoutes.post('/resend-verification', resendEmailVerification);
 authRoutes.post('/forgot-password', forgotPassword);
 authRoutes.post('/reset-password', resetPassword);
+// Link emailed to a new address after PATCH /profile asked to change the email. No sign-in needed: the token proves the inbox.
+authRoutes.post('/confirm-email-change', confirmEmailChange);
 
 // Session identity echo for OAuth hydration (cookie- or Bearer-authenticated).
 authRoutes.get('/me', authenticateToken, getMe);
