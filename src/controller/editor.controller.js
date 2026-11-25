@@ -18,7 +18,11 @@ import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
 import { effectivePlan } from '../service/access.service.js';
 import { hasEditorAccess } from '../config/flags.js';
-import { SKILLS, isSkill } from '../service/editor/skills.js';
+import { SKILLS, isAnimationStyle, isSkill } from '../service/editor/skills.js';
+import { chargeEdit } from '../service/editor/editor-access.service.js';
+import {
+    MAX_STORYBOARD_ROUNDS, PROMPT_LIMITS, STORYBOARD_LENGTHS, buildStoryboardEdit, decorateStoryboardProps, normalizeOption,
+} from '../service/editor/storyboard.service.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
@@ -87,6 +91,25 @@ const mediaFor = (p) => ({
     skill: p.skill ?? null,
 });
 
+/** Render props of an edit: a storyboard video also gets its scenes, scene transitions and unducked music. */
+const propsFor = (p, edits = p.edits ?? {}) =>
+    p.kind === 'storyboard'
+        ? decorateStoryboardProps(buildRenderProps(p.plan, edits, mediaFor(p), { density: null }), p, edits)
+        : buildRenderProps(p.plan, edits, mediaFor(p));
+
+/** What the project page shows of a story-mode project. */
+const storyboardView = (p) =>
+    p.kind === 'storyboard'
+        ? {
+            prompt: p.storyboard?.prompt ?? '',
+            lengthSec: p.storyboard?.lengthSec ?? 30,
+            options: p.storyboard?.options ?? [],
+            chosen: p.storyboard?.chosen ?? null,
+            final: p.storyboard?.final ? { title: p.storyboard.final.title, scenes: p.storyboard.final.scenes } : null,
+            roundsLeft: Math.max(0, MAX_STORYBOARD_ROUNDS - (p.storyboard?.rounds ?? 0)),
+        }
+        : null;
+
 const trackIdSet = async () => new Set((await SoundAsset.find({ kind: 'music', active: true }).select('slug').lean()).map((t) => t.slug));
 
 /** Summary for lists. */
@@ -94,12 +117,13 @@ const toListItem = async (p) => ({
     id: String(p._id),
     title: p.title,
     skill: p.skill ?? null,
+    kind: p.kind ?? 'upload',
     status: p.status,
     stage: p.stage,
     progress: p.progress,
     error: p.error,
     durationSec: p.source?.durationSec ?? null,
-    editedDurationSec: p.plan ? Math.round(buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p)).durationInFrames / 30 * 10) / 10 : null,
+    editedDurationSec: p.plan ? Math.round(propsFor(p).durationInFrames / 30 * 10) / 10 : null,
     thumbnailUrl: p.source?.thumbnailKey ? await sign(p.source.thumbnailKey) : null,
     createdAt: p.createdAt,
     readyAt: p.readyAt ?? null,
@@ -122,11 +146,12 @@ async function toDetail(p) {
         proxyUrl: null,
         candidates: [],
         words: [],
+        storyboard: storyboardView(p),
     };
     if (p.status === EDIT_STATUS.READY && p.plan) {
-        const props = buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p));
+        const props = propsFor(p);
         // Counts with every layer switched on, so a toggle stays visible after it is turned off.
-        const full = buildRenderProps(p.plan, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false }, mediaFor(p));
+        const full = propsFor(p, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false });
         detail.plan = {
             summary: p.plan.summary,
             hookStrategy: p.plan.hookStrategy,
@@ -249,6 +274,151 @@ export const confirmEditUpload = async (req, res, next) => {
     }
 };
 
+/**
+ * Story mode: start a video from a typed idea in an animation style. Claude writes three storyboards
+ * (the job); the creator then picks one with chooseStoryboard. Counts as an edit only once confirmed.
+ */
+export const createStoryboard = async (req, res, next) => {
+    try {
+        assertConfigured();
+        const userId = req.user._id;
+        const prompt = String(req.body?.prompt ?? '').replace(/\r/g, '').trim();
+        const style = String(req.body?.style ?? '');
+        const lengthSec = STORYBOARD_LENGTHS.includes(Number(req.body?.lengthSec)) ? Number(req.body.lengthSec) : 30;
+        if (!isAnimationStyle(style)) throw new ApiError(400, 'Pick an animation style for your story.', { code: 'BAD_STYLE' });
+        if (prompt.length < PROMPT_LIMITS.min) throw new ApiError(400, 'Describe your idea in a sentence or two.', { code: 'PROMPT_TOO_SHORT' });
+        if (prompt.length > PROMPT_LIMITS.max) throw new ApiError(400, `Keep your idea under ${PROMPT_LIMITS.max} characters.`, { code: 'PROMPT_TOO_LONG' });
+
+        const usage = await editorUsage(userId);
+        const denied = accessError(usage);
+        if (denied) throw new ApiError(denied.status, denied.message, { code: denied.code, usage });
+
+        const title = prompt.replace(/\s+/g, ' ').slice(0, 80);
+        let project;
+        try {
+            project = await EditProject.create({
+                userId,
+                title: title.length < prompt.length ? `${title.replace(/\s+\S*$/, '')}…` : title,
+                skill: style,
+                kind: 'storyboard',
+                status: EDIT_STATUS.QUEUED,
+                stage: 'queued',
+                progress: 5,
+                heartbeatAt: new Date(),
+                storyboard: { prompt, lengthSec, options: [], chosen: null, final: null, rounds: 0, note: '' },
+            });
+        } catch (err) {
+            if (err?.code === 11000) throw new ApiError(409, 'You already have an edit in progress. Wait for it to finish, then start the next one.', { code: 'EDIT_IN_PROGRESS' });
+            throw err;
+        }
+        try {
+            await publishEditJob(project._id);
+        } catch (err) {
+            console.error('[Editor] Could not queue storyboard job:', err.message);
+            await failProject(project._id, 'We could not start writing your storyboards. This did not use up an edit. Try again.');
+            throw new ApiError(503, 'We could not start your story. Try again in a minute.');
+        }
+        captureServerEvent(String(userId), 'storyboard_started', { project_id: String(project._id), style, length_sec: lengthSec, prompt_chars: prompt.length });
+        ok(res, 'Writing your storyboards', await toListItem(project), 201);
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Story mode: the creator confirms one of the storyboards (optionally with their own words per scene)
+ * and the video is built from it. This is when it counts as an edit.
+ */
+export const chooseStoryboard = async (req, res, next) => {
+    try {
+        const project = await ownedProject(req, { status: EDIT_STATUS.CHOOSING, kind: 'storyboard' });
+        const index = Number(req.body?.option);
+        const options = project.storyboard?.options ?? [];
+        if (!Number.isInteger(index) || index < 0 || index >= options.length) throw new ApiError(400, 'Pick one of the storyboards.');
+        const usage = await editorUsage(req.user._id);
+        const denied = accessError(usage);
+        if (denied) throw new ApiError(denied.status, denied.message, { code: denied.code, usage });
+
+        // The creator may rewrite a scene's words before confirming; everything else stays as written.
+        const picked = options[index];
+        const narrations = Array.isArray(req.body?.narrations) ? req.body.narrations : null;
+        const merged = {
+            ...picked,
+            title: typeof req.body?.title === 'string' && req.body.title.trim() ? req.body.title : picked.title,
+            scenes: picked.scenes.map((sc, k) => ({
+                narration: narrations && typeof narrations[k] === 'string' && narrations[k].trim() ? narrations[k] : sc.narration,
+                backdrop: sc.backdrop,
+                emphasis: (sc.emphasis ?? []).join(' | '),
+                graphicType: sc.graphic?.type ?? 'none',
+                graphicText: sc.graphic?.text ?? '',
+                graphicSubtext: sc.graphic?.subtext ?? '',
+                graphicItems: sc.graphic?.type === 'visual' ? sc.graphic.visual : (sc.graphic?.items ?? []).join(' | '),
+            })),
+        };
+        const option = normalizeOption(merged, project.skill);
+        option.musicTrackId = picked.musicTrackId;
+        if (option.scenes.length < 2) throw new ApiError(400, 'Keep at least two scenes with a few words each.');
+        const built = buildStoryboardEdit(option, { trackIds: await trackIdSet() });
+
+        const done = await EditProject.updateOne(
+            { _id: project._id, status: EDIT_STATUS.CHOOSING },
+            {
+                $set: {
+                    status: EDIT_STATUS.READY,
+                    inFlight: false,
+                    stage: 'ready',
+                    progress: 100,
+                    error: null,
+                    title: option.title.slice(0, 120),
+                    plan: built.plan,
+                    edits: {},
+                    readyAt: new Date(),
+                    'media.words': built.words,
+                    'source.durationSec': built.durationSec,
+                    'storyboard.chosen': index,
+                    'storyboard.final': { ...option, timing: built.timing },
+                },
+            }
+        );
+        if (!done.modifiedCount) throw new ApiError(409, 'This story is already being made.');
+        const charged = await chargeEdit(project._id, req.user._id);
+        captureServerEvent(String(req.user._id), 'storyboard_confirmed', { project_id: String(project._id), option: index, edited: Boolean(narrations), scenes: option.scenes.length, duration_sec: built.durationSec, charged: charged ?? 'already' });
+        ok(res, 'Your video is ready', await toDetail((await EditProject.findById(project._id)).toObject()));
+    } catch (error) {
+        next(error);
+    }
+};
+
+/** Story mode: three new storyboards, following the creator's note (a few rounds per story). */
+export const regenerateStoryboards = async (req, res, next) => {
+    try {
+        assertConfigured();
+        const note = String(req.body?.note ?? '').trim().slice(0, 500);
+        const project = await ownedProject(req, { status: EDIT_STATUS.CHOOSING, kind: 'storyboard' });
+        if ((project.storyboard?.rounds ?? 0) >= MAX_STORYBOARD_ROUNDS) {
+            throw new ApiError(429, 'You have asked for new storyboards as many times as a story allows. Pick one, or start a new story.', { code: 'STORYBOARD_ROUNDS_USED' });
+        }
+        const res2 = await EditProject.updateOne(
+            { _id: project._id, status: EDIT_STATUS.CHOOSING },
+            { $set: { status: EDIT_STATUS.QUEUED, inFlight: true, stage: 'queued', progress: 5, attempts: 0, heartbeatAt: new Date(), error: null, 'storyboard.note': note } }
+        ).catch((err) => {
+            if (err?.code === 11000) throw new ApiError(409, 'You already have an edit in progress. Wait for it to finish first.', { code: 'EDIT_IN_PROGRESS' });
+            throw err;
+        });
+        if (!res2.modifiedCount) throw new ApiError(409, 'New storyboards are already being written.');
+        try {
+            await publishEditJob(project._id);
+        } catch (err) {
+            await EditProject.updateOne({ _id: project._id }, { $set: { status: EDIT_STATUS.CHOOSING, inFlight: false, stage: 'choose a storyboard', progress: 100 } });
+            throw new ApiError(503, 'We could not start new storyboards. Try again in a minute.');
+        }
+        captureServerEvent(String(req.user._id), 'storyboard_regenerate_requested', { project_id: String(project._id) });
+        ok(res, 'Writing new storyboards', { id: String(project._id), status: EDIT_STATUS.QUEUED });
+    } catch (error) {
+        next(error);
+    }
+};
+
 /** The editing skills a new edit can follow (Skills tab). */
 export const listEditSkills = (req, res) => ok(res, 'Skills', { skills: Object.values(SKILLS).map((s) => ({ id: s.id, name: s.name, version: s.version, kind: s.kind ?? 'editing', category: s.category ?? 'talking-head' })) });
 
@@ -292,7 +462,7 @@ export const updateEdits = async (req, res, next) => {
         project.edits = edits;
         project.markModified('edits');
         await project.save();
-        const props = buildRenderProps(project.plan, edits, mediaFor(project));
+        const props = propsFor(project, edits);
         ok(res, 'Saved', { edits, props: { ...props, ...(await soundUrls(props)) } });
     } catch (error) {
         next(error);
@@ -306,6 +476,9 @@ export const regenerateEdit = async (req, res, next) => {
         if (note.length < 3) throw new ApiError(400, 'Tell the editor what to change.');
         if (note.length > 500) throw new ApiError(400, 'Keep the note under 500 characters.');
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
+        if (project.kind === 'storyboard') {
+            throw new ApiError(400, 'This video was animated from a storyboard. Start a new story to try a different one.', { code: 'STORYBOARD_EDIT' });
+        }
         if ((project.revisions?.length ?? 0) >= MAX_REGENERATIONS) {
             throw new ApiError(429, 'You have used both regenerations for this edit. Start a new edit to try again.', { code: 'REGENERATIONS_USED' });
         }
@@ -338,10 +511,12 @@ export const startEditRender = async (req, res, next) => {
         if (active) return ok(res, 'Already exporting', { renderId: active.id });
         if ((project.renders ?? []).length >= 10) throw new ApiError(429, 'This edit has been exported 10 times. Download an earlier export instead.');
 
-        const props = buildRenderProps(project.plan, project.edits ?? {}, mediaFor(project));
+        const props = propsFor(project);
         const sounds = await soundUrls(props);
-        // The final render uses the full-quality render master (the original upload for older edits), not the preview proxy.
-        const inputProps = { ...props, ...sounds, videoUrl: await storage.presignDownload(project.source.masterKey || project.source.key, { expiresIn: 3 * 60 * 60 }) };
+        // The final render uses the full-quality render master (the original upload for older edits), not the
+        // preview proxy. A storyboard video has no footage: the composition draws every scene.
+        const videoUrl = project.kind === 'storyboard' ? '' : await storage.presignDownload(project.source.masterKey || project.source.key, { expiresIn: 3 * 60 * 60 });
+        const inputProps = { ...props, ...sounds, videoUrl };
         const id = crypto.randomBytes(6).toString('hex');
         const outKey = editorKey('renders', project.userId, project._id, `${id}.mp4`);
         const { remotionRenderId, bucketName } = await startRender({ inputProps, outKey });

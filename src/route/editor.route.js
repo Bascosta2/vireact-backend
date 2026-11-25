@@ -14,6 +14,9 @@ import {
     getEditRender,
     scoreEditRender,
     deleteEditProject,
+    createStoryboard,
+    chooseStoryboard,
+    regenerateStoryboards,
 } from '../controller/editor.controller.js';
 
 /** Editor tab: AI edits of the creator's own footage. The QStash job webhook is mounted in app.js. */
@@ -27,6 +30,10 @@ editorRoutes.use(requireEditorAccess);
 editorRoutes.get('/skills', listEditSkills);
 editorRoutes.get('/projects', listEditProjects);
 editorRoutes.post('/projects', createEditProject);
+// Story mode: an animated video from a typed idea (three storyboards, the creator picks one).
+editorRoutes.post('/storyboards', createStoryboard);
+editorRoutes.post('/projects/:id/storyboard/choose', chooseStoryboard);
+editorRoutes.post('/projects/:id/storyboard/regenerate', regenerateStoryboards);
 editorRoutes.get('/projects/:id', getEditProject);
 editorRoutes.post('/projects/:id/uploaded', confirmEditUpload);
 editorRoutes.patch('/projects/:id/edits', updateEdits);
