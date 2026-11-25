@@ -7,6 +7,7 @@ import { captureServerEvent } from '../../lib/analytics.js';
 import { captureError } from '../ops-monitoring.service.js';
 import { MatteJob, matteJobId } from '../../model/matte-job.model.js';
 import { getOrCreateSubscription } from '../subscription.service.js';
+import { effectivePlan } from '../access.service.js';
 
 /**
  * Background removal for "graphics behind you". A 720p proxy goes to fal.ai's queue API, the matte
@@ -202,7 +203,8 @@ export const ledgerTotal = async (match, since, field, { Model = MatteJob } = {}
     sumLedger(await Model.find({ ...match, 'usage.at': { $gte: since } }).select('usage').lean(), since, field);
 
 const defaults = {
-    planOf: async (userId) => (await getOrCreateSubscription(userId))?.plan ?? 'free',
+    // effectivePlan: past-due, unpaid and lapsed-promo accounts count as free, like every other paid gate.
+    planOf: async (userId) => effectivePlan(await getOrCreateSubscription(userId)),
     secondsThisMonth: (userId, t) => ledgerTotal({ userId: String(userId) }, startOfMonth(t), 'seconds'),
     usdToday: (t) => ledgerTotal({}, startOfDay(t), 'estCostUsd'),
 };
