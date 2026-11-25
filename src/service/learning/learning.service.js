@@ -32,6 +32,7 @@ import { factorReport, measuredVideoFeatures } from './deep-features.js';
 import { labelComments, COMMENT_INTENTS } from './comments.js';
 import { refreshSoundTrends } from './trends.js';
 import { trainMatrixEngine, MODEL_KIND } from './model/trainer.js';
+import { recordShadowPrediction } from './model/shadow.js';
 import { refreshInsights } from './insights.js';
 import { LearningInsight, LearningModel, SoundTrend } from '../../model/learning.model.js';
 import { ANALYSIS_STATUS } from '../../constants.js';
@@ -179,6 +180,8 @@ export const onVideoAnalyzed = (video) => {
     Promise.resolve()
         .then(() => upsertVideoFeatures(video))
         .then(() => syncUserOutcomes(video))
+        // Off unless LEARNING_SHADOW_PREDICTIONS=true; never throws and never changes what the user sees.
+        .then(() => recordShadowPrediction(video))
         .catch((error) => console.warn(`[learning] features for ${video?._id} skipped: ${error.message}`));
 };
 export const onPerformanceChanged = (video) => {
