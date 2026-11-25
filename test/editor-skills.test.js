@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
 import { SPLIT_ZOOM, buildRenderProps, framingFor, needsBackgroundMatte, sanitizeEdits } from '../src/service/editor/compose.js';
-import { MODELS, assertFalUrl, buildFalInput, estimateCostUsd, extractVideoUrl, matteKey, resetBillingLockForTests, runFalQueue, runMatteStep, spendGuard } from '../src/service/editor/bg-removal.service.js';
+import { MODELS, assertFalUrl, buildFalInput, estimateCostUsd, extractVideoUrl, ledgerTotal, matteJobStore, matteKey, resetBillingLockForTests, runFalQueue, runMatteStep, spendGuard, sumLedger } from '../src/service/editor/bg-removal.service.js';
 import { setStorageForTests } from '../src/lib/storage.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
@@ -237,7 +237,59 @@ const memStorage = (existing = []) => {
 };
 const memStore = (seed = []) => {
     const rows = [...seed];
-    return { rows, find: async (h, v) => rows.filter((r) => r.sourceHash === h && r.variant === v).pop() ?? null, save: async (r) => { rows.push({ ...r }); } };
+    const ledger = [];
+    const latest = (h, v) => rows.filter((r) => r.sourceHash === h && r.variant === v).pop() ?? null;
+    return {
+        rows,
+        ledger,
+        find: async (h, v) => latest(h, v),
+        // Compare-and-swap on what the caller read, like the MongoDB store.
+        claim: async (existing, r, usage) => {
+            if (latest(r.sourceHash, r.variant) !== existing) return false;
+            rows.push({ ...r });
+            ledger.push({ ...usage });
+            return true;
+        },
+        save: async (r) => { rows.push({ ...r }); },
+        release: async (r) => { ledger.filter((u) => u.claimId === r.claimId).forEach((u) => { u.voided = true; }); },
+    };
+};
+/** In-memory stand-in for the MatteJob model: unique _id on insert, rev/claimId-conditioned updates. */
+const fakeMatteModel = (seed = []) => {
+    const docs = new Map(seed.map((d) => [d._id, structuredClone(d)]));
+    const copy = (d) => structuredClone(d);
+    return {
+        docs,
+        findOne: (f) => ({ lean: async () => (docs.has(f._id) ? copy(docs.get(f._id)) : null) }),
+        create: async (d) => {
+            await null;
+            if (docs.has(d._id)) throw Object.assign(new Error('E11000 duplicate key error'), { code: 11000 });
+            docs.set(d._id, copy(d));
+        },
+        findOneAndUpdate: async (f, u) => {
+            await null;
+            const d = docs.get(f._id);
+            if (!d || d.rev !== f.rev) return null;
+            Object.assign(d, copy(u.$set));
+            d.rev += u.$inc.rev;
+            d.usage.push(copy(u.$push.usage));
+            return copy(d);
+        },
+        updateOne: async (f, u) => {
+            const d = docs.get(f._id);
+            if (!d) return { matchedCount: 0 };
+            if (f['usage.claimId'] !== undefined) {
+                const entry = d.usage.find((x) => x.claimId === f['usage.claimId']);
+                if (entry) entry.voided = u.$set['usage.$.voided'];
+                return { matchedCount: entry ? 1 : 0 };
+            }
+            if ((d.claimId ?? null) !== f.claimId) return { matchedCount: 0 };
+            Object.assign(d, copy(u.$set));
+            d.rev += u.$inc?.rev ?? 0;
+            return { matchedCount: 1 };
+        },
+        find: () => ({ select: () => ({ lean: async () => [...docs.values()].map(copy) }) }),
+    };
 };
 const matteDeps = (fake, extra = {}) => ({ env: { FAL_KEY: 'k', BG_REMOVAL_MODEL: 'veed' }, hash: async () => 'abc', makeProxy: async () => {}, fetchFn: fake.fetchFn, sleepFn: async () => {}, track: () => {}, report: () => {}, store: memStore(), planOf: async () => 'pro', secondsThisMonth: async () => 0, usdToday: async () => 0, ...extra });
 const matteJob = { userId: 'u1', projectId: 'p1', srcPath: '/x.mp4', workDir: '/tmp', durationSec: 60 };
@@ -287,6 +339,7 @@ test('matte step: stores the result, then a cache hit makes no fal call', async 
     assert.ok(log.some(([k, key]) => k === 'buffer' && key === first.key));
     assert.equal(JSON.parse(fake.calls[0].body).video_url, 'https://s3/editor/mattes/u1/abc/input-720p.mp4?sig');
     assert.equal(deps.store.rows[1].requestId, 'r1', 'request id saved right after submit');
+    assert.deepEqual(deps.store.ledger.map((u) => [u.seconds, u.estCostUsd, Boolean(u.voided)]), [[60, 1.35, false]], 'the run is in the usage ledger');
     const again = falFake([{ status: 'COMPLETED' }]);
     const second = await runMatteStep(matteJob, matteDeps(again));
     assert.deepEqual([second.status, second.cached], ['ok', true]);
@@ -421,4 +474,68 @@ test('matte layers: needsBackgroundMatte and behind-person graphics only with a 
     assert.deepEqual(withMatte.matte, { url: 'https://s3/m.webm', mode: 'alpha-webm' });
     assert.deepEqual(withMatte.graphics.filter((g) => g.layer === 'behind').map((g) => g.type), ['headline']);
     assert.equal(buildRenderProps(p, { framingMode: 'fit_blur' }, { ...media(null), matteUrl: 'https://s3/m.webm' }, { density: null }).matte, undefined);
+});
+
+test('simultaneous jobs for the same video: exactly one claims the work and submits (one charge)', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const Model = fakeMatteModel();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const deps = () => matteDeps(fake, { store: matteJobStore('u1', { Model }) });
+    const results = await Promise.all([runMatteStep(matteJob, deps()), runMatteStep(matteJob, deps())]);
+    assert.equal(fake.calls.filter((c) => c.method === 'POST').length, 1, 'one submit');
+    assert.deepEqual(results.map((r) => r.status).sort(), ['ok', 'skipped']);
+    assert.equal(results.find((r) => r.status === 'skipped').reason, 'in_progress');
+    const doc = Model.docs.get('u1:abc:veed-refine');
+    assert.deepEqual([doc.status, doc.requestId, doc.usage.length], ['ok', 'r1', 1]);
+
+    // The same race on a retry of a matte that failed over 24 hours ago: still one submit.
+    memStorage();
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const failed = { _id: 'u1:abc:veed-refine', userId: 'u1', sourceHash: 'abc', variant: 'veed-refine', rev: 3, claimId: 'c0', status: 'failed', reason: 'timeout', requestId: 'r0', seconds: 60, estCostUsd: 1.35, submittedAt: old, updatedAt: old, usage: [{ claimId: 'c0', at: old, seconds: 60, estCostUsd: 1.35, voided: false }] };
+    const Model2 = fakeMatteModel([failed]);
+    const fake2 = falFake([{ status: 'COMPLETED' }]);
+    const deps2 = () => matteDeps(fake2, { store: matteJobStore('u1', { Model: Model2 }) });
+    const retried = await Promise.all([runMatteStep(matteJob, deps2()), runMatteStep(matteJob, deps2())]);
+    assert.equal(fake2.calls.filter((c) => c.method === 'POST').length, 1, 'one submit on retry');
+    assert.deepEqual(retried.map((r) => r.status).sort(), ['ok', 'skipped']);
+    // The earlier run stays in the ledger next to the retry, so the caps count both.
+    const doc2 = Model2.docs.get('u1:abc:veed-refine');
+    assert.deepEqual(doc2.usage.map((u) => u.claimId === 'c0'), [true, false]);
+    assert.equal(sumLedger([doc2], new Date(old.getTime() - 1), 'seconds'), 120);
+    assert.equal(sumLedger([doc2], new Date(old.getTime() + 1), 'seconds'), 60, 'only runs since the start of the period');
+    setStorageForTests(null);
+});
+
+test('usage ledger: a run that never reached fal is not billed; caps sum every billed run', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const Model = fakeMatteModel();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { store: matteJobStore('u1', { Model }), makeProxy: async () => { throw new Error('ffmpeg exited with 1'); } }));
+    assert.equal(out.status, 'failed');
+    assert.equal(fake.calls.length, 0);
+    const doc = Model.docs.get('u1:abc:veed-refine');
+    assert.deepEqual(doc.usage.map((u) => u.voided), [true], 'claimed, then released');
+    assert.equal(sumLedger([doc], new Date(0), 'seconds'), 0);
+
+    // A submit that errors may still have been billed: its entry stays.
+    memStorage();
+    const Model2 = fakeMatteModel();
+    await runMatteStep(matteJob, matteDeps({ fetchFn: async () => jsonRes({}, false, 500) }, { store: matteJobStore('u1', { Model: Model2 }) }));
+    assert.deepEqual(Model2.docs.get('u1:abc:veed-refine').usage.map((u) => Boolean(u.voided)), [false]);
+
+    // ledgerTotal reads the ledger (not the latest record) for the caps.
+    const at = new Date('2026-11-20T10:00:00Z');
+    const docs = [
+        { usage: [{ at: new Date('2026-10-31T23:00:00Z'), seconds: 100, estCostUsd: 2 }, { at, seconds: 60, estCostUsd: 1.35 }, { at, seconds: 30, estCostUsd: 0.7, voided: true }] },
+        { usage: [{ at, seconds: 45, estCostUsd: 1 }] },
+    ];
+    let query = null;
+    const Model3 = { find: (q) => { query = q; return { select: () => ({ lean: async () => docs }) }; } };
+    const since = new Date('2026-11-01T00:00:00Z');
+    assert.equal(await ledgerTotal({ userId: 'u1' }, since, 'seconds', { Model: Model3 }), 105);
+    assert.deepEqual(query, { userId: 'u1', 'usage.at': { $gte: since } });
+    assert.equal(Math.round((await ledgerTotal({}, since, 'estCostUsd', { Model: Model3 })) * 100) / 100, 2.35);
+    setStorageForTests(null);
 });

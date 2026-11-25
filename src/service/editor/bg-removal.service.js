@@ -3,10 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ffmpeg } from '../../lib/ffmpeg.js';
 import { storage } from '../../lib/storage.js';
-import mongoose from 'mongoose';
 import { captureServerEvent } from '../../lib/analytics.js';
 import { captureError } from '../ops-monitoring.service.js';
-import { EditProject } from '../../model/edit-project.model.js';
+import { MatteJob, matteJobId } from '../../model/matte-job.model.js';
 import { getOrCreateSubscription } from '../subscription.service.js';
 
 /**
@@ -189,15 +188,20 @@ const allowedPlans = (env) => String(env.BG_REMOVAL_PLANS || 'pro').split(',').m
 const startOfMonth = (t) => new Date(Date.UTC(new Date(t).getUTCFullYear(), new Date(t).getUTCMonth(), 1));
 const startOfDay = (t) => new Date(Date.UTC(new Date(t).getUTCFullYear(), new Date(t).getUTCMonth(), new Date(t).getUTCDate()));
 
-/** Billed (or possibly billed) fal usage recorded on projects: anything that got a request id counts. */
-async function sumUsage(match, field) {
-    const rows = await EditProject.aggregate([{ $match: { 'media.matte.requestId': { $type: 'string' }, ...match } }, { $group: { _id: null, total: { $sum: `$media.matte.${field}` } } }]);
-    return rows[0]?.total ?? 0;
-}
+/** Sum of `field` over the ledger entries (MatteJob.usage) since `since`; voided runs never reached fal. */
+export const sumLedger = (docs, since, field) => (docs ?? [])
+    .flatMap((d) => d.usage ?? [])
+    .filter((u) => !u.voided && new Date(u.at).getTime() >= since.getTime())
+    .reduce((total, u) => total + (Number(u[field]) || 0), 0);
+
+/** Every claimed run counts, including earlier runs of a matte that was later retried. */
+export const ledgerTotal = async (match, since, field, { Model = MatteJob } = {}) =>
+    sumLedger(await Model.find({ ...match, 'usage.at': { $gte: since } }).select('usage').lean(), since, field);
+
 const defaults = {
     planOf: async (userId) => (await getOrCreateSubscription(userId))?.plan ?? 'free',
-    secondsThisMonth: (userId, t) => sumUsage({ userId: new mongoose.Types.ObjectId(String(userId)), 'media.matte.submittedAt': { $gte: startOfMonth(t) } }, 'seconds'),
-    usdToday: (t) => sumUsage({ 'media.matte.submittedAt': { $gte: startOfDay(t) } }, 'estCostUsd'),
+    secondsThisMonth: (userId, t) => ledgerTotal({ userId: String(userId) }, startOfMonth(t), 'seconds'),
+    usdToday: (t) => ledgerTotal({}, startOfDay(t), 'estCostUsd'),
 };
 
 /** Why this user's video may not be sent to fal ('plan' or 'cap'), or null. */
@@ -212,15 +216,40 @@ export async function spendGuard({ userId, durationSec, estCostUsd }, deps = {},
     return null;
 }
 
-/** Matte state kept on the project (media.matte); `find` also sees the same source on this user's other projects. */
-export const projectMatteStore = (projectId, userId) => ({
-    async find(sourceHash, variant) {
-        const rows = (await EditProject.find({ userId, 'media.matte.sourceHash': sourceHash, 'media.matte.variant': variant }).select('media.matte').lean()).map((r) => r.media?.matte).filter(Boolean);
-        const rank = (m) => (m.status === 'ok' ? 3 : m.status === 'pending' && m.requestId ? 2 : m.status === 'pending' ? 1 : 0);
-        return rows.sort((a, b) => rank(b) - rank(a) || new Date(b.updatedAt ?? 0) - new Date(a.updatedAt ?? 0))[0] ?? null;
-    },
-    save: (record) => EditProject.updateOne({ _id: projectId }, { $set: { 'media.matte': record } }),
-});
+const RECORD_FIELDS = ['status', 'key', 'model', 'variant', 'sourceHash', 'reason', 'seconds', 'estCostUsd', 'cached', 'requestId', 'statusUrl', 'responseUrl', 'cancelUrl', 'submittedAt', 'updatedAt', 'claimId'];
+const recordFields = (rec) => Object.fromEntries(RECORD_FIELDS.filter((k) => rec[k] !== undefined).map((k) => [k, rec[k]]));
+
+/**
+ * Matte state per user + source + variant (MatteJob; the same source on any of the user's projects shares it).
+ * `claim` is atomic: inserting the document (its _id is the key, so a second insert fails) or swapping it on the
+ * `rev` that was read. Exactly one of several simultaneous jobs wins and may submit. The claim also appends the
+ * run to the usage ledger in the same write.
+ */
+export const matteJobStore = (userId, { Model = MatteJob } = {}) => {
+    const idOf = (sourceHash, variant) => matteJobId(userId, sourceHash, variant);
+    return {
+        find: (sourceHash, variant) => Model.findOne({ _id: idOf(sourceHash, variant) }).lean(),
+        /** True when this run got the work; false when another run claimed it first. */
+        async claim(existing, rec, usage) {
+            const _id = idOf(rec.sourceHash, rec.variant);
+            if (!existing) {
+                try {
+                    await Model.create({ _id, userId, sourceHash: rec.sourceHash, variant: rec.variant, rev: 1, ...recordFields(rec), usage: [usage] });
+                    return true;
+                } catch (err) {
+                    if (err?.code === 11000) return false;
+                    throw err;
+                }
+            }
+            const won = await Model.findOneAndUpdate({ _id, rev: existing.rev ?? 1 }, { $set: recordFields(rec), $inc: { rev: 1 }, $push: { usage } }, { new: true, lean: true });
+            return Boolean(won);
+        },
+        /** Only the run holding the claim can write the record, so a run that lost it never overwrites the winner. */
+        save: (rec) => Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), claimId: rec.claimId ?? null }, { $set: recordFields(rec), $inc: { rev: 1 } }),
+        /** The run stopped before anything was sent to fal: its ledger entry is not billed. */
+        release: (rec) => Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), 'usage.claimId': rec.claimId ?? null }, { $set: { 'usage.$.voided': true } }),
+    };
+};
 
 const ageMs = (rec, t) => t - new Date(rec?.updatedAt ?? rec?.submittedAt ?? 0).getTime();
 const publicRecord = (rec) => ({ status: rec.status, reason: rec.reason ?? null, model: rec.model, variant: rec.variant, sourceHash: rec.sourceHash, updatedAt: rec.updatedAt });
@@ -231,7 +260,7 @@ const publicRecord = (rec) => ({ status: rec.status, reason: rec.reason ?? null,
  * saved right after submit, a re-run resumes polling it, a failed download is retried from fal's response url,
  * and a failed matte is not tried again within 24 hours.
  * @param {object} p { userId, projectId, srcPath, workDir, durationSec }
- * @param {object} [deps] injectable for tests: fetchFn, sleepFn, now, makeProxy, hash, env, track, pollMs, timeoutMs, store, planOf, secondsThisMonth, usdToday, report
+ * @param {object} [deps] injectable for tests: fetchFn, sleepFn, now, makeProxy, hash, env, track, pollMs, timeoutMs, store (find/claim/save/release, see matteJobStore), planOf, secondsThisMonth, usdToday, report
  */
 export async function runMatteStep({ userId, projectId, srcPath, workDir, durationSec }, deps = {}) {
     const env = deps.env ?? process.env;
@@ -246,10 +275,12 @@ export async function runMatteStep({ userId, projectId, srcPath, workDir, durati
     if (!(durationSec > 0) || durationSec > MATTE_MAX_SEC) return { status: 'skipped', reason: 'too_long' };
     if (nowMs() < billingLockedUntil) return { status: 'skipped', reason: 'billing' };
 
-    const store = deps.store ?? projectMatteStore(projectId, userId);
+    const store = deps.store ?? matteJobStore(userId);
     const save = (rec) => store.save({ ...rec, updatedAt: new Date(nowMs()) });
     let inputKey = null;
     let rec = null;
+    let claimed = false;
+    let sent = false;
     try {
         const sourceHash = await (deps.hash ?? hashFile)(srcPath);
         const key = matteKey(userId, sourceHash, model, { refine });
@@ -263,19 +294,25 @@ export async function runMatteStep({ userId, projectId, srcPath, workDir, durati
         if (existing?.status === 'pending' && !existing.requestId && ageMs(existing, t) < CLAIM_STALE_MS) return { status: 'skipped', reason: 'in_progress' };
 
         if (resumable) {
-            rec = { ...existing, status: 'pending' };
+            rec = { ...recordFields(existing), status: 'pending' };
         } else {
             const estCostUsd = estimateCostUsd(model, durationSec, { refine });
             const blocked = await spendGuard({ userId, durationSec, estCostUsd }, deps, env);
             if (blocked) return { status: 'skipped', reason: blocked };
-            // Claim first (no request id yet), so the cap and a concurrent job both see this one.
-            rec = { status: 'pending', model, variant, sourceHash, requestId: null, submittedAt: new Date(t), seconds: Math.round(durationSec), estCostUsd };
-            await save(rec);
+            // Claim first (no request id yet), atomically: of several simultaneous jobs exactly one goes on, and its
+            // run is in the usage ledger before anything is sent, so the caps already count it.
+            const claimId = crypto.randomUUID();
+            const seconds = Math.round(durationSec);
+            const claim = { status: 'pending', model, variant, sourceHash, requestId: null, statusUrl: null, responseUrl: null, cancelUrl: null, reason: null, key: null, cached: false, submittedAt: new Date(t), seconds, estCostUsd, claimId, updatedAt: new Date(t) };
+            if (!(await store.claim(existing, claim, { claimId, at: new Date(t), seconds, estCostUsd }))) return { status: 'skipped', reason: 'in_progress' };
+            rec = claim;
+            claimed = true;
             const proxyPath = path.join(workDir, 'matte-input.mp4');
             await (deps.makeProxy ?? makeMatteProxy)(srcPath, proxyPath);
             inputKey = `editor/mattes/${userId}/${sourceHash}/input-720p.mp4`;
             await storage.uploadFile(proxyPath, inputKey, 'video/mp4');
             const videoUrl = await storage.presignDownload(inputKey, { expiresIn: 60 * 60 });
+            sent = true; // from here fal may bill this run, so its ledger entry stays
             const sub = await submitFal({ endpoint: MODELS[model].endpoint, input: buildFalInput(model, videoUrl, { refine }), apiKey, fetchFn: deps.fetchFn });
             rec = { ...rec, ...sub };
             await save(rec); // right after submit: a crash from here on resumes this request
@@ -317,6 +354,7 @@ export async function runMatteStep({ userId, projectId, srcPath, workDir, durati
         }
         const failed = { ...(rec ?? {}), status: 'failed', reason };
         if (rec?.sourceHash) await save(failed).catch(() => {});
+        if (claimed && !sent) await store.release(rec).catch(() => {});
         return rec?.sourceHash ? failed : { status: 'failed', reason };
     } finally {
         // Exact-key delete: the backend's IAM user has no s3:ListBucket, so deletePrefix would fail silently and
