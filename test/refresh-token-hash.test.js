@@ -8,6 +8,7 @@ import {
     resetPasswordService,
     loginAdminService,
     loginUserService,
+    upgradePasswordHash,
     isEmailLinkToken,
     verificationTokenFor,
     resendEmailVerificationService,
@@ -582,5 +583,54 @@ test('signup and password reset need at least 8 characters (checked before any q
         assert.deepEqual(spy.calls, []);
     } finally {
         spy.restore();
+    }
+});
+
+test('a successful login re-hashes a cost-10 password at cost 12, once, and never fails the login', async () => {
+    const fakeModel = (doc, { fail = false } = {}) => ({
+        calls: [],
+        async updateOne(filter, update) {
+            this.calls.push(filter);
+            if (fail) throw new Error('db down');
+            if (String(filter._id) !== String(doc._id) || filter.password !== doc.password) return { modifiedCount: 0 };
+            doc.password = update.$set.password;
+            return { modifiedCount: 1 };
+        },
+    });
+    const doc = { _id: 'a1', password: bcrypt.hashSync('right-password', 10) };
+    const model = fakeModel(doc);
+    assert.equal(await upgradePasswordHash(model, { ...doc }, 'right-password'), true);
+    assert.equal(bcrypt.getRounds(doc.password), BCRYPT_COST);
+    assert.ok(bcrypt.compareSync('right-password', doc.password));
+    // Already at cost 12, not a bcrypt hash, or no password: nothing to do.
+    for (const account of [{ ...doc }, { _id: 'a1', password: 'hash' }, { _id: 'a1' }]) {
+        assert.equal(await upgradePasswordHash(model, account, 'right-password'), false);
+    }
+    assert.equal(model.calls.length, 1);
+    // A database error is swallowed.
+    const quiet = console.warn;
+    console.warn = () => {};
+    try {
+        const old = { _id: 'a2', password: bcrypt.hashSync('pw-123456', 10) };
+        assert.equal(await upgradePasswordHash(fakeModel(old, { fail: true }), old, 'pw-123456'), false);
+    } finally {
+        console.warn = quiet;
+    }
+});
+
+test('admin login upgrades a cost-10 admin hash on success', async () => {
+    const original = { findOne: Admin.findOne, updateOne: Admin.updateOne };
+    const admin = new Admin({ name: 'A', email: 'up@example.invalid', password: bcrypt.hashSync('right-password', 10) });
+    const updates = [];
+    Admin.findOne = async () => admin;
+    Admin.updateOne = async (filter, update) => { updates.push({ filter, update }); return { modifiedCount: 1 }; };
+    try {
+        assert.equal(await loginAdminService('up@example.invalid', 'right-password'), admin);
+        assert.equal(updates.length, 1);
+        assert.equal(bcrypt.getRounds(updates[0].update.$set.password), BCRYPT_COST);
+        await assert.rejects(loginAdminService('up@example.invalid', 'wrong-password'), (e) => e.statusCode === 401);
+        assert.equal(updates.length, 1, 'no upgrade on a wrong password');
+    } finally {
+        Object.assign(Admin, original);
     }
 });

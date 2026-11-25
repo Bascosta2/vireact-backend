@@ -356,11 +356,35 @@ export const signupAdminService =
 // or that are a usability signal (Google-only account) are specific.
 const GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email or password";
 
-/** A bcrypt hash of a random password, made once, compared against when no admin has the email. */
+/**
+ * A bcrypt hash of a random password at BCRYPT_COST, made once, compared against when no admin has the email.
+ * Real admin hashes reach the same cost on their next successful login (upgradePasswordHash), so an unknown
+ * email and a wrong password take about the same time once each admin has signed in after this change.
+ */
 let dummyPasswordHashPromise = null;
 const dummyPasswordHash = () => {
     dummyPasswordHashPromise ??= bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_COST);
     return dummyPasswordHashPromise;
+};
+
+/**
+ * After a successful password check: re-hash a password stored at a lower bcrypt cost than BCRYPT_COST.
+ * Only replaces the exact hash that was checked (a password changed meanwhile is left alone).
+ * Best effort: a failure is logged and never fails the login.
+ */
+const BCRYPT_HASH = /^\$2[aby]\$\d{2}\$/;
+
+export const upgradePasswordHash = async (Model, account, password) => {
+    try {
+        const current = account?.password;
+        if (typeof current !== 'string' || !BCRYPT_HASH.test(current) || bcrypt.getRounds(current) >= BCRYPT_COST) return false;
+        const upgraded = await bcrypt.hash(password, BCRYPT_COST);
+        const result = await Model.updateOne({ _id: account._id, password: current }, { $set: { password: upgraded } });
+        return result?.modifiedCount === 1;
+    } catch (error) {
+        console.warn(`[Auth] Password hash upgrade failed for ${account?._id}: ${error?.message}`);
+        return false;
+    }
 };
 
 export const loginAdminService = async (email, password) => {
@@ -383,6 +407,7 @@ export const loginAdminService = async (email, password) => {
         throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
+    await upgradePasswordHash(Admin, admin, password);
     return admin;
 };
 
@@ -608,6 +633,8 @@ export const loginUserService = async (email, password) => {
     if (!isPasswordValid) {
         throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
+
+    await upgradePasswordHash(User, user, password);
 
     // Correct password but the email was never verified. Only the account owner can get here, so it
     // is safe to say so, and a fresh link goes out (at most once a minute).
