@@ -6,6 +6,7 @@ import {
     GetObjectCommand,
     HeadObjectCommand,
     ListObjectsV2Command,
+    DeleteObjectCommand,
     DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -72,6 +73,10 @@ const real = {
         const r = await s3().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
         return Buffer.from(await r.Body.transformToByteArray());
     },
+    /** Delete one object by exact key. Needs only s3:DeleteObject (no s3:ListBucket, unlike deletePrefix). */
+    async deleteObject(key) {
+        await s3().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
+    },
     async deletePrefix(prefix) {
         let token;
         let deleted = 0;
@@ -101,6 +106,7 @@ export const storage = {
     head: (key) => impl.head(key),
     downloadToFile: (key, filePath) => impl.downloadToFile(key, filePath),
     uploadFile: (filePath, key, contentType) => impl.uploadFile(filePath, key, contentType),
+    deleteObject: (key) => impl.deleteObject(key),
     uploadBuffer: (buffer, key, contentType) => impl.uploadBuffer(buffer, key, contentType),
     readBuffer: (key) => impl.readBuffer(key),
     deletePrefix: (prefix) => impl.deletePrefix(prefix),

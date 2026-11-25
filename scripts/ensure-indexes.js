@@ -31,6 +31,7 @@ import { ResearchCandidate } from '../src/model/research-candidate.model.js';
 import { ResearchEvalRun } from '../src/model/research-eval-run.model.js';
 import { ContentStrategy } from '../src/model/content-strategy.model.js';
 import { EditProject } from '../src/model/edit-project.model.js';
+import { MatteJob } from '../src/model/matte-job.model.js';
 import { SoundAsset } from '../src/model/sound-asset.model.js';
 import { PromoRedemption } from '../src/model/promo-redemption.model.js';
 import { PredictionModel } from '../src/model/prediction-model.model.js';
@@ -39,7 +40,7 @@ import { VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, LearningRun
 
 const MODELS = [
     User, Admin, Video, Chat, Subscription, StripeWebhookEvent, EarlyAccess, VideoPerformanceDataset,
-    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, SoundAsset, PromoRedemption, PredictionModel, OwnerSession, OwnerAudit,
+    LibraryItem, FunnelSession, RewriteUsage, KbCandidate, KbResearchRun, ErrorEvent, ResearchCandidate, ResearchEvalRun, ContentStrategy, EditProject, MatteJob, SoundAsset, PromoRedemption, PredictionModel, OwnerSession, OwnerAudit,
     VideoFeatures, OutcomeSnapshot, SocialCreator, SocialVideo, LearningRun,
 ];
 

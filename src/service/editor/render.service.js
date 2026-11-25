@@ -41,7 +41,8 @@ export async function startRender({ inputProps, outKey }) {
         crf: 20,
         maxRetries: 2,
         privacy: 'private',
-        framesPerLambda: 120,
+        // Bigger chunks for a matte render: WebM alpha can flicker at chunk boundaries (Remotion docs).
+        framesPerLambda: inputProps?.matte ? Number(process.env.EDITOR_MATTE_FRAMES_PER_LAMBDA) || 120 : 120,
         downloadBehavior: { type: 'download', fileName: 'vireact-edit.mp4' },
         outName: { key: outKey, bucketName: process.env.AWS_S3_BUCKET_NAME },
         ...(process.env.REMOTION_LICENSE_KEY ? { licenseKey: process.env.REMOTION_LICENSE_KEY } : {}),

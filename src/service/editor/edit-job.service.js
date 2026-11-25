@@ -13,6 +13,9 @@ import { prepareMedia } from './media-prep.js';
 import { transcribeWords } from './transcribe.js';
 import { buildCutCandidates, repairWordTimings } from './cut-candidates.js';
 import { planEdit } from './edit-planner.service.js';
+import { needsBackgroundMatte } from './compose.js';
+import { runMatteStep } from './bg-removal.service.js';
+import { isBgRemovalEnabled } from '../../config/flags.js';
 import { chargeEdit } from './editor-access.service.js';
 import { resolveCreatorProfile } from '../creator-profile.service.js';
 
@@ -137,6 +140,8 @@ export async function runEditJob(projectId, deps = {}) {
             frameSheets,
             cutCandidates,
             transcriptLanguage: language,
+            // Keep an in-flight or finished matte across a re-run, so fal is never asked twice for the same video.
+            ...(project.media?.matte ? { matte: project.media.matte } : {}),
         };
         const updated = await EditProject.findOneAndUpdate(
             { _id: project._id },
@@ -168,10 +173,18 @@ export async function runEditJob(projectId, deps = {}) {
             () => plan({ project: updated, profile: resolveCreatorProfile(user ?? {}) })
         );
 
+        // Graphics behind the speaker: only when the plan has some, and never able to fail the edit.
+        let matte = null;
+        if (isBgRemovalEnabled() && needsBackgroundMatte(result.plan, {}, project.skill)) {
+            await setStage(project._id, 'cutting out the speaker', 90);
+            matte = await (deps.matte ?? runMatteStep)({ userId, projectId: project._id, srcPath, workDir, durationSec: info.durationSec });
+        }
+
         await EditProject.updateOne(
             { _id: project._id },
             {
                 $set: {
+                    ...(matte ? { 'media.matte': matte } : {}),
                     status: EDIT_STATUS.READY,
                     inFlight: false,
                     stage: 'ready',
