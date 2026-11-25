@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+
+    env:
+      NODE_ENV: test
+      DB_URL: mongodb://localhost:27017
+      OPENAI_API_KEY: sk-dummy
+      RESEND_API_KEY: re_dummy
+      TWELVE_LABS_API_KEY: dummy
+      ANTHROPIC_API_KEY: dummy
+      TWELVELABS_USER_INDEX: dummy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts skips the @upstash/qstash-cli postinstall, which downloads a binary we do not need.
+      - run: npm ci --ignore-scripts
+
+      # Tests use ffmpeg; rebuild only the ffmpeg binaries that were skipped above.
+      - run: npm rebuild ffmpeg-static ffprobe-static
+
+      - name: Run tests
+        run: npm test
+        env:
+          # Obviously fake placeholder values, only so auth and redirect tests can run.
+          ACCESS_TOKEN_SECRET: dummy-access-token-secret
+          REFRESH_TOKEN_SECRET: dummy-refresh-token-secret
+          JWT_SECRET: dummy-jwt-secret
+          SESSION_SECRET: dummy-session-secret
+          GOOGLE_CLIENT_ID: dummy-google-client-id
+          GOOGLE_CLIENT_SECRET: dummy-google-client-secret
+          GOOGLE_CALLBACK_URL: http://localhost:5000/api/v1/auth/google/callback
+          FRONTEND_URL: http://localhost:3000
+          BACKEND_URL: http://localhost:5000
+          ADMIN_API_KEY: dummy-admin-api-key
