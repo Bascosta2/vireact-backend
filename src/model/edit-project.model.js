@@ -6,6 +6,8 @@ export const EDIT_STATUS = Object.freeze({
     QUEUED: 'queued',
     PREPROCESSING: 'preprocessing',
     PLANNING: 'planning',
+    /** Story mode: the storyboards are written and wait for the creator to pick one (holds no slot). */
+    CHOOSING: 'choosing',
     READY: 'ready',
     FAILED: 'failed',
     DELETED: 'deleted',
@@ -39,6 +41,13 @@ const editProjectSchema = new mongoose.Schema({
     title: { type: String, maxlength: 200, default: 'Untitled edit' },
     /** Editing skill the edit follows (service/editor/skills.js), or null for the standard editor. */
     skill: { type: String, default: null },
+    /** 'upload': an edit of the creator's video; 'storyboard': a video animated from a typed idea (story mode). */
+    kind: { type: String, enum: ['upload', 'storyboard'], default: 'upload' },
+    /**
+     * Story mode: { prompt, lengthSec, options: [3 storyboards], chosen, final: { ...option, timing },
+     * rounds, note }. See service/editor/storyboard.service.js.
+     */
+    storyboard: { type: mongoose.Schema.Types.Mixed, default: null },
     status: { type: String, enum: Object.values(EDIT_STATUS), default: EDIT_STATUS.AWAITING_UPLOAD },
     /** True while the project holds the user's one in-flight slot (unique partial index below). */
     inFlight: { type: Boolean, default: true },

@@ -19,6 +19,8 @@ import { needsBackgroundMatte } from './compose.js';
 import { runMatteStep } from './bg-removal.service.js';
 import { isBgRemovalEnabled } from '../../config/flags.js';
 import { chargeEdit } from './editor-access.service.js';
+import { generateStoryboards } from './storyboard.service.js';
+import { SoundAsset } from '../../model/sound-asset.model.js';
 import { resolveCreatorProfile } from '../creator-profile.service.js';
 
 /**
@@ -96,6 +98,8 @@ export async function runEditJob(projectId, deps = {}) {
     heartbeat.unref?.();
 
     try {
+        // Story mode: write the storyboards; the creator picks one next (no footage to prepare).
+        if (project.kind === 'storyboard') return await writeStoryboards(project, userId, deps.storyboards ?? generateStoryboards);
         // Regeneration (or a retry after planning failed): media is already prepared, only replan.
         if (project.media?.frameSheets?.length && project.source?.proxyKey && project.plan) {
             return await replan(project, userId, plan, deps.prepareScreen ?? prepareScreenRecording);
@@ -211,6 +215,19 @@ export async function runEditJob(projectId, deps = {}) {
         return { ok: true };
     } catch (err) {
         console.error(`[Editor] Job failed for project ${projectId}:`, err.message);
+        if (project.kind === 'storyboard' && project.storyboard?.options?.length) {
+            // New storyboards failed: keep the ones the creator already has.
+            await EditProject.updateOne(
+                { _id: project._id, status: { $ne: EDIT_STATUS.DELETED } },
+                { $set: { status: EDIT_STATUS.CHOOSING, inFlight: false, stage: 'choose a storyboard', progress: 100, error: 'Could not write new storyboards. Your earlier ones are still here.' } }
+            );
+            return { ok: false, error: err.message };
+        }
+        if (project.kind === 'storyboard') {
+            await failProject(project._id, 'We could not write storyboards for this idea. This did not use up an edit. Try again, or describe it a little differently.');
+            captureServerEvent(userId, 'storyboard_failed', { project_id: String(project._id) });
+            return { ok: false, error: err.message };
+        }
         if (project.plan) {
             // A failed regeneration keeps the edit the creator already had, and isn't counted.
             await EditProject.updateOne(
@@ -226,6 +243,35 @@ export async function runEditJob(projectId, deps = {}) {
         clearInterval(heartbeat);
         await fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => {});
     }
+}
+
+/** Story mode: three storyboards for the creator's idea, then wait for their choice (frees the slot). */
+async function writeStoryboards(project, userId, generate) {
+    await EditProject.updateOne({ _id: project._id }, { $set: { status: EDIT_STATUS.PLANNING, stage: 'writing storyboards', progress: 35, heartbeatAt: new Date() } });
+    const sb = project.storyboard ?? {};
+    const tracks = await SoundAsset.find({ kind: 'music', active: true }).select('slug title mood energy -_id').lean();
+    const result = await withAiContext(
+        { feature: 'storyboard', userId, distinctId: userId, traceId: newTraceId(`storyboard-${project._id}`) },
+        () => generate({ prompt: sb.prompt, styleId: project.skill, lengthSec: sb.lengthSec, tracks, note: sb.note ?? '', previous: sb.options ?? [] })
+    );
+    await EditProject.updateOne(
+        { _id: project._id },
+        {
+            $set: {
+                status: EDIT_STATUS.CHOOSING,
+                inFlight: false,
+                stage: 'choose a storyboard',
+                progress: 100,
+                error: null,
+                'storyboard.options': result.options,
+                'storyboard.rounds': (sb.rounds ?? 0) + 1,
+                'storyboard.note': '',
+                'storyboard.generationId': result.generationId ?? null,
+            },
+        }
+    );
+    captureServerEvent(userId, 'storyboards_ready', { project_id: String(project._id), style: project.skill, round: (sb.rounds ?? 0) + 1 });
+    return { ok: true, storyboards: true };
 }
 
 /** Plan again on prepared media with the creator's note. Already charged, so nothing is counted. */
@@ -292,11 +338,13 @@ export async function sweepStuckEdits({ now = Date.now(), publish } = {}) {
     const stale = await EditProject.find({
         status: { $in: [EDIT_STATUS.PREPROCESSING, EDIT_STATUS.PLANNING] },
         heartbeatAt: { $lt: new Date(now - STALE_JOB_MS) },
-    }).select('_id attempts readyAt').lean();
+    }).select('_id attempts readyAt kind storyboard.options').lean();
     let requeued = 0;
     for (const p of stale) {
         if ((p.attempts ?? 0) >= MAX_ATTEMPTS) {
-            if (p.readyAt) {
+            if (p.kind === 'storyboard' && p.storyboard?.options?.length) {
+                await EditProject.updateOne({ _id: p._id }, { $set: { status: EDIT_STATUS.CHOOSING, inFlight: false, stage: 'choose a storyboard', progress: 100, error: 'Could not write new storyboards. Your earlier ones are still here.' } });
+            } else if (p.readyAt) {
                 // A regeneration that keeps dying: give the creator back the edit they had.
                 await EditProject.updateOne({ _id: p._id }, { $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, pendingRevision: null, error: 'Could not apply your changes. Your previous edit is unchanged.' } });
             } else {
