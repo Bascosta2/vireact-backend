@@ -1,4 +1,4 @@
-import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
+import { VISUALS, captionPreset, normalizeGraphic, validateScreens } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
 import { HOOK_VARIANTS, sanitizeBrand, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
 import { removeRepeats } from './no-repeats.js';
@@ -158,6 +158,8 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set(),
     if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
     // Another animation style for an edit made with one (compose ignores it for every other edit).
     if (isAnimationStyle(input.animationStyle)) out.animationStyle = input.animationStyle;
+    // Storytelling styles: show the creator's footage instead of the painted scene.
+    if ('sceneOff' in input) out.sceneOff = bool(input.sceneOff);
     return out;
 }
 
@@ -252,10 +254,13 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     const withLayers = withDefaults(rawPlan);
     // A swapped storyboard beat (EDITOR_FEATURES_V2) replaces that segment's graphics and sounds.
     const base = media.v2 && edits.beatSwaps ? applyBeatSwaps(withLayers, edits.beatSwaps) : withLayers;
+    /** Animated storytelling: the style's painted scene fills the frame (the footage only gives its sound). */
+    const sceneOn = sr?.layout === 'scene' && !edits.sceneOff;
     // An editing skill narrows the plan to its style before anything is placed.
     const plan = sr ? {
         ...base,
-        graphics: base.graphics.filter((g) => !(sr.dropGraphicTypes ?? []).includes(g.type)),
+        // A callout points at something in the footage: nothing to point at when a scene is shown.
+        graphics: base.graphics.filter((g) => !(sr.dropGraphicTypes ?? []).includes(g.type) && !(sceneOn && g.type === 'callout')),
         transitions: sr.transitionStyles && !sr.transitionStyles.includes(base.transitions.style) ? { ...base.transitions, style: sr.transitionStyles[0] } : base.transitions,
     } : base;
     // Older edits stored raw transcript timings: repair squashed words here too (no-op on repaired ones).
@@ -433,6 +438,19 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         if (g.type === 'slam') rotate('before_slam', SFX_BEFORE_SLAM, Math.max(0, g.startFrame - 6), 0, 0.35);
     }
 
+    // Screen recording shots (EDITOR_FEATURES_V2 + an attached, prepared recording): re-validated against the recording as it is now.
+    const framingOut = framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true);
+    const screens = media.v2 && media.screenRecordingSec > 0
+        ? validateScreens(plan.screens, plan.segments, media.screenRecordingSec).map((x) => {
+            const r = mapRange(x.start, x.end, timeline);
+            if (!r) return null;
+            const startFrame = f(r.start);
+            const durationFrames = Math.min(total - startFrame, f(r.end - r.start));
+            // Split screen on: the recording takes the lower half and the speaker stays on top. Off: it fills the 4:5 safe area.
+            return durationFrames > 6 ? { aspect: Math.round((Number(media.screenAspect) || 16 / 9) * 1000) / 1000, startFrame, durationFrames, recStartSec: x.recStart, from: { x: x.fromX, y: x.fromY, zoom: x.fromZoom }, to: { x: x.toX, y: x.toY, zoom: x.toZoom }, layout: framingOut.mode === 'split' ? 'bottom' : 'safe' } : null;
+        }).filter(Boolean)
+        : [];
+
     const effects = edits.effectsOff ? [] : thin(plan.effects
         .map((e) => {
             const t = mapPoint(e.at, timeline);
@@ -470,7 +488,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         sfx,
         music,
         ...(brand ? { brand } : {}),
-        framing: framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true),
-        ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [] } } : {}),
+        framing: framingOut,
+        ...(screens.length ? { screens } : {}),
+        ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [], ...(sr?.layout ? { layout: sceneOn ? 'scene' : 'footage' } : {}) } } : {}),
     };
 }

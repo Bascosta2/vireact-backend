@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
+import { clampFocus, edlSchemaFor, validateEdl, validateScreens } from '../src/service/editor/edl.js';
 import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
@@ -274,4 +274,82 @@ test('storyboard: swap cleaning, carry rules and export gate', () => {
     assert.equal(storyboardBlocksExport({ storyboardApproved: false }, true), true);
     assert.equal(storyboardBlocksExport({ storyboardApproved: true }, true), false);
     assert.equal(storyboardBlocksExport({ storyboardApproved: false }, false), false);
+});
+
+test('styles are grouped by what they are for; storytelling styles paint a scene the creator can turn off', async () => {
+    const { styleCategory } = await import('../src/service/editor/skills.js');
+    assert.equal(styleCategory('chalkboard'), 'talking-head');
+    assert.equal(styleCategory('pixel-art'), 'any-footage');
+    assert.equal(styleCategory('watercolour'), 'storytelling');
+    assert.equal(SKILLS['sumi-e'].category, 'storytelling');
+    assert.match(SKILLS['sumi-e'].plannerRules, /ANIMATED STORYTELLING/);
+    assert.doesNotMatch(SKILLS['pixel-art'].plannerRules, /ANIMATED STORYTELLING/);
+
+    const withCallout = () => {
+        const p = plan();
+        p.graphics.push({ type: 'callout', start: 3.3, end: 4.3, text: 'Look', subtext: '', items: [], focusX: 0.5, focusY: 0.4 });
+        return p;
+    };
+    const story = buildRenderProps(withCallout(), {}, media('watercolour'), { density: null });
+    assert.equal(story.skill.layout, 'scene');
+    assert.ok(!story.graphics.some((g) => g.type === 'callout'), 'no callouts over a painted scene');
+    const footage = buildRenderProps(withCallout(), sanitizeEdits({ sceneOff: true }), media('watercolour'), { density: null });
+    assert.equal(footage.skill.layout, 'footage');
+    assert.ok(footage.graphics.some((g) => g.type === 'callout'));
+    assert.equal(buildRenderProps(plan(), {}, media('pixel-art')).skill.layout, 'footage');
+    assert.equal(buildRenderProps(plan(), {}, media('remotion-reel')).skill.layout, undefined);
+    // Switching a story to a non-story style shows the footage.
+    assert.equal(buildRenderProps(plan(), { animationStyle: 'comic-art' }, media('watercolour')).skill.layout, 'footage');
+});
+
+test('screen recording: focus points are clamped, shots validated, planner rules and schema only with the flag and a recording', () => {
+    // Focus stays inside the picture at the chosen zoom (window = 1/zoom), zoom 1 to 2.5.
+    assert.deepEqual(clampFocus(0, 1, 2), { x: 0.25, y: 0.75, zoom: 2 });
+    assert.deepEqual(clampFocus(0.5, 0.5, 9), { x: 0.5, y: 0.5, zoom: 2.5 });
+    assert.deepEqual(clampFocus('x', undefined, 0.2), { x: 0.5, y: 0.5, zoom: 1 });
+
+    const segs = [{ id: 's1', start: 0.3, end: 4.8 }];
+    const shot = (o) => ({ start: 1, end: 4, recStart: 0, fromX: 0.5, fromY: 0.5, fromZoom: 1, toX: 0.9, toY: 0.1, toZoom: 2, ...o });
+    const ok = validateScreens([shot()], segs, 20);
+    assert.deepEqual([ok[0].toX, ok[0].toY, ok[0].toZoom], [0.75, 0.25, 2]);
+    assert.equal(validateScreens([shot()], segs, 0).length, 0, 'no recording, no shots');
+    assert.equal(validateScreens([shot({ start: 5.5, end: 8 })], segs, 20).length, 0, 'must start inside a kept segment');
+    assert.equal(validateScreens([shot({ end: 1.5 })], segs, 20).length, 0, 'too short');
+    assert.equal(validateScreens([shot({ end: 60 })], [{ id: 's', start: 0, end: 100 }], 20)[0].end, 16, 'capped at 15s on screen');
+    const fitted = validateScreens([shot({ recStart: 19, end: 4 })], segs, 20);
+    assert.deepEqual([fitted[0].recStart, fitted[0].end], [18.5, 2.5], 'recStart pulled back so 1.5s of recording remains');
+    assert.equal(validateScreens([shot({ recStart: 18.4, end: 5 })], segs, 20)[0].recStart, 18.4);
+    assert.equal(validateScreens([shot({ recStart: 18.4, end: 5 })], segs, 20)[0].end, 2.6, 'cut to the recording that is left');
+    assert.deepEqual(validateScreens([shot(), shot({ start: 3, end: 4.5 })], segs, 20).length, 1, 'shots never overlap');
+
+    // Through validateEdl: only with the flag on and ctx.screenDurationSec.
+    const withScreens = { ...plan(), screens: [shot()] };
+    assert.equal('screens' in validateEdl(withScreens, { ...ctx, screenDurationSec: 20 }).plan, false, 'flag off: plan shape unchanged');
+    process.env.EDITOR_FEATURES_V2 = 'true';
+    try {
+        assert.equal(validateEdl(withScreens, { ...ctx, screenDurationSec: 20 }).plan.screens.length, 1);
+        assert.equal(validateEdl(withScreens, ctx).plan.screens.length, 0);
+        assert.ok('screens' in edlSchemaFor(true, true).properties);
+        assert.ok(!('screens' in edlSchemaFor(true).properties));
+        const base = { project: { source: { durationSec: 6 }, media: { words, cutCandidates }, screenRecording: { durationSec: 20, width: 1920, height: 1080 } }, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] };
+        const text = (c) => c.filter((x) => x.type === 'text').map((x) => x.text).join('\n');
+        assert.match(text(buildPlannerContent({ ...base, screenSheet: { base64: 'AA', intervalSec: 2 } })), /SCREEN RECORDING/);
+        assert.doesNotMatch(text(buildPlannerContent(base)), /SCREEN RECORDING/);
+    } finally {
+        delete process.env.EDITOR_FEATURES_V2;
+    }
+
+    // Composition props: the shot is placed on the output timeline, split screen puts it in the lower half.
+    const planned = { ...plan(), screens: [{ ...shot(), start: 1, end: 3.5 }] };
+    const v2 = (extra) => ({ ...media(null), v2: true, screenRecordingSec: 20, ...extra });
+    const props = buildRenderProps(planned, {}, v2());
+    assert.equal(props.screens.length, 1);
+    assert.equal(props.screens[0].layout, 'safe');
+    assert.ok(props.screens[0].durationFrames > 6 && props.screens[0].startFrame >= 0);
+    assert.deepEqual(props.screens[0].to, { x: 0.75, y: 0.25, zoom: 2 });
+    assert.equal(buildRenderProps(planned, { framingMode: 'split' }, v2()).screens[0].layout, 'bottom');
+    assert.equal(buildRenderProps(planned, {}, v2({ screenRecordingSec: 0 })).screens, undefined);
+    assert.equal(buildRenderProps(planned, {}, { ...v2(), v2: false }).screens, undefined);
+    // The storyboard beat lists its shots.
+    assert.equal(buildStoryboard(planned, {}).beats[0].screens.length, 1);
 });

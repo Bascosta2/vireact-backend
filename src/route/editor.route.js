@@ -18,6 +18,9 @@ import {
     getEditRender,
     scoreEditRender,
     deleteEditProject,
+    attachScreenRecording,
+    confirmScreenRecording,
+    detachScreenRecording,
 } from '../controller/editor.controller.js';
 
 /** Editor tab: AI edits of the creator's own footage. The QStash job webhook is mounted in app.js. */
@@ -32,6 +35,15 @@ const swapRateLimit = rateLimit({
     message: { error: 'Too many swaps, try again in a minute' },
 });
 
+/** Screen recording changes can start a paid planner run: 6 a minute per signed-in user. */
+const screenRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    keyGenerator: (req) => String(req.user?._id ?? 'anon'),
+    validate: false,
+    message: { error: 'Too many changes, try again in a minute' },
+});
+
 editorRoutes.use(authenticateToken);
 
 // Usage stays open to every signed-in user: it is how the web app learns the editor is hidden.
@@ -43,10 +55,13 @@ editorRoutes.put('/brand', saveBrand);
 editorRoutes.get('/projects', listEditProjects);
 editorRoutes.post('/projects', createEditProject);
 editorRoutes.get('/projects/:id', getEditProject);
-editorRoutes.post('/projects/:id/uploaded', confirmEditUpload);
+editorRoutes.post('/projects/:id/uploaded', screenRateLimit, confirmEditUpload);
 editorRoutes.patch('/projects/:id/edits', updateEdits);
 editorRoutes.post('/projects/:id/regenerate', regenerateEdit);
 editorRoutes.post('/projects/:id/storyboard/swap', swapRateLimit, swapStoryboardBeat);
+editorRoutes.post('/projects/:id/screen-recording', screenRateLimit, attachScreenRecording);
+editorRoutes.post('/projects/:id/screen-recording/uploaded', screenRateLimit, confirmScreenRecording);
+editorRoutes.delete('/projects/:id/screen-recording', screenRateLimit, detachScreenRecording);
 editorRoutes.post('/projects/:id/render', startEditRender);
 editorRoutes.get('/projects/:id/render/:renderId', getEditRender);
 editorRoutes.post('/projects/:id/score', scoreEditRender);

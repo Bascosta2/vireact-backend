@@ -165,7 +165,10 @@ export function formatTracks(tracks) {
 /** Planner rules for the split-screen framing (only sent with EDITOR_FEATURES_V2). */
 export const SPLIT_RULES = 'SPLIT SCREEN: framing.mode "split" shows the speaker in the top half and a 1.8x zoomed detail of the same take in the bottom half (a prop, a screen, the hands), centered on framing.detailX/detailY (0 to 1, read from the frames). Choose it only when the take clearly shows something worth looking at besides the face for most of the video; otherwise keep fill. Put detailX/detailY on the subject of interest (the hands, product or screen), never on the face or neck. Set detailX 0.5 and detailY 0.62 when unused. Everything that matters stays inside the 4:5 Instagram crop: the seam sits at the middle of the frame.';
 
-export function buildPlannerContent({ project, profile, knowledgeText, exemplarText, trackText, sheets }) {
+/** Planner rules for an attached screen recording (EDITOR_FEATURES_V2). The only exception to "use only the creator's footage". */
+export const screenRules = (rec) => `SCREEN RECORDING: the creator attached a ${t(rec.durationSec)}s screen recording (${rec.width ?? '?'}x${rec.height ?? '?'}); the frames follow in the last contact sheet. This is the creator's own footage, so the "no b-roll" rule does not apply to it, and to nothing else. Use \`screens\` to cut to it over the talking head (the speaker keeps talking underneath) only while the speaker is showing, naming or walking through something that is on it. Each shot: start/end are talking-head SOURCE seconds inside a kept segment (1.5 to 15 seconds, never overlapping another shot), recStart is the second of the recording where it starts (the shot must fit inside the recording). The camera moves from a focus point (fromX, fromY, fromZoom) to another (toX, toY, toZoom): x and y are 0 to 1 across the recording (0.5, 0.5 is the middle, read them from the frames), zoom is 1 (whole screen) to 2.5. Zoom in on the thing being discussed, and keep the move gentle: change the focus by no more than about a third of the screen. Use 1 to 4 shots, none for parts that do not need the screen. Leave \`screens\` empty if the recording does not fit the talk.`;
+
+export function buildPlannerContent({ project, profile, knowledgeText, exemplarText, trackText, sheets, screenSheet = null }) {
     const src = project.source ?? {};
     const media = project.media ?? {};
     const intro = [
@@ -202,6 +205,11 @@ export function buildPlannerContent({ project, profile, knowledgeText, exemplarT
     // The style the edit is in now (a regeneration after a style switch plans for the new style).
     const skill = skillFor(activeSkillId(project.skill, project.edits));
     if (isEditorFeaturesV2()) content.push({ type: 'text', text: SPLIT_RULES });
+    if (isEditorFeaturesV2() && screenSheet && project.screenRecording?.durationSec) {
+        content.push({ type: 'text', text: screenRules(project.screenRecording) });
+        content.push({ type: 'text', text: `Screen recording contact sheet: a 3x3 grid read left to right, top to bottom, one frame every ${screenSheet.intervalSec ?? 1}s from 0s.` });
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: screenSheet.base64 } });
+    }
     if (skill) content.push({ type: 'text', text: skill.plannerRules });
     content.push({ type: 'text', text: 'Plan the edit now.' });
     return content;
@@ -235,11 +243,13 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
     const niche = profile?.niche || null;
     const platform = profile?.platforms?.[0] || null;
 
-    const [knowledge, { exemplars, benchmarks }, tracks, sheets] = await Promise.all([
+    const screen = isEditorFeaturesV2() && project.screenRecording?.sheetKey && project.screenRecording.durationSec ? project.screenRecording : null;
+    const [knowledge, { exemplars, benchmarks }, tracks, sheets, [screenSheet]] = await Promise.all([
         retrieveEditingKnowledge({ niche, gist }, retrieve),
         pickExemplars({ description: `${niche || ''} ${platform || ''} video. ${gist}`.trim(), platform, niche }),
         tracksLoader(),
         sheetsLoader(media.frameSheets),
+        screen ? sheetsLoader([{ key: screen.sheetKey, intervalSec: Math.max(1, Math.round(screen.durationSec / 9)) }]) : [],
     ]);
 
     const content = buildPlannerContent({
@@ -249,6 +259,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
         exemplarText: formatExemplars(exemplars, benchmarks),
         trackText: formatTracks(tracks),
         sheets,
+        screenSheet: screenSheet ?? null,
     });
     const messages = [{ role: 'user', content }];
     if (revision?.previousPlan) {
@@ -262,10 +273,11 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
         candidateIds: (media.cutCandidates ?? []).map((c) => c.id),
         candidateRanges: Object.fromEntries((media.cutCandidates ?? []).map((c) => [c.id, c])),
         trackIds: tracks.filter((x) => x.kind === 'music').map((x) => x.slug),
+        screenDurationSec: screen && screenSheet ? screen.durationSec : 0,
     };
     const system = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
-    const first = await request({ label: 'editor_plan', system, messages, schema: edlSchemaFor(isEditorFeaturesV2()) });
+    const first = await request({ label: 'editor_plan', system, messages, schema: edlSchemaFor(isEditorFeaturesV2(), Boolean(screen && screenSheet)) });
     let result = validateEdl(first.data, ctx);
     markGenerationValidation(first.generationId, { passed: result.ok, issues: result.issues });
     let generationId = first.generationId;
@@ -276,7 +288,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
             { role: 'assistant', content: first.message.content },
             { role: 'user', content: `That plan has problems. Fix all of them and return the full corrected plan:\n- ${result.issues.join('\n- ')}` },
         ];
-        const second = await request({ label: 'editor_plan_retry', system, messages: retryMessages, schema: edlSchemaFor(isEditorFeaturesV2()) });
+        const second = await request({ label: 'editor_plan_retry', system, messages: retryMessages, schema: edlSchemaFor(isEditorFeaturesV2(), Boolean(screen && screenSheet)) });
         result = validateEdl(second.data, ctx);
         markGenerationValidation(second.generationId, { passed: result.ok, issues: result.issues });
         generationId = second.generationId;
