@@ -369,3 +369,13 @@ test('signup rejects non-text fields with 400', async () => {
         assert.equal(err?.statusCode, 400);
     }
 });
+
+test('requireAdminUser: only admin and super-admin roles pass; no user is 401; others 403', async () => {
+    const { requireAdminUser } = await import('../src/middleware/auth.js');
+    const run = (user) => { let err; let called = false; requireAdminUser({ user }, fakeRes(), (e) => { err = e; called = !e; }); return { err, called }; };
+    assert.equal(run(undefined).err.statusCode, 401);
+    assert.equal(run({ role: 'user' }).err.statusCode, 403);
+    assert.equal(run({}).err.statusCode, 403);
+    assert.ok(run({ role: 'admin' }).called);
+    assert.ok(run({ role: 'super-admin' }).called);
+});
