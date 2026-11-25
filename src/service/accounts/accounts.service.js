@@ -8,10 +8,11 @@ import { decryptToken, encryptToken, isTokenKeyConfigured } from './token-crypto
 import { tiktok } from './providers/tiktok.js';
 import { youtube } from './providers/youtube.js';
 import { instagram } from './providers/instagram.js';
+import { facebook } from './providers/facebook.js';
 import { recordConnectedReadings } from '../performance.service.js';
 
 /**
- * Connected accounts (Accounts tab). A user signs in with TikTok, YouTube or Instagram; we store the
+ * Connected accounts (Accounts tab). A user signs in with TikTok, YouTube, Instagram or Facebook; we store the
  * tokens encrypted, read their recent posts and each post's numbers every day, and copy readings at
  * 24 h, 3 d, 7 d, 30 d and 90 d after posting into the matching Vireact upload, where the report, the
  * prediction learning loop and the learning engine pick them up as verified results.
@@ -23,7 +24,7 @@ import { recordConnectedReadings } from '../performance.service.js';
  * returns), the platform keys (providers/*.js), ACCOUNTS_ENABLED / ACCOUNTS_BETA_EMAILS (config/flags.js).
  */
 
-export const PROVIDERS = Object.freeze({ tiktok, youtube, instagram });
+export const PROVIDERS = Object.freeze({ tiktok, youtube, instagram, facebook });
 export const MILESTONE_HOURS = Object.freeze([24, 72, 168, 720, 2160]);
 const STATE_TTL_MS = 15 * 60 * 1000;
 const MAX_READINGS = 120;
