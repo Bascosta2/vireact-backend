@@ -638,3 +638,69 @@ test('TikTok at publish time: fresh creator info; a privacy choice no longer off
     assert.equal(okRun.repo.db.post.targets[0].status, 'publishing');
     assert.deepEqual(okRun.repo.db.post.targets[0].tiktok, { ...TIKTOK_SETTINGS, allowComment: true }, 'settings survive the pass');
 });
+
+test('TikTok length: unknown length is read once from the file and stored; a video whose length cannot be read is refused', async () => {
+    const loadCreator = async () => ({ view: TT.creatorInfoView(CREATOR), creator: CREATOR });
+    const probes = [];
+    const probeDuration = async (key) => { probes.push(key); return 42; };
+    const known = { key: 'k', durationSec: 30 };
+    await S.checkTikTokSettings({ userId: USER, input: TIKTOK_SETTINGS, media: known, now: 0, loadCreator, probeDuration });
+    assert.equal(probes.length, 0, 'a stored length is used as is');
+    const unknown = { key: 'k', durationSec: null };
+    await S.checkTikTokSettings({ userId: USER, input: TIKTOK_SETTINGS, media: unknown, now: 0, loadCreator, probeDuration });
+    assert.deepEqual([probes, unknown.durationSec], [['k'], 42], 'read once and kept on the post\'s media');
+    const tooLong = { key: 'k', durationSec: null };
+    await assert.rejects(S.checkTikTokSettings({ userId: USER, input: TIKTOK_SETTINGS, media: tooLong, now: 0, loadCreator, probeDuration: async () => Number(CREATOR.max_video_post_duration_sec) + 5 }),
+        (e) => e.statusCode === 400 && e.data.field === 'media' && /Trim it/.test(e.message));
+    await assert.rejects(S.checkTikTokSettings({ userId: USER, input: TIKTOK_SETTINGS, media: { key: 'k', durationSec: null }, now: 0, loadCreator, probeDuration: async () => null }),
+        (e) => e.statusCode === 400 && e.data.field === 'media' && /could not check how long this video is/.test(e.message));
+
+    // The probe: a short-lived signed URL, headers only, video containers only, no other protocols.
+    let args;
+    const storageImpl = { presignDownload: async (key, opts) => `https://vireact-media.s3.amazonaws.com/${key}?ttl=${opts.expiresIn}` };
+    assert.equal(await S.probeMediaDurationSec('editor/renders/x.mp4', { storageImpl, ffprobeImpl: async (a) => { args = a; return { stdout: '61.250000\n' }; } }), 61.25);
+    assert.equal(args.at(-1), 'https://vireact-media.s3.amazonaws.com/editor/renders/x.mp4?ttl=300');
+    assert.deepEqual(args.slice(1, 7), ['error', '-protocol_whitelist', 'https,tls,tcp', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm', '-show_entries']);
+    assert.equal(await S.probeMediaDurationSec('k', { storageImpl, ffprobeImpl: async () => ({ stdout: 'N/A\n' }) }), null);
+    assert.equal(await S.probeMediaDurationSec('k', { storageImpl, ffprobeImpl: async () => { throw new Error('ffprobe exited with 1'); } }), null);
+});
+
+test('TikTok edits: any change to a Direct Post needs the TikTok settings again, re-checked and re-stamped', async () => {
+    const editing = (body, mode = 'publish', platforms = ['tiktok', 'youtube']) => S.tiktokInputForUpdate({ mode, platforms, body });
+    const asksAgain = (e) => e.statusCode === 400 && e.data.field === 'tiktok' && /again/.test(e.message);
+    assert.throws(() => editing({ caption: 'new caption' }), asksAgain, 'caption only');
+    assert.throws(() => editing({ scheduledAt: '2030-01-01T00:00:00Z' }), asksAgain, 'time only');
+    assert.throws(() => editing({ platforms: ['tiktok'] }), asksAgain);
+    assert.throws(() => editing({ caption: 'x', tiktok: null }), asksAgain);
+    assert.deepEqual(editing({ caption: 'x', tiktok: TIKTOK_SETTINGS }), TIKTOK_SETTINGS);
+    assert.equal(editing({}), null, 'nothing to change');
+    assert.equal(editing({ caption: 'x' }, 'draft'), null, 'drafts are finished in the TikTok app');
+    assert.equal(editing({ caption: 'x' }, 'publish', ['youtube']), null, 'TikTok removed');
+
+    // Caption-only PATCH of a stored post: fresh (test-mode) creator_info, new consent time, nothing else lost.
+    const { ScheduledPost } = await import('../src/model/scheduled-post.model.js');
+    const { ConnectedAccount } = await import('../src/model/connected-account.model.js');
+    const stored = {
+        _id: '0123456789abcdef01234567', userId: USER, status: 'scheduled', mode: 'publish', dryRun: true, scheduleVersion: 1, caption: 'old',
+        scheduledAt: new Date('2030-01-01T00:00:00Z'), media: { key: 'k', durationSec: 30 },
+        targets: [{ platform: 'tiktok', accountId: 'acc', status: 'pending', tiktok: { ...TIKTOK_SETTINGS, confirmedAt: new Date(0) } }],
+    };
+    let saved = null;
+    ScheduledPost.findOne = () => ({ lean: async () => stored });
+    ScheduledPost.findOneAndUpdate = async (filter, update) => { saved = update.$set; return { ...stored, ...update.$set }; };
+    ConnectedAccount.findOne = () => ({ lean: async () => null });
+    try {
+        await assert.rejects(S.updateScheduledPost(USER, stored._id, { caption: 'new' }, { now: 9000, dryRun: true }), asksAgain);
+        assert.equal(saved, null, 'nothing saved without the settings');
+        await S.updateScheduledPost(USER, stored._id, { caption: 'new', tiktok: { ...TIKTOK_SETTINGS, allowComment: true } }, { now: 9000, dryRun: true });
+        assert.equal(saved.caption, 'new');
+        assert.deepEqual(saved.targets[0].tiktok, { ...TIKTOK_SETTINGS, allowComment: true, confirmedAt: new Date(9000) });
+        assert.equal(saved.targets[0].status, 'pending');
+        await assert.rejects(S.updateScheduledPost(USER, stored._id, { caption: 'new', tiktok: { ...TIKTOK_SETTINGS, privacyLevel: 'FOLLOWER_OF_CREATOR' } }, { now: 9000, dryRun: true }),
+            (e) => e.statusCode === 400 && e.data.field === 'tiktok.privacyLevel', 'checked against the creator\'s options today');
+    } finally {
+        delete ScheduledPost.findOne;
+        delete ScheduledPost.findOneAndUpdate;
+        delete ConnectedAccount.findOne;
+    }
+});
