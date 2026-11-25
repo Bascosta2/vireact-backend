@@ -5,7 +5,7 @@ import { hasPublishingAccess } from '../config/flags.js';
 import { captureServerEvent } from '../lib/analytics.js';
 import { isShuttingDown } from '../queue/analysis-runtime.js';
 import {
-    cancelScheduledPost, createScheduledPost, getCapabilities, listScheduledPosts, updateScheduledPost,
+    cancelScheduledPost, createScheduledPost, getCapabilities, getTikTokCreatorInfo, listScheduledPosts, updateScheduledPost,
 } from '../service/publish/publish.service.js';
 import { runPublishJob } from '../service/publish/publish-job.js';
 
@@ -24,6 +24,9 @@ export const requirePublishingAccess = (req, res, next) => {
 export const getPublishCapabilities = async (req, res) => ok(res, 'OK', await getCapabilities(req.user));
 
 export const getScheduledPosts = async (req, res) => ok(res, 'OK', await listScheduledPosts(req.user._id, { from: req.query.from, to: req.query.to }));
+
+/** The TikTok posting screen: fresh creator info (nickname, privacy options, interaction limits, max length). */
+export const getTikTokCreator = async (req, res) => ok(res, 'OK', await getTikTokCreatorInfo(req.user._id));
 
 export const createPost = async (req, res) => {
     const post = await createScheduledPost(req.user._id, req.body ?? {});

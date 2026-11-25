@@ -7,6 +7,8 @@ import { ApiError } from '../../utils/ApiError.js';
 import { hasPublishingAccess, isPublishingDryRun } from '../../config/flags.js';
 import { PROVIDERS, accessTokenFor } from '../accounts/accounts.service.js';
 import { PUBLISHERS, PLATFORM_NAMES, scheduleRun, cancelRun } from './publish-job.js';
+import { PublishError } from './publishers/index.js';
+import { creatorInfoView, isDirectPostAudited, privacyLabel, queryCreatorInfo } from './publishers/tiktok.js';
 
 /**
  * Scheduled posting (API: /api/v1/posts, route/posts.route.js). The user picks a finished editor export (or
@@ -14,6 +16,10 @@ import { PUBLISHERS, PLATFORM_NAMES, scheduleRun, cancelRun } from './publish-jo
  * Behind PUBLISHING_ENABLED / PUBLISHING_BETA_EMAILS (config/flags.js). Posting needs the platform's posting
  * permission, which the user grants separately (Accounts connect with scopes=publish); PUBLISHING_DRY_RUN
  * simulates everything.
+ *
+ * TikTok Direct Post follows TikTok's content sharing guidelines: the web app shows a fresh creator_info
+ * (GET /tiktok/creator-info) and the creator makes every choice (privacy with no default, interactions,
+ * commercial disclosure, music declaration); POST/PATCH validate those choices (`tiktok`) against it.
  */
 
 const MAX_CAPTION = 2200;
@@ -127,6 +133,21 @@ export const resolveMedia = async (userId, { projectId, mediaUrl } = {}, { findP
     return { projectId: fromProject, media: { key, sizeBytes: head.sizeBytes ?? null, contentType: head.contentType || 'video/mp4' } };
 };
 
+/**
+ * Length in seconds of one of the user's editor videos (export or upload), or null when unknown (exports made
+ * before lengths were stored). Used to check TikTok's max_video_post_duration_sec.
+ */
+export const mediaDurationSec = async (userId, key, { findProject } = {}) => {
+    const m = OWNED_KEY.exec(String(key ?? ''));
+    if (!m || m[2] !== String(userId)) return null;
+    const find = findProject ?? ((id) => EditProject.findOne({ _id: id, userId }).select('source.key source.masterKey source.durationSec renders.key renders.durationSec').lean());
+    const project = await find(m[3]);
+    if (!project) return null;
+    const render = (project.renders ?? []).find((r) => r.key === key);
+    const value = render ? render.durationSec : ([project.source?.key, project.source?.masterKey].includes(key) ? project.source?.durationSec : null);
+    return Number(value) > 0 ? Number(value) : null;
+};
+
 // ---- validation (pure)
 
 const parseTime = (v) => {
@@ -160,6 +181,53 @@ export const validateScheduledAt = (value, now = Date.now()) => {
     if (t < now - PAST_GRACE_MS) throw new ApiError(400, 'That time has already passed. Choose a time in the future.');
     if (t > now + MAX_AHEAD_MS) throw new ApiError(400, 'Posts can be scheduled up to a year ahead.');
     return new Date(Math.max(t, now));
+};
+
+const tiktokError = (field, message) => new ApiError(400, message, { code: 'TIKTOK_SETTINGS_INVALID', field });
+const INTERACTIONS = [['allowComment', 'comment_disabled', 'comments'], ['allowDuet', 'duet_disabled', 'duets'], ['allowStitch', 'stitch_disabled', 'stitches']];
+
+/**
+ * The creator's TikTok Direct Post choices checked against their current creator_info (raw TikTok `data`).
+ * Returns the settings to store, or a 400 naming the field with a plain-English reason (pure; tests).
+ */
+export const validateTikTokSettings = (input, creator, { durationSec = null, env = process.env } = {}) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw tiktokError('tiktok', 'Choose your TikTok settings (who can watch, comments, duets and stitches) before posting to TikTok.');
+    }
+    const options = creator?.privacy_level_options ?? [];
+    const { privacyLevel } = input;
+    if (typeof privacyLevel !== 'string' || !privacyLevel) throw tiktokError('tiktok.privacyLevel', 'Choose who can watch this TikTok video.');
+    if (!options.includes(privacyLevel)) {
+        throw tiktokError('tiktok.privacyLevel', `Your TikTok account does not offer that privacy setting right now. Choose one of: ${options.map(privacyLabel).join(', ')}.`);
+    }
+    if (privacyLevel !== 'SELF_ONLY' && !isDirectPostAudited(env)) {
+        throw tiktokError('tiktok.privacyLevel', 'Until TikTok approves Vireact for public posts, TikTok posts can only be "Only me". Choose "Only me", or "Save as draft" to finish the post in the TikTok app.');
+    }
+    for (const [key, disabled, what] of INTERACTIONS) {
+        if (typeof input[key] !== 'boolean') throw tiktokError(`tiktok.${key}`, `Choose whether to allow ${what} on this TikTok video.`);
+        if (input[key] && creator?.[disabled]) throw tiktokError(`tiktok.${key}`, `You turned ${what} off in your TikTok settings, so they cannot be allowed on this video.`);
+    }
+    const c = input.commercial;
+    if (!c || typeof c !== 'object' || Array.isArray(c) || ![c.enabled, c.yourBrand, c.brandedContent].every((v) => typeof v === 'boolean')) {
+        throw tiktokError('tiktok.commercial', 'Say whether this video promotes a brand, product or service.');
+    }
+    const commercial = c.enabled ? { enabled: true, yourBrand: c.yourBrand, brandedContent: c.brandedContent } : { enabled: false, yourBrand: false, brandedContent: false };
+    if (commercial.enabled && !commercial.yourBrand && !commercial.brandedContent) {
+        throw tiktokError('tiktok.commercial', 'You need to indicate if your content promotes yourself, a third party, or both.');
+    }
+    if (commercial.brandedContent && privacyLevel === 'SELF_ONLY') {
+        throw tiktokError('tiktok.commercial.brandedContent', 'Branded content visibility cannot be set to private. Choose who can watch it other than "Only me".');
+    }
+    if (input.musicConfirmed !== true) {
+        throw tiktokError('tiktok.musicConfirmed', commercial.brandedContent
+            ? 'To post, agree to TikTok\'s Branded Content Policy and Music Usage Confirmation.'
+            : 'To post, agree to TikTok\'s Music Usage Confirmation.');
+    }
+    const max = Number(creator?.max_video_post_duration_sec);
+    if (max > 0 && Number(durationSec) > max) {
+        throw tiktokError('media', `Your TikTok account accepts videos up to ${max} seconds, and this one is ${Math.ceil(durationSec)} seconds. Trim it and export again.`);
+    }
+    return { privacyLevel, allowComment: input.allowComment, allowDuet: input.allowDuet, allowStitch: input.allowStitch, commercial, musicConfirmed: true };
 };
 
 /**
@@ -211,6 +279,89 @@ export const resolveFacebookPage = async ({ account, pageId, dryRun = false, pro
     throw new ApiError(400, 'You manage more than one Facebook Page. Choose which Page to post to.', { code: 'FACEBOOK_PAGE_REQUIRED', pages: (pages ?? []).map((p) => ({ id: String(p.id), name: p.name ?? null })) });
 };
 
+// ---- TikTok creator info
+
+/** creator_info answers are reused this long (TikTok allows 20 calls a minute per user; the guide wants fresh). */
+export const CREATOR_INFO_TTL_MS = 30 * 1000;
+const creatorInfoCache = new Map();
+/** Tests: forget cached creator_info answers. */
+export const clearCreatorInfoCache = () => creatorInfoCache.clear();
+
+const NO_CREATOR = Object.freeze({
+    nickname: null, avatarUrl: null, privacyLevelOptions: [], commentDisabled: true, duetDisabled: true, stitchDisabled: true, maxVideoPostDurationSec: null,
+});
+
+/** Test mode: a simulated creator so the whole flow can be tried before TikTok approves the app. */
+const simulatedCreator = (account) => ({
+    creator_nickname: account?.displayName || account?.handle || 'Test creator',
+    creator_avatar_url: account?.avatarUrl ?? null,
+    privacy_level_options: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
+    comment_disabled: false,
+    duet_disabled: false,
+    stitch_disabled: false,
+    max_video_post_duration_sec: 600,
+});
+
+/**
+ * The creator's current TikTok posting options: `view` is what GET /tiktok/creator-info returns, `creator` the
+ * raw creator_info data (null when the creator cannot post now; `view.reason` says why in plain English).
+ */
+export const loadTikTokCreator = async ({ account, dryRun = false, providerAvailable = Boolean(PROVIDERS.tiktok), accessToken = accessTokenFor, fetchImpl = fetch, now = Date.now(), cache = creatorInfoCache } = {}) => {
+    const cannot = (reason) => ({ view: { ...NO_CREATOR, canPost: false, reason }, creator: null });
+    if (dryRun) {
+        const creator = simulatedCreator(account);
+        return { view: creatorInfoView(creator), creator };
+    }
+    if (!providerAvailable) return cannot('TikTok connections are not available yet.');
+    if (!account) return cannot('Connect your TikTok account in the Accounts tab first.');
+    if (account.status === ACCOUNT_STATUS.NEEDS_REAUTH) return cannot('Reconnect your TikTok account in the Accounts tab.');
+    if (!hasAll(account, PUBLISHERS.tiktok.requiredScopes('publish'))) return cannot('Reconnect TikTok and allow posting to post directly. You can still choose "Save as draft".');
+    const id = String(account._id);
+    const hit = cache.get(id);
+    if (hit && now - hit.at < CREATOR_INFO_TTL_MS) return hit.value;
+    let creator;
+    try {
+        creator = await queryCreatorInfo({ access: await accessToken(account, { fetchImpl }), fetchImpl });
+    } catch (e) {
+        if (e.reauth) return cannot('Reconnect your TikTok account in the Accounts tab.');
+        if (e instanceof PublishError && !e.retry) return cannot(e.message);
+        return cannot('TikTok did not answer just now. Try again in a moment.');
+    }
+    const view = creatorInfoView(creator);
+    const value = { view, creator: view.canPost ? creator : null };
+    if (cache.size > 5000) cache.clear();
+    cache.set(id, { at: now, value });
+    return value;
+};
+
+/** GET /api/v1/posts/tiktok/creator-info for the account TikTok posts would use. */
+export const getTikTokCreatorInfo = async (userId, { dryRun = isPublishingDryRun() } = {}) => {
+    const accounts = await userAccounts(userId);
+    return (await loadTikTokCreator({ account: accounts.tiktok, dryRun })).view;
+};
+
+/**
+ * Validated TikTok settings to store on the target, from a fresh creator_info. `media.durationSec` is filled in
+ * when it can be found. Throws a 400 with a plain-English reason.
+ */
+export const checkTikTokSettings = async ({ userId, input, account, dryRun, media, now, loadCreator = loadTikTokCreator }) => {
+    if (input == null) throw tiktokError('tiktok', 'Choose your TikTok settings (who can watch, comments, duets and stitches) before posting to TikTok.');
+    const { view, creator } = await loadCreator({ account, dryRun });
+    if (!view.canPost) throw new ApiError(400, view.reason, { code: 'TIKTOK_CANNOT_POST', field: 'tiktok' });
+    if (media.durationSec == null) media.durationSec = await mediaDurationSec(userId, media.key);
+    return { ...validateTikTokSettings(input, creator, { durationSec: media.durationSec }), confirmedAt: new Date(now) };
+};
+
+/** Stored settings as the API returns them (the contract's `tiktok` object). */
+const publicTikTok = (t) => ({
+    privacyLevel: t.privacyLevel,
+    allowComment: Boolean(t.allowComment),
+    allowDuet: Boolean(t.allowDuet),
+    allowStitch: Boolean(t.allowStitch),
+    commercial: { enabled: Boolean(t.commercial?.enabled), yourBrand: Boolean(t.commercial?.yourBrand), brandedContent: Boolean(t.commercial?.brandedContent) },
+    musicConfirmed: Boolean(t.musicConfirmed),
+});
+
 // ---- what the web app sees
 
 const signed = async (key, storageImpl) => {
@@ -229,6 +380,7 @@ export const toPublicPost = async (p, { storageImpl = storage } = {}) => ({
     targets: (p.targets ?? []).map((t) => ({
         platform: t.platform,
         ...(t.pageId ? { pageId: t.pageId } : {}),
+        ...(t.tiktok?.privacyLevel ? { tiktok: publicTikTok(t.tiktok) } : {}),
         status: t.status,
         ...(t.externalId ? { externalId: t.externalId } : {}),
         ...(t.url ? { url: t.url } : {}),
@@ -275,6 +427,8 @@ export const createScheduledPost = async (userId, body = {}, { now = Date.now(),
     const pageId = platforms.includes('facebook') ? await resolveFacebookPage({ account: accounts.facebook, pageId: body.pageId, dryRun }) : null;
     const targets = buildTargets({ platforms, mode, accounts, capabilities, dryRun, pageId });
     const { projectId, media } = await resolveMedia(userId, { projectId: body.projectId, mediaUrl: body.mediaUrl });
+    const tiktokTarget = mode === 'publish' ? targets.find((t) => t.platform === 'tiktok') : null;
+    if (tiktokTarget) tiktokTarget.tiktok = await checkTikTokSettings({ userId, input: body.tiktok, account: accounts.tiktok, dryRun, media, now });
     const active = await ScheduledPost.countDocuments({ userId, status: { $in: [POST_STATUS.SCHEDULED, POST_STATUS.PUBLISHING] } });
     if (active >= MAX_ACTIVE_POSTS) throw new ApiError(429, `You can have up to ${MAX_ACTIVE_POSTS} posts waiting at once.`);
     const post = await ScheduledPost.create({ userId, projectId, media, caption, scheduledAt, mode, targets, dryRun });
@@ -298,21 +452,37 @@ const notChangeable = (post) => (post.status === POST_STATUS.PUBLISHING
     ? new ApiError(409, 'This post is already being published, so it can no longer be changed.')
     : new ApiError(409, post.status === POST_STATUS.CANCELLED ? 'This post was cancelled.' : 'This post has already been sent and can no longer be changed.'));
 
-/** Caption, time or platforms, only while the post is still scheduled. */
+/** Caption, time, platforms or TikTok settings, only while the post is still scheduled. */
 export const updateScheduledPost = async (userId, id, body = {}, { now = Date.now(), dryRun = isPublishingDryRun() } = {}) => {
     const post = await ownedPost(userId, id);
     if (post.status !== POST_STATUS.SCHEDULED) throw notChangeable(post);
     const set = {};
     const platforms = body.platforms !== undefined ? validatePlatforms(body.platforms) : post.targets.map((t) => t.platform);
     if (body.caption !== undefined || body.platforms !== undefined) set.caption = validateCaption(body.caption !== undefined ? body.caption : post.caption, platforms);
+    const testMode = dryRun || Boolean(post.dryRun);
+    const currentTikTok = post.targets.find((t) => t.platform === 'tiktok') ?? null;
+    const tiktokDirect = post.mode === 'publish' && platforms.includes('tiktok');
+    const media = { ...post.media };
     if (body.platforms !== undefined || body.pageId !== undefined) {
-        const testMode = dryRun || Boolean(post.dryRun);
         const { accounts, capabilities } = await readiness(userId, testMode);
         buildTargets({ platforms, mode: post.mode, accounts, capabilities, dryRun: testMode });
         const currentPage = post.targets.find((t) => t.platform === 'facebook')?.pageId ?? null;
         const pageId = platforms.includes('facebook') ? await resolveFacebookPage({ account: accounts.facebook, pageId: body.pageId ?? currentPage, dryRun: testMode }) : null;
         set.targets = buildTargets({ platforms, mode: post.mode, accounts, capabilities, dryRun: testMode, pageId });
+        const target = tiktokDirect ? set.targets.find((t) => t.platform === 'tiktok') : null;
+        // New settings, or the stored ones checked again against the creator's options today.
+        if (target) {
+            const kept = body.tiktok === undefined && currentTikTok?.tiktok ? currentTikTok.tiktok : null;
+            const checked = await checkTikTokSettings({ userId, input: kept ? publicTikTok(kept) : body.tiktok, account: accounts.tiktok, dryRun: testMode, media, now });
+            // Kept settings keep the time the creator agreed to the declaration.
+            target.tiktok = kept?.confirmedAt ? { ...checked, confirmedAt: kept.confirmedAt } : checked;
+        }
+    } else if (body.tiktok !== undefined && tiktokDirect && currentTikTok) {
+        const account = currentTikTok.accountId ? await ConnectedAccount.findOne({ _id: currentTikTok.accountId, userId }).lean() : null;
+        const tiktok = await checkTikTokSettings({ userId, input: body.tiktok, account, dryRun: testMode, media, now });
+        set.targets = post.targets.map((t) => (t.platform === 'tiktok' ? { ...t, tiktok } : t));
     }
+    if (media.durationSec != null && media.durationSec !== post.media?.durationSec) set['media.durationSec'] = media.durationSec;
     const moved = body.scheduledAt !== undefined && validateScheduledAt(body.scheduledAt, now).getTime() !== new Date(post.scheduledAt).getTime();
     if (moved) {
         set.scheduledAt = validateScheduledAt(body.scheduledAt, now);

@@ -57,6 +57,8 @@ const media = (sizeBytes = 3 * MB) => ({
     async openStream(offset) { this.reads.push([offset, 'stream']); return Buffer.alloc(sizeBytes - offset); },
 });
 const noSave = async () => {};
+/** A creator's TikTok Direct Post choices as stored on the target (the API's `tiktok` object). */
+const TIKTOK_SETTINGS = Object.freeze({ privacyLevel: 'SELF_ONLY', allowComment: false, allowDuet: false, allowStitch: false, commercial: { enabled: false, yourBrand: false, brandedContent: false }, musicConfirmed: true });
 
 // ---- opt-in publish scopes
 
@@ -307,14 +309,16 @@ test('TikTok: chunk plan follows the media transfer rules', () => {
     assert.throws(() => TT.tiktokChunkPlan(0), PublishError);
 });
 
-test('TikTok: direct post is SELF_ONLY until audited; draft goes to the inbox; full flow', async () => {
+test('TikTok: direct post sends the creator\'s own choices; draft goes to the inbox; full flow', async () => {
     const creator = { privacy_level_options: ['PUBLIC_TO_EVERYONE', 'SELF_ONLY'], comment_disabled: true };
-    const direct = TT.buildTikTokInit({ mode: 'publish', caption: 'hi', sizeBytes: MB, creator, env: {} });
+    const direct = TT.buildTikTokInit({ mode: 'publish', caption: 'hi', sizeBytes: MB, creator, settings: TIKTOK_SETTINGS, env: {} });
     assert.equal(direct.url, 'https://open.tiktokapis.com/v2/post/publish/video/init/');
-    assert.equal(direct.body.post_info.privacy_level, 'SELF_ONLY');
-    assert.equal(direct.body.post_info.disable_comment, true);
+    assert.deepEqual(direct.body.post_info, { title: 'hi', privacy_level: 'SELF_ONLY', disable_comment: true, disable_duet: true, disable_stitch: true, brand_content_toggle: false, brand_organic_toggle: false });
     assert.deepEqual(direct.body.source_info, { source: 'FILE_UPLOAD', video_size: MB, chunk_size: MB, total_chunk_count: 1 });
-    assert.equal(TT.buildTikTokInit({ mode: 'publish', sizeBytes: MB, creator, env: { TIKTOK_DIRECT_POST_AUDITED: 'true' } }).body.post_info.privacy_level, 'PUBLIC_TO_EVERYONE');
+    const chosen = { ...TIKTOK_SETTINGS, privacyLevel: 'PUBLIC_TO_EVERYONE', allowComment: true, allowDuet: true, allowStitch: false, commercial: { enabled: true, yourBrand: true, brandedContent: true } };
+    assert.deepEqual(TT.buildTikTokInit({ mode: 'publish', sizeBytes: MB, creator: { privacy_level_options: ['PUBLIC_TO_EVERYONE'] }, settings: chosen, env: { TIKTOK_DIRECT_POST_AUDITED: 'true' } }).body.post_info,
+        { title: '', privacy_level: 'PUBLIC_TO_EVERYONE', disable_comment: false, disable_duet: false, disable_stitch: true, brand_content_toggle: true, brand_organic_toggle: true });
+    assert.throws(() => TT.buildTikTokInit({ mode: 'publish', sizeBytes: MB, creator, settings: chosen, env: {} }), (e) => e.retry === false && /"Only me" until TikTok approves/.test(e.message), 'unaudited: refused, never downgraded');
     const draft = TT.buildTikTokInit({ mode: 'draft', sizeBytes: MB, env: {} });
     assert.equal(draft.url, 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
     assert.equal(draft.body.post_info, undefined);
@@ -327,7 +331,7 @@ test('TikTok: direct post is SELF_ONLY until audited; draft goes to the inbox; f
     ]);
     const saved = [];
     const m = media(MB);
-    const r = await TT.tiktokPublisher.step({ post: { mode: 'publish', caption: 'hi' }, target: { state: {} }, account: { handle: 'maker' }, access: 'tok', media: m, env: {}, fetchImpl: f, save: async (s) => saved.push({ ...s }) });
+    const r = await TT.tiktokPublisher.step({ post: { mode: 'publish', caption: 'hi' }, target: { state: {}, tiktok: TIKTOK_SETTINGS }, account: { handle: 'maker' }, access: 'tok', media: m, env: {}, fetchImpl: f, save: async (s) => saved.push({ ...s }) });
     assert.deepEqual(r, { status: 'published', externalId: '7300', url: 'https://www.tiktok.com/@maker/video/7300', state: { publishId: 'pub1', uploaded: true } });
     const put = f.calls.find((c) => c.method === 'PUT');
     assert.equal(put.init.headers['Content-Range'], `bytes 0-${MB - 1}/${MB}`);
@@ -342,7 +346,7 @@ test('TikTok: direct post is SELF_ONLY until audited; draft goes to the inbox; f
 });
 
 test('TikTok: refusals become plain-English errors', async () => {
-    const run = (reply) => TT.tiktokPublisher.step({ post: { mode: 'publish' }, target: { state: {} }, access: 'tok', media: media(), env: {}, fetchImpl: fakeFetch([['POST', '/creator_info/', { data: {}, error: { code: 'ok' } }], ['POST', '/video/init/', reply]]), save: noSave });
+    const run = (reply) => TT.tiktokPublisher.step({ post: { mode: 'publish' }, target: { state: {}, tiktok: TIKTOK_SETTINGS }, access: 'tok', media: media(), env: {}, fetchImpl: fakeFetch([['POST', '/creator_info/', { data: { privacy_level_options: ['SELF_ONLY'] }, error: { code: 'ok' } }], ['POST', '/video/init/', reply]]), save: noSave });
     await assert.rejects(run({ __status: 403, __body: { error: { code: 'unaudited_client_can_only_post_to_private_accounts' } } }), (e) => e.retry === false && /private accounts/.test(e.message));
     await assert.rejects(run({ __status: 429, __body: { error: { code: 'rate_limit_exceeded' } } }), (e) => e.retry === true);
     await assert.rejects(run({ __status: 401, __body: { error: { code: 'access_token_invalid' } } }), (e) => e.reauth === true);
@@ -462,7 +466,7 @@ test('TikTok: a stopped upload is checked before starting again, so it can never
             ['POST', '/video/init/', { data: { publish_id: 'pub2', upload_url: 'https://open-upload.tiktokapis.com/u' }, error: { code: 'ok' } }],
             ['PUT', 'open-upload', { __status: 201, __body: null }],
         ]);
-        return TT.tiktokPublisher.step({ post: { mode: 'publish' }, target: { state: { publishId: 'pub1', uploaded: false } }, access: 't', media: media(MB), env: {}, fetchImpl: f, save: noSave }).then((r) => ({ r, f }));
+        return TT.tiktokPublisher.step({ post: { mode: 'publish' }, target: { state: { publishId: 'pub1', uploaded: false }, tiktok: TIKTOK_SETTINGS }, access: 't', media: media(MB), env: {}, fetchImpl: f, save: noSave }).then((r) => ({ r, f }));
     };
     const received = await run({ data: { status: 'PROCESSING_UPLOAD', uploaded_bytes: MB }, error: { code: 'ok' } });
     assert.equal(received.f.calls.filter((c) => c.url.includes('/init/')).length, 0, 'all bytes arrived: only poll');
@@ -500,4 +504,137 @@ test('Instagram polling stops after about 5 minutes; YouTube upload without an i
     const noId = fakeFetch([['PUT', 'upload_id=S1', { __status: 200, __body: {} }]]);
     await assert.rejects(YT.youtubePublisher.step({ post: { mode: 'publish' }, target: { state: { uploadUri: 'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=S1' } }, access: 't', media: media(), fetchImpl: noId, save: noSave }),
         (e) => e.retry === false && /YouTube Studio/.test(e.message));
+});
+
+// ---- TikTok Direct Post: content sharing guidelines
+
+const CREATOR = Object.freeze({
+    creator_nickname: 'Maker', creator_avatar_url: 'https://p16.tiktokcdn.com/a.jpg', creator_username: 'maker',
+    privacy_level_options: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
+    comment_disabled: false, duet_disabled: true, stitch_disabled: true, max_video_post_duration_sec: 60,
+});
+const tiktokAccount = (scopes = ['video.publish', 'video.upload'], status = 'active') => ({ _id: 'tt1', platform: 'tiktok', status, tokens: { scopes } });
+
+test('TikTok creator info: the contract shape, and a plain reason whenever the creator cannot post', async () => {
+    S.clearCreatorInfoCache();
+    assert.deepEqual(TT.creatorInfoView(CREATOR), {
+        nickname: 'Maker', avatarUrl: 'https://p16.tiktokcdn.com/a.jpg', privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
+        commentDisabled: false, duetDisabled: true, stitchDisabled: true, maxVideoPostDurationSec: 60, canPost: true,
+    });
+    assert.equal(TT.creatorInfoView({}).canPost, false);
+    assert.match(TT.creatorInfoView({}).reason, /privacy options/);
+
+    const load = (opts) => S.loadTikTokCreator({ providerAvailable: true, accessToken: async () => 'tok', ...opts });
+    assert.match((await load({ account: null })).view.reason, /Connect your TikTok account/);
+    assert.match((await load({ account: tiktokAccount(['video.publish'], 'needs_reauth') })).view.reason, /Reconnect your TikTok/);
+    const draftsOnly = await load({ account: tiktokAccount(['video.upload']) });
+    assert.equal(draftsOnly.view.canPost, false);
+    assert.match(draftsOnly.view.reason, /allow posting.*Save as draft/);
+    assert.match((await load({ account: tiktokAccount(), providerAvailable: false })).view.reason, /not available yet/);
+    for (const [code, re] of [['spam_risk_too_many_posts', /daily posting limit/], ['spam_risk_user_banned_from_posting', /not letting this account post/], ['reached_active_user_cap', /daily limit for posting apps/]]) {
+        const r = await load({ account: tiktokAccount(), cache: new Map(), fetchImpl: fakeFetch([['POST', '/creator_info/query/', { data: {}, error: { code } }]]) });
+        assert.equal(r.view.canPost, false, code);
+        assert.match(r.view.reason, re);
+        assert.equal(r.creator, null);
+    }
+    assert.match((await load({ account: tiktokAccount(), cache: new Map(), fetchImpl: fakeFetch([['POST', '/creator_info/', { __status: 401, __body: { error: { code: 'access_token_invalid' } } }]]) })).view.reason, /Reconnect/);
+    assert.match((await load({ account: tiktokAccount(), cache: new Map(), fetchImpl: async () => { throw new Error('ECONNRESET'); } })).view.reason, /did not answer/);
+    const refused = await load({ account: tiktokAccount(), accessToken: async () => { throw Object.assign(new Error('x'), { reauth: true }); } });
+    assert.match(refused.view.reason, /Reconnect/);
+
+    // Fresh: reused for at most 30 s, then TikTok is asked again.
+    const cache = new Map();
+    const f = fakeFetch([['POST', '/creator_info/query/', { data: CREATOR, error: { code: 'ok' } }]]);
+    const first = await load({ account: tiktokAccount(), cache, fetchImpl: f, now: 0 });
+    assert.equal(first.view.canPost, true);
+    assert.equal(first.creator.max_video_post_duration_sec, 60);
+    await load({ account: tiktokAccount(), cache, fetchImpl: f, now: S.CREATOR_INFO_TTL_MS - 1 });
+    assert.equal(f.calls.length, 1);
+    await load({ account: tiktokAccount(), cache, fetchImpl: f, now: S.CREATOR_INFO_TTL_MS });
+    assert.equal(f.calls.length, 2);
+    assert.ok(S.CREATOR_INFO_TTL_MS <= 60_000);
+
+    // Test mode: simulated creator, nothing sent to TikTok.
+    const sim = await load({ account: null, dryRun: true, fetchImpl: async () => assert.fail('no TikTok call in test mode') });
+    assert.equal(sim.view.canPost, true);
+    assert.ok(sim.view.privacyLevelOptions.includes('SELF_ONLY'));
+});
+
+test('TikTok settings: every guideline rule is checked, with the field and a plain reason', () => {
+    const audited = { TIKTOK_DIRECT_POST_AUDITED: 'true' };
+    const v = (input, opts = {}) => S.validateTikTokSettings(input, CREATOR, { env: audited, ...opts });
+    const ok = { privacyLevel: 'PUBLIC_TO_EVERYONE', allowComment: true, allowDuet: false, allowStitch: false, commercial: { enabled: false, yourBrand: true, brandedContent: false }, musicConfirmed: true };
+    assert.deepEqual(v(ok), { ...ok, commercial: { enabled: false, yourBrand: false, brandedContent: false } }, 'disclosure off clears its boxes');
+    const fails = (input, field, re, opts) => assert.throws(() => v(input, opts), (e) => e.statusCode === 400 && e.data?.field === field && re.test(e.message));
+    fails(undefined, 'tiktok', /Choose your TikTok settings/);
+    fails({ ...ok, privacyLevel: undefined }, 'tiktok.privacyLevel', /who can watch/, undefined);
+    fails({ ...ok, privacyLevel: 'FOLLOWER_OF_CREATOR' }, 'tiktok.privacyLevel', /Everyone, Friends, Only me/);
+    fails(ok, 'tiktok.privacyLevel', /can only be "Only me"/, { env: {} });
+    assert.equal(v({ ...ok, privacyLevel: 'SELF_ONLY' }, { env: {} }).privacyLevel, 'SELF_ONLY', 'unaudited: Only me is allowed');
+    fails({ ...ok, allowComment: undefined }, 'tiktok.allowComment', /allow comments/);
+    fails({ ...ok, allowDuet: true }, 'tiktok.allowDuet', /turned duets off/);
+    fails({ ...ok, allowStitch: true }, 'tiktok.allowStitch', /turned stitches off/);
+    fails({ ...ok, commercial: undefined }, 'tiktok.commercial', /promotes a brand/);
+    fails({ ...ok, commercial: { enabled: true, yourBrand: false, brandedContent: false } }, 'tiktok.commercial', /yourself, a third party, or both/);
+    fails({ ...ok, privacyLevel: 'SELF_ONLY', commercial: { enabled: true, yourBrand: false, brandedContent: true } }, 'tiktok.commercial.brandedContent', /cannot be set to private/);
+    assert.equal(v({ ...ok, commercial: { enabled: true, yourBrand: true, brandedContent: false }, privacyLevel: 'SELF_ONLY' }).commercial.yourBrand, true, 'your brand may be Only me');
+    fails({ ...ok, musicConfirmed: 'yes' }, 'tiktok.musicConfirmed', /Music Usage Confirmation\.$/);
+    fails({ ...ok, musicConfirmed: false, commercial: { enabled: true, yourBrand: false, brandedContent: true } }, 'tiktok.musicConfirmed', /Branded Content Policy and Music Usage/);
+    fails(ok, 'media', /up to 60 seconds, and this one is 61/, { durationSec: 60.4 + 0.2 });
+    assert.equal(v(ok, { durationSec: 60 }).privacyLevel, 'PUBLIC_TO_EVERYONE');
+});
+
+test('TikTok settings at create: required for Direct Post, refused when the creator cannot post, stamped when agreed', async () => {
+    const media = { key: 'k', durationSec: 30 };
+    const loadCreator = async () => ({ view: TT.creatorInfoView(CREATOR), creator: CREATOR });
+    await assert.rejects(S.checkTikTokSettings({ userId: USER, input: undefined, media, now: 0, loadCreator }), (e) => e.statusCode === 400 && e.data.field === 'tiktok');
+    const cannot = async () => ({ view: { canPost: false, reason: 'Your TikTok account reached its daily posting limit. Try again tomorrow.' }, creator: null });
+    await assert.rejects(S.checkTikTokSettings({ userId: USER, input: TIKTOK_SETTINGS, media, now: 0, loadCreator: cannot }), (e) => e.statusCode === 400 && e.data.code === 'TIKTOK_CANNOT_POST' && /daily posting limit/.test(e.message));
+    const saved = await S.checkTikTokSettings({ userId: USER, input: TIKTOK_SETTINGS, media, now: 5000, loadCreator });
+    assert.deepEqual(saved, { ...TIKTOK_SETTINGS, confirmedAt: new Date(5000) });
+
+    // Length comes from the export or the upload it was made from.
+    const project = { source: { key: `editor/sources/${USER}/${PROJECT}/s.mp4`, durationSec: 95 }, renders: [{ key: `editor/renders/${USER}/${PROJECT}/r.mp4`, durationSec: 42.5 }, { key: `editor/renders/${USER}/${PROJECT}/old.mp4` }] };
+    const findProject = async (id) => (id === PROJECT ? project : null);
+    assert.equal(await S.mediaDurationSec(USER, `editor/renders/${USER}/${PROJECT}/r.mp4`, { findProject }), 42.5);
+    assert.equal(await S.mediaDurationSec(USER, `editor/sources/${USER}/${PROJECT}/s.mp4`, { findProject }), 95);
+    assert.equal(await S.mediaDurationSec(USER, `editor/renders/${USER}/${PROJECT}/old.mp4`, { findProject }), null, 'older exports: unknown');
+    assert.equal(await S.mediaDurationSec(OTHER, `editor/renders/${USER}/${PROJECT}/r.mp4`, { findProject }), null);
+
+    const p = await S.toPublicPost({ _id: 'p1', media: { key: 'k' }, targets: [{ platform: 'tiktok', status: 'pending', tiktok: { ...TIKTOK_SETTINGS, confirmedAt: new Date(0) } }, { platform: 'youtube', status: 'pending' }] }, { storageImpl: { presignDownload: async () => 'u' } });
+    assert.deepEqual(p.targets[0], { platform: 'tiktok', tiktok: TIKTOK_SETTINGS, status: 'pending' }, 'targets echo the settings');
+    assert.equal(p.targets[1].tiktok, undefined);
+});
+
+test('TikTok at publish time: fresh creator info; a privacy choice no longer offered fails, never changes', async () => {
+    const run = (creatorReply, target = { platform: 'tiktok', accountId: 'tiktok', status: 'pending', attempts: 0, state: {}, tiktok: { ...TIKTOK_SETTINGS, privacyLevel: 'MUTUAL_FOLLOW_FRIENDS' } }) => {
+        const repo = memoryRepo({ ...basePost(['tiktok']), targets: [target] });
+        const f = fakeFetch([
+            ['POST', '/creator_info/query/', creatorReply],
+            ['POST', '/video/init/', { data: { publish_id: 'pub1', upload_url: 'https://open-upload.tiktokapis.com/u' }, error: { code: 'ok' } }],
+            ['PUT', 'open-upload', { __status: 201, __body: null }],
+            ['POST', '/status/fetch/', { data: { status: 'PROCESSING_UPLOAD' }, error: { code: 'ok' } }],
+        ]);
+        return J.runPublishJob('post1', { repo, hasAccess: () => true, dryRun: false, env: {}, clock: () => 1_000_000, media: () => media(MB), accessToken: async () => 'tok', fetchImpl: f, schedule: async () => 'm1' }).then((out) => ({ out, repo, f }));
+    };
+    const gone = await run({ data: { ...CREATOR, privacy_level_options: ['FOLLOWER_OF_CREATOR', 'SELF_ONLY'] }, error: { code: 'ok' } });
+    assert.equal(gone.repo.db.post.targets[0].status, 'failed');
+    assert.match(gone.repo.db.post.targets[0].error, /no longer offers the privacy setting you chose \("Friends"\).*never change/);
+    assert.equal(gone.f.calls.filter((c) => c.url.includes('/video/init/')).length, 0, 'nothing sent');
+    assert.equal(gone.out.status, 'failed');
+
+    const capped = await run({ data: {}, error: { code: 'spam_risk_too_many_posts' } });
+    assert.equal(capped.repo.db.post.targets[0].status, 'failed');
+    assert.match(capped.repo.db.post.targets[0].error, /daily posting limit/);
+
+    const missing = await run({ data: CREATOR, error: { code: 'ok' } }, { platform: 'tiktok', accountId: 'tiktok', status: 'pending', attempts: 0, state: {} });
+    assert.match(missing.repo.db.post.targets[0].error, /no privacy choice/);
+    assert.equal(missing.f.calls.length, 0, 'a post without the creator\'s choices never reaches TikTok');
+
+    const okRun = await run({ data: CREATOR, error: { code: 'ok' } }, { platform: 'tiktok', accountId: 'tiktok', status: 'pending', attempts: 0, state: {}, tiktok: { ...TIKTOK_SETTINGS, allowComment: true } });
+    const init = okRun.f.calls.find((c) => c.url.includes('/video/init/'));
+    const info = JSON.parse(init.init.body).post_info;
+    assert.deepEqual([info.privacy_level, info.disable_comment, info.disable_duet, info.brand_content_toggle, info.brand_organic_toggle], ['SELF_ONLY', false, true, false, false]);
+    assert.equal(okRun.repo.db.post.targets[0].status, 'publishing');
+    assert.deepEqual(okRun.repo.db.post.targets[0].tiktok, { ...TIKTOK_SETTINGS, allowComment: true }, 'settings survive the pass');
 });
