@@ -91,24 +91,38 @@ export const confirmVideoUpload = async (req, res, next) => {
     }
 };
 
+/** The user's plan, or Free (least access) when it cannot be read. */
+const planOrFree = async (userId) => {
+    try {
+        return (await getOrCreateSubscription(userId))?.plan ?? SUBSCRIPTION_PLANS.FREE;
+    } catch (error) {
+        console.warn('[Videos] Could not load the subscription, using Free access:', error?.message);
+        return SUBSCRIPTION_PLANS.FREE;
+    }
+};
+
+/** Raw error text stays on the server; a failed video gets a user-facing summary instead. */
+const withErrorSummary = ({ lastError, lastErrorAt, ...video }) => {
+    const errorSummary = getVideoStatusErrorSummary(video.analysisStatus, lastError);
+    return errorSummary ? { ...video, errorSummary } : video;
+};
+
 export const getUserVideos = async (req, res, next) => {
     try {
         const userId = req.user._id;
 
-        // ?view=summary: list fields only (badge, Home, Library). Default: full documents (chat page).
+        // ?view=summary: list fields only (badge, Home, Library). Default: full documents (chat page),
+        // limited to what the user's plan includes.
         const summary = req.query?.view === 'summary';
         const videos = summary
-            ? (await getUserVideoSummariesService(userId)).map(({ lastError, ...v }) => {
-                const errorSummary = getVideoStatusErrorSummary(v.analysisStatus, lastError);
-                return errorSummary ? { ...v, errorSummary } : v;
-            })
-            : await getUserVideosService(userId);
+            ? await getUserVideoSummariesService(userId)
+            : await getUserVideosService(userId, await planOrFree(userId));
 
         res.status(200).json(
             ApiResponse.success(
                 200,
                 'Videos fetched successfully',
-                { videos }
+                { videos: videos.map(withErrorSummary) }
             )
         );
     } catch (error) {
