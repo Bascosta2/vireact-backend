@@ -22,6 +22,13 @@ export const normalizeEmail = (email) => (typeof email === 'string' ? email.trim
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
+/**
+ * Emailed-link tokens (verify email, reset password) are 32 random bytes as lowercase hex.
+ * Anything else (an object such as {"$ne": null}, an array, a number) is rejected before it can reach a query.
+ */
+const EMAIL_LINK_TOKEN = /^[a-f0-9]{64}$/;
+export const isEmailLinkToken = (token) => typeof token === 'string' && EMAIL_LINK_TOKEN.test(token);
+
 /** Hash variants a stored session hash may use (peppered and unpeppered), so adding a pepper later never signs users out. */
 const sessionHashCandidates = (token) => {
     const candidates = new Set([hashRefreshToken(token)]);
@@ -182,6 +189,10 @@ export const signupAdminService =
     };
 
 export const loginAdminService = async (email, password) => {
+    // Plain strings only, so an operator object (e.g. {"$ne": null}) can never pick an admin.
+    if (typeof email !== 'string' || !email || typeof password !== 'string' || !password) {
+        throw new ApiError(400, "Email and Password are required fields.");
+    }
 
     const admin = await Admin.findOne({ email });
 
@@ -265,6 +276,9 @@ export const verifyEmailService = async (token) => {
     try {
         if (!token) {
             throw new ApiError(400, "Token is missing.");
+        }
+        if (!isEmailLinkToken(token)) {
+            throw new ApiError(400, "This verification link is invalid. Log in, or request a new link.");
         }
 
         const user = await User.findOne({ emailVerificationToken: token });
@@ -420,7 +434,7 @@ export const forgotPasswordService = async (email) => {
  * Signs out every device (all refresh sessions are revoked).
  */
 export const resetPasswordService = async (token, password) => {
-    if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) {
+    if (!isEmailLinkToken(token)) {
         throw new ApiError(400, "This reset link is invalid. Request a new one.");
     }
     assertValidPassword(password);
