@@ -16,6 +16,12 @@ export const isLifecycleEmailsEnabled = () => isOn('LIFECYCLE_EMAILS_ENABLED');
  */
 export const isEditorEnabled = () => isOn('EDITOR_ENABLED');
 
+/**
+ * Editor features V2 (brand sheet, split screen, storyboard review, screen recordings). Off (default):
+ * the editor behaves exactly as before and the new endpoints answer 404.
+ */
+export const isEditorFeaturesV2 = () => isOn('EDITOR_FEATURES_V2');
+
 export const hasEditorAccess = (user) => {
     if (isEditorEnabled()) return true;
     const email = String(user?.email || '').trim().toLowerCase();
@@ -35,6 +41,30 @@ export const hasAccountsAccess = (user) => {
     if (!email) return false;
     return String(process.env.ACCOUNTS_BETA_EMAILS || '').split(',').some((e) => e.trim().toLowerCase() === email);
 };
+
+/**
+ * Scheduled posting to the user's connected accounts (src/service/publish/), same pattern again:
+ * off (default) = only PUBLISHING_BETA_EMAILS can schedule; PUBLISHING_ENABLED=true opens it to everyone.
+ * PUBLISHING_DRY_RUN=true simulates every post (nothing reaches a platform) so the flow can be tested
+ * before the platforms approve the app.
+ */
+export const isPublishingEnabled = () => isOn('PUBLISHING_ENABLED');
+export const isPublishingDryRun = () => isOn('PUBLISHING_DRY_RUN');
+
+export const hasPublishingAccess = (user) => {
+    if (isPublishingEnabled()) return true;
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!email) return false;
+    return String(process.env.PUBLISHING_BETA_EMAILS || '').split(',').some((e) => e.trim().toLowerCase() === email);
+};
+
+/**
+ * Meta data-deletion and deauthorize callbacks (POST /api/v1/meta/data-deletion, /api/v1/meta/deauthorize).
+ * Off (default): both answer 404, as before. Turn on with FACEBOOK_APP_SECRET and/or INSTAGRAM_APP_SECRET set.
+ * Deliberately not gated: GET /api/v1/meta/data-deletion/:code and the daily finisher of pending deletions,
+ * so requests already accepted still complete and stay checkable if the flag is turned off again.
+ */
+export const isMetaDataDeletionEnabled = () => isOn('META_DATA_DELETION_ENABLED');
 
 /**
  * 7-day free trial of a paid plan through Stripe Checkout (card required, $0 today). On unless
@@ -68,3 +98,9 @@ export const getTrialConfig = () => ({
     videoLimit: positiveInt('TRIAL_VIDEO_LIMIT', 5),
     chatMessageLimit: positiveInt('TRIAL_CHAT_MESSAGE_LIMIT', 60),
 });
+
+/**
+ * Background removal ("graphics behind you"): sends a 720p copy of the video to fal.ai to cut the speaker
+ * out. Off (default): nothing is sent anywhere and graphics stay in front. Needs FAL_KEY.
+ */
+export const isBgRemovalEnabled = () => isOn('EDITOR_BG_REMOVAL_ENABLED');

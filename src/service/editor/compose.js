@@ -1,8 +1,9 @@
-import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
+import { VISUALS, captionPreset, normalizeGraphic, validateScreens } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
-import { HOOK_VARIANTS, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
+import { HOOK_VARIANTS, sanitizeBrand, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
 import { removeRepeats } from './no-repeats.js';
 import { repairWordTimings } from './cut-candidates.js';
+import { applyBeatSwaps } from './storyboard.js';
 
 /**
  * Combine Claude's plan with the creator's review-screen changes into the exact props the Remotion
@@ -113,6 +114,8 @@ const JUMP_ZOOM = 1.08;
 const TOP_GRAPHICS = new Set(['pill', 'headline', 'counter', 'list', 'visual', 'chart']);
 /** Graphics drawn in the strip under the captions. */
 const LOW_GRAPHICS = new Set(['lower_third', 'cta']);
+/** Graphics that sit behind the speaker once a background matte exists (otherwise they stay in front, as before). */
+export const BEHIND_GRAPHICS = new Set(['headline']);
 /** The shortest time an illustration may stay on screen. */
 const VISUAL_MIN_SEC = 0.9;
 /** Captions show 2-3 words on one line; the tall "impact" look shows 2. Widths match the composition's font sizes. */
@@ -131,7 +134,7 @@ export const EDIT_FLAGS = ['keepOriginalOrder', 'captionsOff', 'hookOverlayOff',
  * @param {object} input body from the client
  * @param {{wordCount:number, trackIds:Set<string>}} ctx
  */
-export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() } = {}) {
+export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set(), v2 = false } = {}) {
     const out = {};
     if ('disabledSegments' in input) out.disabledSegments = idList(input.disabledSegments);
     if ('restoredCandidates' in input) out.restoredCandidates = idList(input.restoredCandidates, 1000);
@@ -155,7 +158,9 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() 
         else if (typeof id === 'string' && trackIds.has(id)) out.musicTrackId = id;
     }
     if ('musicVolume' in input && Number.isFinite(Number(input.musicVolume))) out.musicVolume = Math.min(0.6, Math.max(0, Number(input.musicVolume)));
-    if (input.framingMode === 'fill' || input.framingMode === 'fit_blur') out.framingMode = input.framingMode;
+    // Storyboard review (EDITOR_FEATURES_V2): approval only. Swapped beats are written by the swap endpoint, never by a PATCH.
+    if (v2 && 'storyboardApproved' in input) out.storyboardApproved = bool(input.storyboardApproved);
+    if (['fill', 'fit_blur', 'split'].includes(input.framingMode)) out.framingMode = input.framingMode;
     if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
     // Another animation style for an edit made with one (compose ignores it for every other edit).
     if (isAnimationStyle(input.animationStyle)) out.animationStyle = input.animationStyle;
@@ -176,6 +181,20 @@ const speechRanges = (pages) => {
     }
     return ranges;
 };
+
+/** Zoom of the detail pane in a split screen. */
+export const SPLIT_ZOOM = 1.8;
+
+/**
+ * The picture framing. A split screen (speaker on top, zoomed detail below, both from the one take) needs
+ * EDITOR_FEATURES_V2 (`enabled`); otherwise it falls back to fill, so a saved edit never breaks with the flag off.
+ */
+export function framingFor(mode, planFraming, enabled) {
+    const focusX = planFraming.focusX;
+    if (mode !== 'split') return { mode, focusX };
+    if (!enabled) return { mode: 'fill', focusX };
+    return { mode: 'split', focusX, split: { detailX: planFraming.detailX ?? 0.5, detailY: planFraming.detailY ?? 0.62, zoom: SPLIT_ZOOM } };
+}
 
 /** Plans saved before graphics existed: their text overlays become pill graphics, the rest gets defaults. */
 const withDefaults = (plan) => ({
@@ -227,6 +246,17 @@ export function arrangeSfx(events, durationInFrames) {
  * @param {{words:Array, silences:Array, durationSec:number, cutCandidates:Array}} media
  */
 /**
+ * True when this edit has graphics that belong behind the speaker (a plain full-frame layout with a
+ * behind-type graphic), so a background matte is worth paying for. Same narrowing as buildRenderProps.
+ */
+export function needsBackgroundMatte(rawPlan, edits = {}, skillId = null) {
+    if (!rawPlan || edits.overlaysOff) return false;
+    if ((edits.framingMode ?? rawPlan.framing?.mode ?? 'fill') !== 'fill') return false;
+    const drop = skillFor(activeSkillId(skillId, edits))?.render?.dropGraphicTypes ?? [];
+    return (rawPlan.graphics ?? []).some((g) => BEHIND_GRAPHICS.has(g.type) && !drop.includes(g.type));
+}
+
+/**
  * @param {object} [options]
  * @param {object|null} [options.density] DENSITY limits; null turns them off (tests of layout mechanics only)
  */
@@ -238,7 +268,11 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     const ss = sr?.sfx ?? null;
     /** Animated storytelling: the style's painted scene fills the frame (the footage only gives its sound). */
     const sceneOn = sr?.layout === 'scene' && !edits.sceneOff;
-    const base = withDefaults(rawPlan);
+    // The creator's brand sheet (media.brand, only passed when EDITOR_FEATURES_V2 is on) wins over a style's accent.
+    const brand = sanitizeBrand(media.brand);
+    const withLayers = withDefaults(rawPlan);
+    // A swapped storyboard beat (EDITOR_FEATURES_V2) replaces that segment's graphics and sounds.
+    const base = media.v2 && edits.beatSwaps ? applyBeatSwaps(withLayers, edits.beatSwaps) : withLayers;
     // An editing skill narrows the plan to its style before anything is placed.
     const plan = sr ? {
         ...base,
@@ -427,6 +461,19 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         if (g.type === 'slam') rotate('before_slam', SFX_BEFORE_SLAM, Math.max(0, g.startFrame - 6), 0, 0.35);
     }
 
+    // Screen recording shots (EDITOR_FEATURES_V2 + an attached, prepared recording): re-validated against the recording as it is now.
+    const framingOut = framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true);
+    const screens = media.v2 && media.screenRecordingSec > 0
+        ? validateScreens(plan.screens, plan.segments, media.screenRecordingSec).map((x) => {
+            const r = mapRange(x.start, x.end, timeline);
+            if (!r) return null;
+            const startFrame = f(r.start);
+            const durationFrames = Math.min(total - startFrame, f(r.end - r.start));
+            // Split screen on: the recording takes the lower half and the speaker stays on top. Off: it fills the 4:5 safe area.
+            return durationFrames > 6 ? { aspect: Math.round((Number(media.screenAspect) || 16 / 9) * 1000) / 1000, startFrame, durationFrames, recStartSec: x.recStart, from: { x: x.fromX, y: x.fromY, zoom: x.fromZoom }, to: { x: x.toX, y: x.toY, zoom: x.toZoom }, layout: framingOut.mode === 'split' ? 'bottom' : 'safe' } : null;
+        }).filter(Boolean)
+        : [];
+
     const effects = edits.effectsOff ? [] : thin(plan.effects
         .map((e) => {
             const t = mapPoint(e.at, timeline);
@@ -447,6 +494,11 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     if (sr?.musicVolume && edits.musicVolume == null) musicVolume = Math.min(sr.musicVolume.max, Math.max(sr.musicVolume.min, musicVolume));
     const music = trackId ? { trackId, volume: musicVolume, duck: speechRanges(pages) } : null;
 
+    // Graphics go behind the speaker only with a matte and a plain full-frame layout; anything else is unchanged.
+    const framing = framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true);
+    const matteUrl = typeof media.matteUrl === 'string' && media.matteUrl && framing.mode === 'fill' ? media.matteUrl : null;
+    const layered = matteUrl ? graphics.map((g) => (BEHIND_GRAPHICS.has(g.type) ? { ...g, layer: 'behind' } : g)) : graphics;
+
     return {
         ...OUTPUT,
         durationInFrames: total,
@@ -454,16 +506,19 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         captions,
         hook,
         zooms,
-        graphics,
+        graphics: layered,
+        ...(matteUrl && layered.some((g) => g.layer === 'behind') ? { matte: { url: matteUrl, mode: 'alpha-webm' } } : {}),
         // Read by the composition deployed before graphics existed (it crashes without the field).
         overlays: [],
         transitions,
         effects,
         // An animation style sets its own palette and picture treatment (the composition ignores the grade).
-        look: { grade: sr?.accent ? 'none' : plan.look.grade, accent: sr?.accent ?? ACCENT_HEX[plan.look.accent] ?? ACCENT_HEX.yellow, progressBar: plan.look.progressBar, motion: plan.look.motion },
+        look: { grade: sr?.accent ? 'none' : plan.look.grade, accent: brand?.accent ?? sr?.accent ?? ACCENT_HEX[plan.look.accent] ?? ACCENT_HEX.yellow, progressBar: plan.look.progressBar, motion: plan.look.motion },
         sfx,
         music,
-        framing: { mode: edits.framingMode ?? plan.framing.mode, focusX: plan.framing.focusX },
+        ...(brand ? { brand } : {}),
+        framing,
+        ...(screens.length ? { screens } : {}),
         ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [], ...(sr?.layout ? { layout: sceneOn ? 'scene' : 'footage' } : {}) } } : {}),
     };
 }

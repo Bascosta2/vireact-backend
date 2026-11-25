@@ -4,7 +4,9 @@ import { sceneFeatures, transcriptFeatures, featuresFromVideo, featuresFromDatas
 import { outcomeAtHorizon, longRunOutcome, baselineFor, creatorBaseline, outperformance, median } from '../src/service/learning/labels.js';
 import { metrics, metricsBy, timeSplit, checkOwnerCases, promotionDecision } from '../src/service/learning/evaluate.js';
 import { buildCollectionPlan, nextCheckAt, queryFor, isTracked, firstCheckAt, sampleValue, TRACK_SHARE } from '../src/service/learning/social/collector.js';
-import { cleanVideo, cleanCreator, cleanStats } from '../src/service/learning/social/providers.js';
+import { cleanVideo, cleanCreator, cleanStats, getPlatformProvider } from '../src/service/learning/social/providers.js';
+import { splitDailyBudget } from '../src/service/learning/social/collector.js';
+import { toReelVideo, toReelCreator, toProfileCreator, toReelExtras, isReelRecord, parseReelsSeeds, normalizeHandle, reelsEnabled } from '../src/service/learning/social/instagram-reels.js';
 import { toLabels } from '../src/service/learning/classifier.js';
 import { NICHE_TREE, TAXONOMY_NICHES, subNicheOf, formatFromStrategy } from '../src/constants/taxonomy.js';
 import { NICHES } from '../src/constants/library.js';
@@ -192,4 +194,86 @@ test('classifier output: closed lists, sub-niche must match the niche, unsure go
     assert.equal(out.get('V2').format, 'other');
     assert.equal(out.get('V3').niche, 'other');
     assert.equal(out.has('V9'), false, 'unknown refs are ignored');
+});
+
+test('shadow comparison: log error, within 2x, band hit rate per side and per platform', async () => {
+    const { compareShadow, shadowRows } = await import('../src/service/learning/model/shadow.js');
+    const rows = [
+        { platform: 'tiktok', actual: 1000, formula: { low: 100, expected: 300, high: 900 }, shadow: { low: 500, expected: 1000, high: 2000 } },
+        { platform: 'tiktok', actual: 200, formula: { low: 100, expected: 300, high: 900 }, shadow: { low: 500, expected: 1000, high: 2000 } },
+        { platform: 'instagram', actual: 50, formula: { low: 10, expected: 50, high: 100 }, shadow: { low: 1, expected: 5, high: 10 } },
+        { platform: 'instagram', actual: 50, formula: { low: 10, expected: 50, high: 100 }, shadow: null },
+    ];
+    const c = compareShadow(rows);
+    assert.equal(c.overall.n, 3, 'rows without both predictions are left out');
+    assert.equal(c.byPlatform.tiktok.formula.coverage, 0.5);
+    assert.equal(c.byPlatform.tiktok.shadow.coverage, 0.5);
+    assert.equal(c.byPlatform.tiktok.shadowCloser, 0.5);
+    assert.equal(c.byPlatform.instagram.formula.typicalMiss, 1);
+    assert.equal(c.byPlatform.instagram.shadow.within2x, 0);
+    assert.ok(c.overall.shadow.meanAbsLogError > c.overall.formula.meanAbsLogError);
+    assert.deepEqual(compareShadow([]).overall.n, 0);
+    // Only settled results count (48h+ after posting).
+    const records = [
+        { subjectId: 'a', shadowPrediction: { platform: 'tiktok', modelVersion: 3, low: 1, expected: 2, high: 3, formula: { low: 1, expected: 2, high: 3 } } },
+        { subjectId: 'b', shadowPrediction: { platform: 'tiktok', modelVersion: 3, low: 1, expected: 2, high: 3, formula: { low: 1, expected: 2, high: 3 } } },
+    ];
+    const snaps = [{ subjectId: 'a', views: 10, ageHours: 170 }, { subjectId: 'b', views: 10, ageHours: 5 }];
+    assert.deepEqual(shadowRows(records, snaps).map((r) => r.actual), [10]);
+});
+
+const reelFixture = {
+    shortcode: 'C1abcDEfgHi', url: 'https://www.instagram.com/reel/C1abcDEfgHi/', product_type: 'clips', user_posted: 'Some.User',
+    description: 'Try this #fitness #Gym', hashtags: ['fitness', 'Gym'], length: '15.033', date_posted: '2026-11-01T10:00:00.000Z',
+    views: 12000, video_play_count: 99999, likes: 800, num_comments: 40, followers: 5400,
+    audio_url: 'https://www.instagram.com/reels/audio/1234567890/',
+    top_comments: [{ comment: ' nice ', likes: 3, num_replies: 0, date_of_comment: '2026-11-02T00:00:00Z', user_commenting: 'x' }, { comment: '' }],
+};
+
+test('instagram reels: record maps to the shared Video/Creator shapes and passes validation', () => {
+    assert.ok(isReelRecord(reelFixture));
+    assert.ok(!isReelRecord({ ...reelFixture, product_type: 'feed' }));
+    assert.ok(!isReelRecord({ ...reelFixture, error: 'dead_page' }));
+    const v = cleanVideo(toReelVideo(reelFixture));
+    assert.equal(v.externalId, 'C1abcDEfgHi');
+    assert.equal(v.creatorExternalId, 'some.user');
+    assert.equal(v.views, 12000, 'uses views, not video_play_count');
+    assert.equal(v.durationSec, 15);
+    assert.equal(v.soundId, 'ig:1234567890');
+    assert.equal(toReelVideo(reelFixture).shares, null, 'Instagram does not publish shares (cleanVideo turns missing counts into 0, as for TikTok)');
+    assert.deepEqual(cleanCreator(toReelCreator(reelFixture)), { externalId: 'some.user', handle: 'some.user', followers: 5400 });
+    assert.equal(toProfileCreator({ account: '@Other', followers: '10' }).externalId, 'other');
+    assert.equal(toProfileCreator({ error: 'x', account: 'a' }), null);
+    const extras = toReelExtras(reelFixture);
+    assert.equal(extras.externalId, 'C1abcDEfgHi');
+    assert.deepEqual(extras.topComments.map((c) => c.text), ['nice']);
+});
+
+test('instagram reels: seeds, handles and the flag', () => {
+    assert.equal(normalizeHandle(' @A.b_c '), 'a.b_c');
+    assert.equal(normalizeHandle('bad handle!'), null);
+    assert.deepEqual(parseReelsSeeds('one:fitness_health, Two ,one,bad name:food,three:notaniche'), [
+        { handle: 'one', niche: 'fitness_health' }, { handle: 'two', niche: null }, { handle: 'three', niche: null },
+    ]);
+    assert.equal(reelsEnabled({}), false);
+    assert.equal(reelsEnabled({ LEARNING_REELS_ENABLED: 'TRUE' }), true);
+    assert.equal(getPlatformProvider('instagram', {}), null, 'off by default');
+    assert.equal(getPlatformProvider('instagram', { LEARNING_REELS_ENABLED: 'true', LEARNING_PROVIDER: 'brightdata', BRIGHTDATA_API_KEY: 'k' }), null, 'needs the dataset id');
+    const on = getPlatformProvider('instagram', { LEARNING_REELS_ENABLED: 'true', LEARNING_PROVIDER: 'brightdata', BRIGHTDATA_API_KEY: 'k', BRIGHTDATA_IG_REELS_DATASET_ID: 'gd_abcdef123456' });
+    assert.equal(on.platform, 'instagram');
+    assert.equal(on.searchVideos, undefined);
+    assert.equal(on.creatorProfiles, null);
+});
+
+test('collection budget: TikTok keeps everything unless Reels are on', () => {
+    assert.deepEqual(splitDailyBudget({ budget: 2000 }), { tiktok: 2000, instagram: 0 });
+    assert.deepEqual(splitDailyBudget({ budget: 2000, reels: true }), { tiktok: 1600, instagram: 400 });
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: true, reelsShare: 0 }), { tiktok: 1000, instagram: 0 });
+    assert.equal(buildCollectionPlan({ now: 0 }).length, buildCollectionPlan({ now: 0 }).length);
+});
+
+test('collection budget: the Reels share is capped at half and bad values fall back to 0.2', () => {
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: true, reelsShare: 1 }), { tiktok: 500, instagram: 500 });
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: true, reelsShare: 'abc' }), { tiktok: 800, instagram: 200 });
+    assert.deepEqual(splitDailyBudget({ budget: 1000, reels: false, reelsShare: 1 }), { tiktok: 1000, instagram: 0 });
 });

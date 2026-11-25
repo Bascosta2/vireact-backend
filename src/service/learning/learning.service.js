@@ -13,6 +13,7 @@
  *   LEARNING_ENABLED=true        the daily job runs (otherwise the webhook answers 503)
  *   LEARNING_PROVIDER=<name>     public data provider adapter (social/providers.js); unset = no collection
  *   LEARNING_DAILY_RECORDS=2000  provider records per day (spending cap)
+ *   LEARNING_REELS_ENABLED=true  also collect public Instagram Reels (instagram-reels.js; needs the Bright Data Instagram dataset ids)
  *   LEARNING_LABEL_LIMIT=300     videos labelled by the classifier per day
  *   LEARNING_DEEP_DAILY=60       public videos deep-analyzed per day (Twelve Labs + measured cuts); 0 = off
  *   LEARNING_DEEP_CONCURRENCY=3  deep analyses at once (Twelve Labs is shared with users' uploads)
@@ -32,6 +33,7 @@ import { factorReport, measuredVideoFeatures } from './deep-features.js';
 import { labelComments, COMMENT_INTENTS } from './comments.js';
 import { refreshSoundTrends } from './trends.js';
 import { trainMatrixEngine, MODEL_KIND } from './model/trainer.js';
+import { recordShadowPrediction } from './model/shadow.js';
 import { refreshInsights } from './insights.js';
 import { LearningInsight, LearningModel, SoundTrend } from '../../model/learning.model.js';
 import { ANALYSIS_STATUS } from '../../constants.js';
@@ -39,9 +41,10 @@ import { TAXONOMY_VERSION, isNiche } from '../../constants/taxonomy.js';
 import { FEATURE_VERSION, featuresFromVideo, featuresFromDataset } from './features.js';
 import { ageHoursAt, SETTLE_HOURS } from './labels.js';
 import { metrics, metricsBy, timeSplit, checkOwnerCases } from './evaluate.js';
-import { getProvider } from './social/providers.js';
+import { getProvider, getPlatformProvider } from './social/providers.js';
 import './social/brightdata.js'; // registers LEARNING_PROVIDER=brightdata
-import { runCollection, TRACK_SHARE } from './social/collector.js';
+import { reelsEnabled, parseReelsSeeds } from './social/instagram-reels.js'; // registers the Reels platform adapter (off unless LEARNING_REELS_ENABLED=true)
+import { runCollection, splitDailyBudget, REELS_BUDGET_SHARE, TRACK_SHARE } from './social/collector.js';
 import { labelPending } from './classifier.js';
 import { syncAllAccounts } from '../accounts/accounts.service.js';
 
@@ -67,6 +70,9 @@ export const learningConfig = (env = process.env) => ({
     enabled: String(env.LEARNING_ENABLED ?? '').trim().toLowerCase() === 'true',
     provider: String(env.LEARNING_PROVIDER ?? '').trim().toLowerCase() || null,
     dailyRecords: intEnv('LEARNING_DAILY_RECORDS', 2000, env),
+    reels: reelsEnabled(env),
+    reelsShare: shareEnv('LEARNING_REELS_SHARE', REELS_BUDGET_SHARE, env),
+    reelsSeeds: parseReelsSeeds(env.LEARNING_REELS_SEEDS),
     // ~1,800 public videos arrive a day; 2,000 keeps labelling ahead of collection (one small call per 25).
     labelLimit: intEnv('LEARNING_LABEL_LIMIT', 2000, env),
     trackShare: shareEnv('LEARNING_TRACK_SHARE', TRACK_SHARE, env),
@@ -179,6 +185,8 @@ export const onVideoAnalyzed = (video) => {
     Promise.resolve()
         .then(() => upsertVideoFeatures(video))
         .then(() => syncUserOutcomes(video))
+        // Off unless LEARNING_SHADOW_PREDICTIONS=true; never throws and never changes what the user sees.
+        .then(() => recordShadowPrediction(video))
         .catch((error) => console.warn(`[learning] features for ${video?._id} skipped: ${error.message}`));
 };
 export const onPerformanceChanged = (video) => {
@@ -346,10 +354,16 @@ export const runDailyLearning = async ({ now = Date.now(), config = learningConf
         // Connected accounts first: today's verified results feed the rest of the run.
         await step('accounts', () => (deps.syncAccounts ?? syncAllAccounts)({ now, log }));
         await step('backfill', () => backfillLearning());
+        const reelsProvider = deps.reelsProvider !== undefined ? deps.reelsProvider : (config.reels ? getPlatformProvider('instagram') : null);
+        const budgets = splitDailyBudget({ budget: config.dailyRecords, reels: Boolean(reelsProvider), reelsShare: config.reelsShare });
         const collected = await step('collect', () => (provider
-            ? runCollection({ provider, budget: config.dailyRecords, trackShare: config.trackShare ?? TRACK_SHARE, now, log })
+            ? runCollection({ provider, budget: budgets.tiktok, trackShare: config.trackShare ?? TRACK_SHARE, now, log })
             : { skipped: 'no provider configured (LEARNING_PROVIDER)' }));
         run.recordsUsed = collected?.used ?? 0;
+        if (reelsProvider) {
+            const reels = await step('collect_reels', () => runCollection({ provider: reelsProvider, platform: 'instagram', budget: budgets.instagram, plan: [], seeds: config.reelsSeeds ?? [], trackShare: config.trackShare ?? TRACK_SHARE, now, log }));
+            run.recordsUsed += reels?.used ?? 0;
+        }
         const deep = await step('deep', () => (provider && config.deepDaily > 0
             ? runDeepAnalysis({ provider, limit: config.deepDaily, concurrency: config.deepConcurrency, maxDurationSec: config.deepMaxSec, maxAgeDays: config.deepMaxAgeDays ?? 365, languages: config.languages ?? ['en'], now, deps: deps.deep, log })
             : { skipped: provider ? 'LEARNING_DEEP_DAILY=0' : 'no provider configured' }));

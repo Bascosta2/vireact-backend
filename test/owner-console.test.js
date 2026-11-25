@@ -132,6 +132,10 @@ test('one video shows input and outputs, never password or tokens, and the view 
     const learning = await json(await call('/learning', { cookie }));
     assert.equal(learning.status, 200);
     assert.equal(learning.body.data.reportCard.ownerCases.length, 2);
+    const shadow = await json(await call('/learning/shadow', { cookie }));
+    assert.equal(shadow.status, 200);
+    assert.equal(shadow.body.data.enabled, false, 'shadow predictions are off unless the flag is set');
+    assert.equal(shadow.body.data.overall.n, 0);
     assert.equal((await call('/learning')).status, 401, 'learning data needs the session too');
 });
 

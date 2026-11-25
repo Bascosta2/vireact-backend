@@ -1,6 +1,7 @@
 import { User } from '../model/user.model.js';
 import { Admin } from '../model/admin.model.js';
 import { ApiError } from '../utils/ApiError.js';
+import { ROLES } from '../constants.js';
 import { verifyAccessToken } from '../utils/jwt.js';
 
 /**
@@ -97,4 +98,14 @@ export const authorize = (...roles) => {
 
         next();
     };
+};
+
+/**
+ * Signed-in admin users only (role admin or super-admin from the app's normal JWT). Use after authenticateToken.
+ * Separate from adminAuth (x-admin-key), which stays server-to-server; the key is never sent to browsers.
+ */
+export const requireAdminUser = (req, res, next) => {
+    if (!req.user) return next(new ApiError(401, 'Authentication required'));
+    if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.SUPER_ADMIN) return next(new ApiError(403, 'Admin access required'));
+    next();
 };

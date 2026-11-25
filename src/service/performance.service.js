@@ -9,7 +9,7 @@ import { Video } from '../model/video.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { normalizeFollowers, normalizePlatform } from './view-prediction.service.js';
 import { markLearningStale } from './view-learning.service.js';
-import { onPerformanceChanged } from './learning/learning.service.js';
+import { onPerformanceChanged, syncUserOutcomes } from './learning/learning.service.js';
 
 export const MAX_SNAPSHOTS = 20;
 const MAX_URL_LENGTH = 500;
@@ -109,10 +109,33 @@ export const addSnapshot = async (userId, videoId, body = {}) => {
     if (platform) video.creatorPlatform = platform;
     const followers = normalizeFollowers(body.followers);
     if (followers != null) video.creatorFollowers = followers;
+    forgetCopiedFields(video, [platform && 'creatorPlatform', followers != null && 'creatorFollowers']);
     await video.save();
     markLearningStale();
     onPerformanceChanged(video);
     return toPerformanceResponse(video);
+};
+
+const COPIED_FIELDS = Object.freeze(['postUrl', 'postedAt', 'creatorPlatform', 'creatorFollowers']);
+const sameId = (a, b) => a != null && b != null && String(a) === String(b);
+
+/** The user set these fields themselves: they no longer count as copied from a connected account. */
+const forgetCopiedFields = (video, fields) => {
+    const mine = fields.filter(Boolean);
+    if (!mine.length || !video.connectedCopies?.length) return;
+    video.connectedCopies = video.connectedCopies
+        .map((c) => ({ accountId: c.accountId, platform: c.platform, fields: c.fields.filter((f) => !mine.includes(f)) }))
+        .filter((c) => c.fields.length);
+};
+
+/** Records that the account filled these fields in (removeConnectedReadings clears exactly them). */
+const rememberCopiedFields = (video, accountId, platform, fields) => {
+    if (!accountId || !fields.length) return;
+    const copies = (video.connectedCopies ?? []).map((c) => ({ accountId: c.accountId, platform: c.platform, fields: [...c.fields] }));
+    const entry = copies.find((c) => sameId(c.accountId, accountId));
+    if (entry) entry.fields = [...new Set([...entry.fields, ...fields])];
+    else copies.push({ accountId, platform, fields: [...fields] });
+    video.connectedCopies = copies;
 };
 
 /**
@@ -121,7 +144,7 @@ export const addSnapshot = async (userId, videoId, body = {}) => {
  * counts as api_verified). A reading already stored (same source and time) is not added twice. Fills
  * the post link, post date, platform and followers only where they are empty.
  */
-export const recordConnectedReadings = async (videoId, userId, { source, readings = [], postUrl = null, postedAt = null, followers = null } = {}) => {
+export const recordConnectedReadings = async (videoId, userId, { source, accountId = null, readings = [], postUrl = null, postedAt = null, followers = null } = {}) => {
     const video = await loadOwnedVideo(userId, videoId);
     const have = new Set(video.performanceSnapshots.map((s) => `${s.source}:${new Date(s.capturedAt).getTime()}`));
     let added = 0;
@@ -130,7 +153,7 @@ export const recordConnectedReadings = async (videoId, userId, { source, reading
         const key = `${source}:${new Date(r.capturedAt).getTime()}`;
         if (have.has(key)) continue;
         have.add(key);
-        const snap = { capturedAt: new Date(r.capturedAt), views: r.views, source };
+        const snap = { capturedAt: new Date(r.capturedAt), views: r.views, source, ...(accountId ? { accountId } : {}) };
         for (const k of OPTIONAL_COUNTS) if (Number.isFinite(r[k]) && r[k] >= 0) snap[k] = r[k];
         video.performanceSnapshots.push(snap);
         added += 1;
@@ -138,15 +161,66 @@ export const recordConnectedReadings = async (videoId, userId, { source, reading
     if (!added) return 0;
     video.performanceSnapshots = [...video.performanceSnapshots].sort(byCapturedAt).slice(-MAX_SNAPSHOTS);
     syncActualViews(video);
-    if (!video.postUrl && postUrl) video.postUrl = normalizePostUrl(postUrl) ?? null;
-    if (!video.postedAt && postedAt) video.postedAt = new Date(postedAt);
-    const platform = normalizePlatform(source);
-    if (platform && !video.creatorPlatform) video.creatorPlatform = platform;
-    if (followers != null && video.creatorFollowers == null) video.creatorFollowers = normalizeFollowers(followers);
+    const copied = [];
+    const fill = (field, value) => {
+        if (video[field] != null || value == null) return;
+        video[field] = value;
+        copied.push(field);
+    };
+    if (!video.postUrl && postUrl) fill('postUrl', normalizePostUrl(postUrl) ?? null);
+    if (postedAt) fill('postedAt', new Date(postedAt));
+    fill('creatorPlatform', normalizePlatform(source));
+    if (followers != null) fill('creatorFollowers', normalizeFollowers(followers));
+    rememberCopiedFields(video, accountId, source, copied);
     await video.save();
     markLearningStale();
     onPerformanceChanged(video);
     return added;
+};
+
+/**
+ * Takes back what a connected account copied onto an upload (recordConnectedReadings). Used by Meta data
+ * deletion and by "disconnect and delete data". Typed entries (source manual) always stay.
+ * - Snapshots tagged with the account are removed; untagged ones (copied before tagging existed) with this
+ *   source are removed when includeUntagged is set (the caller decides: see deleteAccountData).
+ * - Fields recorded in connectedCopies for the account are cleared exactly. For older copies without a record
+ *   (and includeUntagged), the post link / date are cleared when they equal one of the account's posts, and the
+ *   followers when they equal the account's count. creatorPlatform from an older copy cannot be told apart
+ *   from the platform picked at upload, so it stays (a platform name, not data about the person).
+ * The learning copies of removed snapshots (OutcomeSnapshot) are removed before this returns.
+ * Returns the number of snapshots removed (0 when the upload is gone).
+ */
+export const removeConnectedReadings = async (videoId, userId, {
+    accountId, source, includeUntagged = true, postUrls = [], postedAts = [], followers = null,
+} = {}) => {
+    if (!accountId || !source || source === 'manual' || !mongoose.isValidObjectId(videoId)) return 0;
+    const video = await Video.findOne({ _id: videoId, uploader_id: userId });
+    if (!video) return 0;
+    const before = video.performanceSnapshots.length;
+    video.performanceSnapshots = video.performanceSnapshots.filter((s) => !(sameId(s.accountId, accountId) || (includeUntagged && !s.accountId && s.source === source)));
+    const removed = before - video.performanceSnapshots.length;
+
+    const record = (video.connectedCopies ?? []).find((c) => sameId(c.accountId, accountId));
+    const clear = new Set(record ? record.fields.filter((f) => COPIED_FIELDS.includes(f)) : []);
+    if (!record && includeUntagged) {
+        const urls = new Set(postUrls.filter(Boolean).map((u) => normalizePostUrl(u)).filter(Boolean));
+        const times = new Set(postedAts.filter(Boolean).map((d) => new Date(d).getTime()));
+        if (video.postUrl && urls.has(video.postUrl)) clear.add('postUrl');
+        if (video.postedAt && times.has(new Date(video.postedAt).getTime())) clear.add('postedAt');
+        if (followers != null && video.creatorFollowers != null && video.creatorFollowers === normalizeFollowers(followers)) clear.add('creatorFollowers');
+    }
+    if (!removed && !clear.size && !record) return 0;
+    for (const field of clear) video[field] = null;
+    if (record) {
+        const rest = video.connectedCopies.filter((c) => !sameId(c.accountId, accountId));
+        video.connectedCopies = rest.length ? rest : undefined;
+    }
+    syncActualViews(video);
+    await video.save();
+    await syncUserOutcomes(video);
+    markLearningStale();
+    onPerformanceChanged(video);
+    return removed;
 };
 
 export const deleteSnapshot = async (userId, videoId, snapshotId) => {
@@ -181,6 +255,7 @@ export const setPostDetails = async (userId, videoId, body = {}) => {
     }
     const video = await loadOwnedVideo(userId, videoId);
     Object.assign(video, update);
+    forgetCopiedFields(video, Object.keys(update));
     await video.save();
     if ('postedAt' in update) markLearningStale();
     if ('postedAt' in update || 'creatorPlatform' in update) onPerformanceChanged(video);

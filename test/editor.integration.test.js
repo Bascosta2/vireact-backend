@@ -17,7 +17,9 @@ import { editorUsage } from '../src/service/editor/editor-access.service.js';
 import {
     createEditProject, confirmEditUpload, getEditProject, updateEdits, regenerateEdit,
     startEditRender, getEditRender, deleteEditProject, getEditorUsage, requireEditorAccess,
+    swapStoryboardBeat, attachScreenRecording, confirmScreenRecording,
 } from '../src/controller/editor.controller.js';
+import { buildStoryboardEdit, normalizeOption } from '../src/service/editor/storyboard.service.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vireact-editor-int-'));
 const objects = new Map(); // key -> local file path or Buffer
@@ -326,6 +328,56 @@ test('export renders on Lambda, reports progress and returns a download link; de
     assert.ok(gone.billing.countedAt, 'billing history kept so deleting does not refund an edit');
     assert.ok(deletedPrefixes.some((p) => p.includes(`/sources/${user._id}/${id}/`)));
     assert.equal((await call(getEditProject, { user, params: { id } })).error?.statusCode, 404);
+});
+
+test('story mode beside the beat review (EDITOR_FEATURES_V2): a story video keeps its storyboard, takes no screen recording or beat swap, and exports', async () => {
+    const user = await newUser('story-v2', 'pro');
+    const scene = (narration, backdrop) => ({ narration, backdrop, emphasis: '', graphicType: 'none', graphicText: '', graphicSubtext: '', graphicItems: '' });
+    const option = normalizeOption({
+        title: 'The fox who saved the forest', logline: 'A fox stops a fire.', angle: 'a story', mood: 'inspiring', musicTrackId: '',
+        scenes: [scene('Deep in the forest lived a small red fox named Ember.', 'nature'), scene('One dry summer, smoke rose over the hills and everyone ran.', 'city-night'), scene('Ember dug a trench, and the fire stopped at her line.', 'ocean')],
+    }, 'glow-sketch');
+    const built = buildStoryboardEdit(option, {});
+    const p = await EditProject.create({
+        userId: user._id, kind: 'storyboard', skill: 'glow-sketch', title: option.title, status: EDIT_STATUS.READY, inFlight: false, readyAt: new Date(),
+        plan: built.plan, edits: {}, media: { words: built.words }, source: { durationSec: built.durationSec },
+        storyboard: { prompt: 'A fox saves a forest from a fire', lengthSec: 30, options: [option], chosen: 0, final: { ...option, timing: built.timing }, rounds: 1, note: '' },
+    });
+    const id = String(p._id);
+    const saved = process.env.EDITOR_FEATURES_V2;
+    process.env.EDITOR_FEATURES_V2 = 'true';
+    try {
+        const detail = await call(getEditProject, { user, params: { id } });
+        assert.equal(detail.error, null, detail.error?.message);
+        assert.equal(detail.data.kind, 'storyboard');
+        assert.equal(detail.data.storyboard.prompt, 'A fox saves a forest from a fire', 'the story view is not replaced by the beat review');
+        assert.equal(detail.data.props.storyboard.scenes.length, 3);
+
+        const edited = await call(updateEdits, { user, params: { id }, body: { disabledSegments: [] } });
+        assert.equal(edited.error, null, edited.error?.message);
+        assert.equal(edited.data.storyboard, undefined);
+        assert.notEqual(edited.data.edits.storyboardApproved, false, 'a story video never needs beat approval');
+
+        for (const handler of [swapStoryboardBeat, attachScreenRecording, confirmScreenRecording]) {
+            const refused = await call(handler, { user, params: { id }, body: { beatId: built.plan.segments[0].id, contentType: 'video/mp4', sizeBytes: 1000 } });
+            assert.equal(refused.error?.statusCode, 400, handler.name);
+            assert.equal(refused.error?.data?.code, 'STORYBOARD_EDIT', handler.name);
+        }
+        const untouched = await EditProject.findById(id).lean();
+        assert.equal(untouched.status, EDIT_STATUS.READY);
+        assert.equal(untouched.screenRecording ?? null, null);
+
+        const renderCalls = [];
+        setRenderClientForTests({ renderMediaOnLambda: async (args) => { renderCalls.push(args); return { renderId: 'r-story', bucketName: 'bucket' }; }, getRenderProgress: async () => ({ done: false, overallProgress: 0 }) });
+        const started = await call(startEditRender, { user, params: { id } });
+        assert.equal(started.error, null, started.error?.message);
+        assert.equal(renderCalls[0].inputProps.videoUrl, '', 'no footage to render from');
+        assert.equal(renderCalls[0].inputProps.storyboard.scenes.length, 3);
+        assert.equal(renderCalls[0].inputProps.screenUrl, undefined);
+    } finally {
+        if (saved === undefined) delete process.env.EDITOR_FEATURES_V2;
+        else process.env.EDITOR_FEATURES_V2 = saved;
+    }
 });
 
 test('private beta: with EDITOR_ENABLED off only allowlisted emails get the editor', async () => {

@@ -9,10 +9,15 @@ import { BACKEND_URL } from '../../config/index.js';
 import { withAiContext, newTraceId } from '../../lib/ai-tracking.js';
 import { captureServerEvent } from '../../lib/analytics.js';
 import { createSemaphore } from '../../utils/semaphore.js';
-import { prepareMedia } from './media-prep.js';
+import { prepareMedia, prepareScreenRecording } from './media-prep.js';
 import { transcribeWords } from './transcribe.js';
 import { buildCutCandidates, repairWordTimings } from './cut-candidates.js';
+import { isEditorFeaturesV2 } from '../../config/flags.js';
+import { carryStoryboard, storyboardNote } from './storyboard.js';
 import { planEdit } from './edit-planner.service.js';
+import { needsBackgroundMatte } from './compose.js';
+import { runMatteStep } from './bg-removal.service.js';
+import { isBgRemovalEnabled } from '../../config/flags.js';
 import { chargeEdit } from './editor-access.service.js';
 import { generateStoryboards } from './storyboard.service.js';
 import { SoundAsset } from '../../model/sound-asset.model.js';
@@ -97,7 +102,7 @@ export async function runEditJob(projectId, deps = {}) {
         if (project.kind === 'storyboard') return await writeStoryboards(project, userId, deps.storyboards ?? generateStoryboards);
         // Regeneration (or a retry after planning failed): media is already prepared, only replan.
         if (project.media?.frameSheets?.length && project.source?.proxyKey && project.plan) {
-            return await replan(project, userId, plan);
+            return await replan(project, userId, plan, deps.prepareScreen ?? prepareScreenRecording);
         }
         await fs.promises.mkdir(workDir, { recursive: true });
         const srcPath = path.join(workDir, `source${path.extname(project.source.key) || '.mp4'}`);
@@ -141,6 +146,8 @@ export async function runEditJob(projectId, deps = {}) {
             frameSheets,
             cutCandidates,
             transcriptLanguage: language,
+            // Keep an in-flight or finished matte across a re-run, so fal is never asked twice for the same video.
+            ...(project.media?.matte ? { matte: project.media.matte } : {}),
         };
         const updated = await EditProject.findOneAndUpdate(
             { _id: project._id },
@@ -172,17 +179,26 @@ export async function runEditJob(projectId, deps = {}) {
             () => plan({ project: updated, profile: resolveCreatorProfile(user ?? {}) })
         );
 
+        // Graphics behind the speaker: only when the plan has some, and never able to fail the edit.
+        let matte = null;
+        if (isBgRemovalEnabled() && needsBackgroundMatte(result.plan, {}, project.skill)) {
+            await setStage(project._id, 'cutting out the speaker', 90);
+            matte = await (deps.matte ?? runMatteStep)({ userId, projectId: project._id, srcPath, workDir, durationSec: info.durationSec });
+        }
+
         await EditProject.updateOne(
             { _id: project._id },
             {
                 $set: {
+                    ...(matte ? { 'media.matte': matte } : {}),
                     status: EDIT_STATUS.READY,
                     inFlight: false,
                     stage: 'ready',
                     progress: 100,
                     plan: result.plan,
                     planGenerationId: result.generationId ?? null,
-                    edits: {},
+                    // With the storyboard review on, a new plan starts unapproved.
+                    edits: isEditorFeaturesV2() ? { storyboardApproved: false } : {},
                     readyAt: new Date(),
                     error: null,
                 },
@@ -259,23 +275,56 @@ async function writeStoryboards(project, userId, generate) {
 }
 
 /** Plan again on prepared media with the creator's note. Already charged, so nothing is counted. */
-async function replan(project, userId, plan) {
+async function replan(project, userId, plan, prepareScreen = prepareScreenRecording) {
+    let current = project.toObject();
+    if (isEditorFeaturesV2() && project.screenRecording?.key && !project.screenRecording.proxyKey) {
+        await prepareScreenFor(project, userId, prepareScreen);
+        current = (await EditProject.findById(project._id).lean()) ?? current;
+    }
     await EditProject.updateOne({ _id: project._id }, { $set: { status: EDIT_STATUS.PLANNING, stage: 'planning your edit', progress: 80, heartbeatAt: new Date() } });
     const user = await User.findById(userId).select('creatorProfile onboarding').lean();
     const revision = project.pendingRevision ?? { note: '', previousPlan: project.plan };
     const result = await withAiContext(
         { feature: 'video_editor', userId, distinctId: userId, traceId: newTraceId(`edit-${project._id}-rev`) },
-        () => plan({ project: project.toObject(), profile: resolveCreatorProfile(user ?? {}), revision })
+        () => plan({ project: current, profile: resolveCreatorProfile(user ?? {}), revision: revision.keepEdits ? { ...revision, storyboardNote: storyboardNote(revision.previousPlan, revision.keepEdits) } : revision })
     );
     await EditProject.updateOne(
         { _id: project._id },
         {
-            $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, plan: result.plan, planGenerationId: result.generationId ?? null, edits: {}, pendingRevision: null, readyAt: new Date(), error: null },
-            $push: { revisions: { note: revision.note, plan: revision.previousPlan, createdAt: new Date() } },
+            $set: { status: EDIT_STATUS.READY, inFlight: false, stage: 'ready', progress: 100, plan: result.plan, planGenerationId: result.generationId ?? null, edits: revision.keepEdits ? carryStoryboard(revision.previousPlan, revision.keepEdits, result.plan) : isEditorFeaturesV2() ? { storyboardApproved: false } : {}, pendingRevision: null, readyAt: new Date(), error: null },
+            // Attaching a screen recording re-plans but does not use up one of the creator's regenerations.
+            ...(revision.screenAttach ? {} : { $push: { revisions: { note: revision.note, plan: revision.previousPlan, createdAt: new Date() } } }),
         }
     );
     captureServerEvent(userId, 'edit_regenerated', { project_id: String(project._id) });
     return { ok: true, replanned: true };
+}
+
+/** Download, prepare and store the attached screen recording; a bad file is detached and the edit stays as it was. */
+async function prepareScreenFor(project, userId, prepareScreen) {
+    const workDir = path.join(WORK_ROOT, `${project._id}-screen`);
+    const rec = project.screenRecording;
+    try {
+        await fs.promises.mkdir(workDir, { recursive: true });
+        const srcPath = path.join(workDir, `screen${path.extname(rec.key) || '.mp4'}`);
+        await storage.downloadToFile(rec.key, srcPath);
+        await setStage(project._id, 'preparing screen recording', 76);
+        const prepared = await prepareScreen(srcPath, workDir);
+        const proxyKey = editorKey('proxies', userId, project._id, 'screen-proxy.mp4');
+        const masterKey = editorKey('sources', userId, project._id, 'screen-master.mp4');
+        const sheetKey = editorKey('frames', userId, project._id, 'screen-sheet.jpg');
+        await storage.uploadFile(prepared.proxyPath, proxyKey, 'video/mp4');
+        await storage.uploadFile(prepared.masterPath, masterKey, 'video/mp4');
+        await storage.uploadFile(prepared.sheetPath, sheetKey, 'image/jpeg');
+        const set = { 'screenRecording.durationSec': prepared.info.durationSec, 'screenRecording.width': prepared.info.width, 'screenRecording.height': prepared.info.height, 'screenRecording.proxyKey': proxyKey, 'screenRecording.masterKey': masterKey, 'screenRecording.sheetKey': sheetKey };
+        await EditProject.updateOne({ _id: project._id }, { $set: set });
+    } catch (err) {
+        await EditProject.updateOne({ _id: project._id }, { $unset: { screenRecording: 1 }, $set: { pendingRevision: null } });
+        await storage.deletePrefix(rec.key).catch(() => {});
+        throw err;
+    } finally {
+        await fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
 }
 
 /** Run a job within this instance's concurrency limit (used by the QStash webhook). */

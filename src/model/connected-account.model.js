@@ -8,7 +8,7 @@ import mongoose from 'mongoose';
  * the server: API responses use toPublicAccount().
  */
 
-export const ACCOUNT_PLATFORMS = Object.freeze(['tiktok', 'youtube', 'instagram']);
+export const ACCOUNT_PLATFORMS = Object.freeze(['tiktok', 'youtube', 'instagram', 'facebook']);
 export const ACCOUNT_STATUS = Object.freeze({ ACTIVE: 'active', NEEDS_REAUTH: 'needs_reauth' });
 
 const tokensSchema = new mongoose.Schema({
@@ -28,18 +28,39 @@ const connectedAccountSchema = new mongoose.Schema({
     displayName: { type: String, default: null },
     avatarUrl: { type: String, default: null },
     followers: { type: Number, default: null },
+    /**
+     * Meta only: the app-scoped user ids Meta may send in its deauthorize / data-deletion callbacks when they
+     * differ from externalId (Instagram Login: the token exchange user_id and /me id, while externalId is the
+     * professional account id). Facebook's externalId already is the app-scoped id.
+     */
+    scopedUserIds: { type: [String], default: undefined },
     /** YouTube only: the channel's uploads playlist. */
     uploadsPlaylistId: { type: String, default: null },
     tokens: { type: tokensSchema, default: () => ({}) },
     status: { type: String, enum: Object.values(ACCOUNT_STATUS), default: ACCOUNT_STATUS.ACTIVE },
     connectedAt: { type: Date, default: Date.now },
+    /** Last sign-in (every connect, also reconnecting the same account): a Meta deletion only covers accounts authorized before it. */
+    authorizedAt: { type: Date, default: undefined },
     lastSyncAt: { type: Date, default: null },
     lastSyncError: { type: String, default: null },
     lastSyncCounts: { type: mongoose.Schema.Types.Mixed, default: null },
+    /**
+     * Set while its data is being deleted (deleteAccountData): the sync stops writing and skips it. Once done
+     * the document stays one day as a tombstone holding no platform data (externalId "deleted:<id>"), so a
+     * sync that was mid-flight sees it and takes back what it wrote.
+     */
+    deleting: { type: Boolean, default: undefined },
+    deletedAt: { type: Date, default: undefined },
+    /** Failed attempts to finish a deletion that stopped partway (finishInterruptedDeletions). */
+    deleteAttempts: { type: Number, default: undefined },
 }, { timestamps: true });
 
 connectedAccountSchema.index({ userId: 1, platform: 1, externalId: 1 }, { unique: true });
+connectedAccountSchema.index({ platform: 1, externalId: 1 });
+connectedAccountSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 });
+connectedAccountSchema.index({ deleting: 1, deleteAttempts: 1, updatedAt: 1 }, { sparse: true });
 connectedAccountSchema.index({ status: 1, lastSyncAt: 1 });
+connectedAccountSchema.index({ scopedUserIds: 1 }, { sparse: true });
 
 const readingSchema = new mongoose.Schema({
     at: { type: Date, required: true },
@@ -90,6 +111,32 @@ const oauthStateSchema = new mongoose.Schema({
 });
 oauthStateSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+/**
+ * A data-deletion request Meta sent for one of its users (POST /api/v1/meta/data-deletion). The user checks it
+ * on the public /data-deletion page with the confirmation code, which is the only way to look it up.
+ * One request per Meta user and app (subjectHash), so a repeated callback returns the same code.
+ * metaUserId is kept only while the deletion is pending (so the daily job can finish it) and cleared after.
+ */
+export const META_DELETION_STATUS = Object.freeze({ PENDING: 'pending', COMPLETED: 'completed' });
+const metaDeletionRequestSchema = new mongoose.Schema({
+    confirmationCode: { type: String, required: true, unique: true },
+    /** sha256 of "<platform>:<Meta user id>": finds the earlier request without keeping the raw id. */
+    subjectHash: { type: String, required: true, unique: true },
+    platform: { type: String, enum: ['facebook', 'instagram'], required: true },
+    status: { type: String, enum: Object.values(META_DELETION_STATUS), default: META_DELETION_STATUS.PENDING },
+    metaUserId: { type: String, default: null },
+    requestedAt: { type: Date, required: true },
+    /** The latest callback's time: the deletion covers accounts authorized before it (a reconnect after it is kept). */
+    cutoffAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    /** What was removed, for support: { accounts, posts, readings }. No ids. */
+    counts: { type: mongoose.Schema.Types.Mixed, default: null },
+    attempts: { type: Number, default: 0 },
+}, { timestamps: true });
+metaDeletionRequestSchema.index({ status: 1, attempts: 1, updatedAt: 1 });
+metaDeletionRequestSchema.index({ status: 1, requestedAt: 1 });
+
 export const ConnectedAccount = mongoose.model('ConnectedAccount', connectedAccountSchema);
 export const ConnectedPost = mongoose.model('ConnectedPost', connectedPostSchema);
 export const AccountOAuthState = mongoose.model('AccountOAuthState', oauthStateSchema);
+export const MetaDeletionRequest = mongoose.model('MetaDeletionRequest', metaDeletionRequestSchema);

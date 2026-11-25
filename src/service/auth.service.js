@@ -928,6 +928,17 @@ export const revokeRefreshSession = async (userId, refreshToken) => {
 };
 
 /**
+ * Sign out an admin. Admins keep one stored refresh token (hash, or plaintext from before hashing);
+ * it is cleared when it matches the presented token. Without a token, it is always cleared.
+ */
+export const revokeAdminRefreshToken = async (adminId, refreshToken) => {
+    const filter = refreshToken
+        ? { _id: adminId, refreshToken: { $in: [...sessionHashCandidates(refreshToken), refreshToken] } }
+        : { _id: adminId };
+    await Admin.updateOne(filter, { $set: { refreshToken: null } });
+};
+
+/**
  * Sign out every device except the one presenting this refresh token (after a password change).
  * Without a token (or a non-string one), signs out everywhere.
  */

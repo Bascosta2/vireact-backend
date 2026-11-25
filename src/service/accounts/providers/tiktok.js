@@ -10,6 +10,11 @@ import { env, inSeconds, num, requestJson } from './http.js';
 const AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const API = 'https://open.tiktokapis.com/v2';
 export const TIKTOK_SCOPES = ['user.info.basic', 'user.info.profile', 'user.info.stats', 'video.list'];
+/**
+ * Opt-in only (startConnect with scopes 'publish'; scheduled posting): video.upload sends drafts to the
+ * creator's TikTok inbox, video.publish posts directly (private-only until TikTok audits the app).
+ */
+export const TIKTOK_PUBLISH_SCOPES = ['video.upload', 'video.publish'];
 const VIDEO_FIELDS = 'id,create_time,title,video_description,duration,cover_image_url,share_url,view_count,like_count,comment_count,share_count';
 
 const tokensFrom = (body, now = Date.now()) => ({

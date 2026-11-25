@@ -25,12 +25,13 @@ import earlyAccessRoutes from './route/early-access.route.js';
 import videoRoutes from './route/video.route.js';
 import analyticsRoutes from './route/analytics.route.js';
 import editorRoutes from './route/editor.route.js';
-import accountsRoutes from './route/accounts.route.js';
+import accountsRoutes, { metaRoutes } from './route/accounts.route.js';
+import postsRoutes from './route/posts.route.js';
 import chatRoutes from './route/chat.route.js';
 import profileRoutes from './route/profile.route.js';
 import subscriptionRoutes from './route/subscription.route.js';
 import subscribeRoutes from './route/subscribe.route.js';
-import adminRoutes from './route/admin.routes.js';
+import adminRoutes, { adminAppRoutes } from './route/admin.routes.js';
 import { postClientError } from './controller/client-error.controller.js';
 import libraryRoutes from './route/library.route.js';
 import funnelRoutes from './route/funnel.route.js';
@@ -43,6 +44,7 @@ import ownerRoutes from './route/owner.routes.js';
 import { runResearchIngestWebhook } from './controller/research-ingest.controller.js';
 import { runLearningWebhook } from './controller/learning.controller.js';
 import { runEditJobWebhook } from './controller/editor.controller.js';
+import { runPublishWebhook } from './controller/posts.controller.js';
 
 const app = express();
 
@@ -136,6 +138,14 @@ app.post(
     express.raw({ type: 'application/json' }),
     verifyQStashAndParseBody,
     runEditJobWebhook
+);
+
+// QStash scheduled-post pass (signed; posts are only created behind PUBLISHING_ENABLED / PUBLISHING_BETA_EMAILS)
+app.post(
+    '/api/v1/posts/jobs/run',
+    express.raw({ type: '*/*' }),
+    verifyQStashAndParseBody,
+    runPublishWebhook
 );
 
 // QStash daily research ingest (signed; RESEARCH_INGEST_ENABLED gates it)
@@ -283,9 +293,12 @@ app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/editor', editorRoutes);
 app.use('/api/v1/accounts', accountsRoutes);
+app.use('/api/v1/posts', postsRoutes);
+app.use('/api/v1/meta', metaRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
+app.use('/api/v1/admin-app', adminRateLimit, adminAppRoutes);
 app.use('/api/v1/admin', adminRateLimit, adminRoutes);
 // Private AI response review page (data still needs ADMIN_API_KEY on every request).
 app.use('/admin', adminRateLimit, adminUiRoutes);

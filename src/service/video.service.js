@@ -384,7 +384,26 @@ export const getUserVideoSummariesService = async (userId) => {
     return rows.map(({ rawTranscript, ...v }) => ({ ...v, autoTitle: autoTitleFromTranscript(rawTranscript) }));
 };
 
-export const getUserVideosService = async (userId) => {
+/**
+ * A full video document as its owner may see it on their plan: the same gate the single-video report
+ * applies. Analyses, frame feedback and line rewrites from analyzers the plan does not include
+ * (Advanced Analytics on Free/Premium) are removed; the data stays stored and reappears on Pro.
+ * Stored scripts are left out: the Scripts endpoint unlocks them per plan.
+ */
+export const toPlanVisibleVideo = (video, userPlan) => {
+    const allowed = allowedFeaturesForPlan(userPlan);
+    const fromAllowedAnalyzer = (item) => !item?.sourceFeature || allowed.includes(item.sourceFeature);
+    const { scriptSuggestions, ...rest } = video;
+    return {
+        ...rest,
+        analysis: (video.analysis || []).filter((entry) => allowed.includes(entry?.feature)),
+        timestampFeedback: (video.timestampFeedback || []).filter(fromAllowedAnalyzer),
+        scriptRewrites: (video.scriptRewrites || []).filter(fromAllowedAnalyzer),
+    };
+};
+
+/** Every video of the user, newest first, with only what `userPlan` may see (see toPlanVisibleVideo). */
+export const getUserVideosService = async (userId, userPlan) => {
     try {
         if (!userId) {
             throw new ApiError(400, 'User ID is required');
@@ -394,7 +413,7 @@ export const getUserVideosService = async (userId) => {
             .sort({ createdAt: -1 })
             .lean();
 
-        return videos;
+        return videos.map((video) => toPlanVisibleVideo(video, userPlan));
     } catch (error) {
         if (error instanceof ApiError) {
             throw error;

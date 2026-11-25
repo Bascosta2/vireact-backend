@@ -1,17 +1,20 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import mongoose from 'mongoose';
 
 process.env.NODE_ENV = 'test';
 process.env.LEARNING_READ_CONTENT = 'false';
 console.warn = () => {};
 console.log = () => {};
 
-const { connectTestDb, disconnectTestDb } = await import('./helpers/test-db.js');
+const { connectTestDb, disconnectTestDb, fakeRes } = await import('./helpers/test-db.js');
 const { User } = await import('../src/model/user.model.js');
 const { Video } = await import('../src/model/video.model.js');
-const { OutcomeSnapshot } = await import('../src/model/learning.model.js');
-const { ConnectedAccount, ConnectedPost, AccountOAuthState } = await import('../src/model/connected-account.model.js');
+const { OutcomeSnapshot, VideoFeatures } = await import('../src/model/learning.model.js');
+const { ConnectedAccount, ConnectedPost, AccountOAuthState, MetaDeletionRequest } = await import('../src/model/connected-account.model.js');
+const Meta = await import('../src/service/accounts/meta-data-deletion.js');
+const AccountsController = await import('../src/controller/accounts.controller.js');
 const A = await import('../src/service/accounts/accounts.service.js');
 const { encryptToken, decryptToken, tokenKey } = await import('../src/service/accounts/token-crypto.js');
 const { isoDurationSec } = await import('../src/service/accounts/providers/youtube.js');
@@ -28,12 +31,15 @@ const ENV = {
     INSTAGRAM_APP_ID: 'ig-id', INSTAGRAM_APP_SECRET: 'ig-secret',
 };
 
+// Provider and Meta callback tests need no database: the hooks only connect when DB_URL is set.
+const HAS_DB = Boolean(process.env.DB_URL);
 before(async () => {
+    if (!HAS_DB) return;
     Object.assign(process.env, { ACCOUNTS_TOKEN_KEY: ENV.ACCOUNTS_TOKEN_KEY });
     await connectTestDb();
-    await Promise.all([ConnectedAccount, ConnectedPost, AccountOAuthState, Video, OutcomeSnapshot].map((m) => m.syncIndexes()));
+    await Promise.all([ConnectedAccount, ConnectedPost, AccountOAuthState, MetaDeletionRequest, Video, OutcomeSnapshot].map((m) => m.syncIndexes()));
 });
-after(disconnectTestDb);
+after(async () => { if (HAS_DB) await disconnectTestDb(); });
 
 /** Fake platform: answers by URL; records every request. */
 const fakeFetch = (routes) => {
@@ -72,9 +78,9 @@ test('token encryption round-trips, rejects tampering, and needs a 32-byte key',
 });
 
 test('platforms are only offered when their keys, the token key and the callback base exist; beta gate', () => {
-    assert.deepEqual(A.platformStatus(ENV).map((p) => p.configured), [true, true, true]);
-    assert.deepEqual(A.platformStatus({ ...ENV, ACCOUNTS_TOKEN_KEY: '' }).map((p) => p.configured), [false, false, false]);
-    assert.deepEqual(A.platformStatus({ ...ENV, YOUTUBE_CLIENT_SECRET: '' }).map((p) => p.configured), [true, false, true]);
+    assert.deepEqual(A.platformStatus(ENV).map((p) => p.configured), [true, true, true, false]);
+    assert.deepEqual(A.platformStatus({ ...ENV, ACCOUNTS_TOKEN_KEY: '' }).map((p) => p.configured), [false, false, false, false]);
+    assert.deepEqual(A.platformStatus({ ...ENV, YOUTUBE_CLIENT_SECRET: '' }).map((p) => p.configured), [true, false, true, false]);
     const saved = { e: process.env.ACCOUNTS_ENABLED, b: process.env.ACCOUNTS_BETA_EMAILS };
     process.env.ACCOUNTS_ENABLED = '';
     process.env.ACCOUNTS_BETA_EMAILS = 'Owner@Example.com';
@@ -268,4 +274,528 @@ test('callback with a denied sign-in or a bad state goes back to the tab with th
     const state = new URL(url).searchParams.get('state');
     assert.match(await A.finishConnect('youtube', { state, error: 'access_denied' }, { env: ENV }), /error=denied/);
     await assert.rejects(A.startConnect(user._id, 'youtube', { env: { ...ENV, YOUTUBE_CLIENT_ID: '' } }), /not available yet/);
+});
+
+test('Facebook provider: Page videos and Reels parse into the shared post shape (no database needed)', async () => {
+    const F = await import('../src/service/accounts/providers/facebook.js');
+    const scope = new URL(F.facebook.authUrl({ state: 's', redirectUri: 'https://api.example.test/cb', env: { FACEBOOK_APP_ID: 'fb-id' } })).searchParams.get('scope');
+    assert.equal(scope, 'pages_show_list,pages_read_engagement,read_insights', 'read-only scopes, no publishing');
+    assert.equal(F.facebook.isConfigured({}), false);
+    assert.equal(F.facebook.isConfigured({ FACEBOOK_APP_ID: 'a', FACEBOOK_APP_SECRET: 'b' }), true);
+
+    const fetchImpl = fakeFetch([
+        ['/oauth/access_token?client_id', { access_token: 'short' }],
+        ['fb_exchange_token', { access_token: 'long', expires_in: 5184000 }],
+        ['/me/permissions', { data: [{ permission: 'pages_show_list', status: 'granted' }, { permission: 'read_insights', status: 'declined' }] }],
+        ['/me/accounts', { data: [{ id: 'p1', name: 'My Page', access_token: 'page-token', followers_count: 900, picture: { data: { url: 'https://img.test/p.jpg' } } }, { id: 'p2', name: 'No token' }] }],
+        ['/me?fields', { id: '77', name: 'Owner' }],
+        ['/p1/video_reels?', { data: [{ id: 'r1', description: 'a reel', created_time: '2026-11-01T10:00:00+0000', length: 14.5, permalink_url: '/reel/r1', likes: { summary: { total_count: 40 } }, comments: { summary: { total_count: 3 } } }] }],
+        ['/p1/videos?', { data: [{ id: 'r1', length: 14.5 }, { id: 'v1', created_time: '2026-10-01T10:00:00+0000', length: 62, permalink_url: 'https://www.facebook.com/p1/videos/v1', shares: { count: 5 } }] }],
+        ['/r1/video_insights', { data: [{ name: 'fb_reels_total_plays', values: [{ value: 5000 }] }, { name: 'post_impressions_unique', values: [{ value: 3100 }] }, { name: 'post_video_avg_time_watched', values: [{ value: 6400 }] }, { name: 'post_video_retention_graph', values: [{ value: { 1: 100, 2: 80.04, 3: 55 } }] }, { name: 'post_video_social_actions', values: [{ value: { comment: 3, share: 9 } }] }] }],
+        ['/v1/video_insights', { data: [{ name: 'total_video_views', values: [{ value: 800 }] }] }],
+    ]);
+    const tokens = await F.facebook.exchangeCode({ code: 'c', redirectUri: 'https://api.example.test/cb', env: { FACEBOOK_APP_ID: 'a', FACEBOOK_APP_SECRET: 'b' }, fetchImpl });
+    assert.equal(tokens.access, 'long');
+    assert.deepEqual(tokens.scopes, ['pages_show_list']);
+    const profile = await F.facebook.profile({ access: 'long', fetchImpl });
+    assert.deepEqual([profile.externalId, profile.displayName, profile.followers], ['77', 'My Page', 900]);
+    const posts = await F.facebook.listPosts({ access: 'long', fetchImpl });
+    assert.equal(posts.length, 2, 'the Reel listed on both edges counts once');
+    const reel = posts.find((p) => p.externalId === 'r1');
+    assert.deepEqual([reel.mediaType, reel.url, reel.durationSec], ['reel', 'https://www.facebook.com/reel/r1', 14.5]);
+    assert.deepEqual([reel.stats.views, reel.stats.reach, reel.stats.avgWatchSec, reel.stats.shares, reel.stats.likes], [5000, 3100, 6.4, 9, 40]);
+    assert.deepEqual(reel.retention, [100, 80, 55]);
+    const video = posts.find((p) => p.externalId === 'v1');
+    assert.deepEqual([video.mediaType, video.stats.views, video.stats.shares, video.stats.avgWatchSec ?? null], ['video', 800, 5, null]);
+    assert.ok(fetchImpl.calls.filter((c) => c.url.includes('video_insights')).every((c) => c.url.includes('access_token=page-token')), 'insights use the Page token');
+});
+
+test('Facebook provider: login-gone answers (code 190, code 10 with a session subcode) ask the user to reconnect', async () => {
+    const F = await import('../src/service/accounts/providers/facebook.js');
+    const answer = (error) => fakeFetch([['/me?fields', { __status: 400, __body: { error } }]]);
+    for (const error of [{ message: 'The user has logged out', type: 'OAuthException', code: 190, error_subcode: 467 }, { message: 'x', code: 10, error_subcode: 460 }, { message: 'y', code: 190 }]) {
+        await assert.rejects(F.facebook.profile({ access: 't', fetchImpl: answer(error) }), (e) => e.reauth === true);
+    }
+    await assert.rejects(F.facebook.profile({ access: 't', fetchImpl: answer({ message: 'Permission denied', code: 10, error_subcode: 1 }) }), (e) => !e.reauth);
+});
+
+// ---- Meta data deletion / deauthorize callbacks
+
+const META_ENV = { FACEBOOK_APP_SECRET: 'fb-app-secret', INSTAGRAM_APP_SECRET: 'ig-app-secret', FRONTEND_URL: 'https://app.example.test/' };
+const b64u = (x) => Buffer.from(x).toString('base64url');
+/** A signed_request as Meta builds it: base64url(HMAC-SHA256(encoded payload)) + '.' + base64url(JSON). */
+const signedRequest = (payload, secret) => {
+    const encoded = b64u(JSON.stringify(payload));
+    return `${crypto.createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}`;
+};
+const metaPayload = (userId = '1029384756', extra = {}) => ({ algorithm: 'HMAC-SHA256', expires: 1291840400, issued_at: 1291836800, user_id: userId, ...extra });
+
+/** Runs fn with properties swapped for fakes (process.env keys, model statics), always restoring them. */
+const withStubs = async (stubs, fn) => {
+    const saved = stubs.map(([obj, key]) => [obj, key, Object.hasOwn(obj, key), obj[key]]);
+    try {
+        for (const [obj, key, value] of stubs) {
+            if (value === undefined) delete obj[key];
+            else obj[key] = value;
+        }
+        return await fn();
+    } finally {
+        for (const [obj, key, own, value] of saved) {
+            if (own) obj[key] = value;
+            else delete obj[key];
+        }
+    }
+};
+/** A mongoose-like query: chainable, awaitable, .lean(). */
+const query = (value) => {
+    const q = { select: () => q, sort: () => q, limit: () => q, lean: async () => value, then: (ok, fail) => Promise.resolve(value).then(ok, fail) };
+    return q;
+};
+/** In-memory MetaDeletionRequest store (findOne by subjectHash / confirmationCode, create, save). */
+const fakeDeletionStore = () => {
+    const docs = [];
+    const wrap = (d) => Object.assign(d, { save: async () => d });
+    return {
+        docs,
+        stubs: [
+            [MetaDeletionRequest, 'findOne', (filter) => query(docs.find((d) => Object.entries(filter).every(([k, v]) => d[k] === v)) ?? null)],
+            [MetaDeletionRequest, 'create', async (fields) => {
+                const d = wrap({ status: 'pending', completedAt: null, attempts: 0, counts: null, ...fields });
+                docs.push(d);
+                return d;
+            }],
+            [MetaDeletionRequest, 'find', (filter) => query(docs.filter((d) => d.status === filter.status && d.metaUserId != null))],
+        ],
+    };
+};
+
+test('Meta signed_request: verified with either app secret, timing-safe; bad signature, algorithm or encoding is refused', () => {
+    const fb = Meta.parseSignedRequest(signedRequest(metaPayload(), META_ENV.FACEBOOK_APP_SECRET), META_ENV);
+    assert.deepEqual(fb, { ok: true, platform: 'facebook', userId: '1029384756' });
+    const ig = Meta.parseSignedRequest(signedRequest(metaPayload(17841400000000), META_ENV.INSTAGRAM_APP_SECRET), META_ENV);
+    assert.deepEqual(ig, { ok: true, platform: 'instagram', userId: '17841400000000' }, 'Instagram Login callbacks use the separate Instagram secret; numeric ids read as strings');
+
+    const reason = (sr, env = META_ENV) => Meta.parseSignedRequest(sr, env).reason;
+    assert.equal(reason(signedRequest(metaPayload(), META_ENV.FACEBOOK_APP_SECRET), { INSTAGRAM_APP_SECRET: 'ig-app-secret' }), 'bad_signature', 'only configured secrets count');
+    assert.equal(reason(signedRequest(metaPayload(), 'someone-else')), 'bad_signature');
+    const [sig] = signedRequest(metaPayload('1'), META_ENV.FACEBOOK_APP_SECRET).split('.');
+    assert.equal(reason(`${sig}.${b64u(JSON.stringify(metaPayload('2')))}`), 'bad_signature', 'a payload swapped under a valid signature');
+    assert.equal(reason(signedRequest(metaPayload('1', { algorithm: 'HMAC-SHA1' }), META_ENV.FACEBOOK_APP_SECRET)), 'bad_algorithm');
+    assert.equal(reason(signedRequest(metaPayload('1', { algorithm: 'hmac-sha256' }), META_ENV.FACEBOOK_APP_SECRET)), 'bad_algorithm');
+    assert.equal(reason(signedRequest({ user_id: '1' }, META_ENV.FACEBOOK_APP_SECRET)), 'bad_algorithm');
+    assert.equal(reason(signedRequest(metaPayload('abc'), META_ENV.FACEBOOK_APP_SECRET)), 'no_user');
+    assert.equal(reason(signedRequest({ algorithm: 'HMAC-SHA256' }, META_ENV.FACEBOOK_APP_SECRET)), 'no_user');
+    const notJson = b64u('not json');
+    assert.equal(reason(`${crypto.createHmac('sha256', META_ENV.FACEBOOK_APP_SECRET).update(notJson).digest('base64url')}.${notJson}`), 'malformed');
+    for (const bad of [undefined, null, '', 42, ['a.b'], 'no-dot', 'a.b.c', 'ab$c.ZGVm', `${sig}.ab+/cd`, `${b64u('short')}.${b64u('{}')}`, `${sig}.`, `.${b64u('{}')}`, `${sig}.${'A'.repeat(9000)}`]) {
+        assert.equal(reason(bad), 'malformed', `refused: ${String(bad).slice(0, 30)}`);
+    }
+    assert.equal(reason(signedRequest(metaPayload(), 'x'), {}), 'not_configured');
+    assert.equal(reason(signedRequest(metaPayload(), 'x'), { FACEBOOK_APP_SECRET: '  ', INSTAGRAM_APP_SECRET: '' }), 'not_configured');
+});
+
+test('Meta data deletion: Meta gets { url, confirmation_code }; the status page gets only { status, completedAt? }', async () => {
+    const code = 'a'.repeat(32);
+    assert.deepEqual(Meta.deletionResponse(code, META_ENV), { url: `https://app.example.test/data-deletion?code=${code}`, confirmation_code: code });
+    const pending = { status: 'pending', completedAt: null, platform: 'instagram', metaUserId: '17', confirmationCode: code, counts: null };
+    assert.deepEqual(Meta.toPublicDeletionStatus(pending), { status: 'pending' });
+    const at = new Date('2026-11-24T10:00:00Z');
+    assert.deepEqual(Meta.toPublicDeletionStatus({ ...pending, status: 'completed', completedAt: at, metaUserId: null, counts: { accounts: 1 } }), { status: 'completed', completedAt: at });
+    await withStubs([[MetaDeletionRequest, 'findOne', () => { throw new Error('no lookup for a malformed code'); }]], async () => {
+        for (const bad of ['', 'short', 'g'.repeat(32), `${code}x`, '../../etc', undefined]) assert.equal(await Meta.getMetaDeletionStatus(bad), null);
+    });
+});
+
+test('Instagram sign-in keeps the app-scoped ids Meta sends in its callbacks', async () => {
+    const { instagram } = await import('../src/service/accounts/providers/instagram.js');
+    const fetchImpl = fakeFetch([
+        ['api.instagram.com/oauth/access_token', { access_token: 'short', user_id: 9001, permissions: 'instagram_business_basic' }],
+        ['ig_exchange_token', { access_token: 'long', expires_in: 5184000 }],
+        ['/me?fields', { id: '9001', user_id: '17841400000000', username: 'reelmaker' }],
+    ]);
+    const tokens = await instagram.exchangeCode({ code: 'c', redirectUri: 'https://api.example.test/cb', env: ENV, fetchImpl });
+    assert.equal(tokens.scopedUserId, '9001');
+    const profile = await instagram.profile({ access: 'long', env: ENV, fetchImpl });
+    assert.deepEqual([profile.externalId, profile.scopedUserId], ['17841400000000', '9001'], 'media calls use the professional id; callbacks carry the app-scoped one');
+});
+
+/** Evaluates the small filter language the Meta lookups use, against fake accounts. */
+const matchesFilter = (doc, filter) => Object.entries(filter).every(([k, v]) => {
+    if (k === '$or') return v.some((f) => matchesFilter(doc, f));
+    if (k === '$and') return v.every((f) => matchesFilter(doc, f));
+    const op = v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v);
+    if (op && '$ne' in v) return doc[k] !== v.$ne;
+    if (op && '$lte' in v) return doc[k] != null && new Date(doc[k]) <= v.$lte;
+    if (v === null) return doc[k] == null;
+    if (Array.isArray(doc[k])) return doc[k].includes(v);
+    return doc[k] === v;
+});
+
+test('Meta lookups stay on the signing platform: a Facebook id never matches Instagram ids, and back', () => {
+    const accounts = [
+        { platform: 'instagram', externalId: '17841400000000', scopedUserIds: ['9001'] },
+        { platform: 'facebook', externalId: '9001' },
+        { platform: 'tiktok', externalId: '9001' },
+    ];
+    const found = (platform, id) => accounts.filter((a) => matchesFilter(a, Meta.metaAccountFilter(platform, id))).map((a) => a.platform);
+    assert.deepEqual(found('instagram', '9001'), ['instagram'], 'Instagram: by app-scoped id');
+    assert.deepEqual(found('instagram', '17841400000000'), ['instagram'], 'Instagram: by professional id');
+    assert.deepEqual(found('facebook', '9001'), ['facebook']);
+    assert.deepEqual(found('facebook', '17841400000000'), [], 'a Facebook-signed id is not looked up among Instagram ids');
+    assert.deepEqual(Meta.metaAccountFilter('facebook', '9001'), { platform: 'facebook', externalId: '9001' });
+    assert.throws(() => Meta.metaAccountFilter('tiktok', '9001'));
+});
+
+test('Meta data deletion callback: off by default, verified, deletes exactly what Meta sent, same code on repeat', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    const igId = new mongoose.Types.ObjectId();
+    const fbId = new mongoose.Types.ObjectId();
+    const postedAt = new Date('2026-10-01T12:00:00Z');
+    const typedDate = new Date('2026-09-30T08:00:00Z');
+    // Linked upload, copied after tagging: the record says Instagram filled the link and platform; the date was typed.
+    const linked = new Video({
+        filename: 'mine.mp4', fileSize: 10, uploader_id: userId, postUrl: 'https://www.instagram.com/reel/m1/', postedAt: typedDate, creatorPlatform: 'instagram',
+        performanceSnapshots: [
+            { capturedAt: new Date('2026-10-02T12:00:00Z'), views: 500, source: 'manual' },
+            { capturedAt: new Date('2026-10-03T12:00:00Z'), views: 12000, source: 'instagram', accountId: igId },
+        ],
+        connectedCopies: [{ accountId: igId, platform: 'instagram', fields: ['postUrl', 'creatorPlatform'] }],
+    });
+    // Older copy (no tags, no record), on an upload no longer linked: recognised by source and the post's values.
+    const legacy = new Video({
+        filename: 'old.mp4', fileSize: 10, uploader_id: userId, postUrl: 'https://www.instagram.com/reel/m0/', postedAt, creatorFollowers: 3400, creatorPlatform: 'instagram',
+        performanceSnapshots: [{ capturedAt: new Date('2026-09-02T12:00:00Z'), views: 800, source: 'instagram' }],
+    });
+    const videos = new Map([[String(linked._id), linked], [String(legacy._id), legacy]]);
+    for (const v of videos.values()) v.save = async () => v;
+    const accounts = [
+        { _id: igId, userId, platform: 'instagram', externalId: '17841400000000', scopedUserIds: ['9001'], followers: 3400, connectedAt: new Date('2026-01-01') },
+        { _id: fbId, userId, platform: 'facebook', externalId: '9001', followers: 10, connectedAt: new Date('2026-01-01') },
+    ];
+    const calls = { accountWrites: [], postDelete: [], outcomeDelete: [] };
+    const store = fakeDeletionStore();
+    const callback = async (body) => {
+        const res = fakeRes();
+        await AccountsController.metaDataDeletion({ body }, res);
+        return res;
+    };
+    const stubs = [
+        ...store.stubs,
+        [process.env, 'META_DATA_DELETION_ENABLED', 'true'],
+        [process.env, 'FACEBOOK_APP_SECRET', META_ENV.FACEBOOK_APP_SECRET],
+        [process.env, 'INSTAGRAM_APP_SECRET', META_ENV.INSTAGRAM_APP_SECRET],
+        [process.env, 'FRONTEND_URL', META_ENV.FRONTEND_URL],
+        [ConnectedAccount, 'find', (filter) => query(accounts.filter((a) => !a.gone && matchesFilter(a, filter)))],
+        [ConnectedAccount, 'exists', async () => null],
+        [ConnectedAccount, 'updateOne', async (filter, update) => { calls.accountWrites.push(['update', filter, update]); return {}; }],
+        [ConnectedAccount, 'replaceOne', async (filter, doc) => {
+            calls.accountWrites.push(['replace', filter, doc]);
+            accounts.find((a) => String(a._id) === String(filter._id)).gone = true;
+            return {};
+        }],
+        [ConnectedPost, 'find', (filter) => query(String(filter.accountId) === String(igId)
+            ? [{ videoId: linked._id, url: 'https://www.instagram.com/reel/m1/', postedAt }, { videoId: null, url: 'https://www.instagram.com/reel/m0/', postedAt }]
+            : [])],
+        [ConnectedPost, 'deleteMany', async (filter) => { calls.postDelete.push(filter); return { deletedCount: 2 }; }],
+        [Video, 'find', () => query([...videos.values()].map((v) => ({ _id: v._id })))],
+        [Video, 'findOne', async (filter) => {
+            const v = videos.get(String(filter._id));
+            return v && String(filter.uploader_id) === String(userId) ? v : null;
+        }],
+        [OutcomeSnapshot, 'deleteMany', async (filter) => { calls.outcomeDelete.push(filter); return {}; }],
+        [OutcomeSnapshot, 'bulkWrite', async () => ({})],
+        [VideoFeatures, 'updateOne', async () => ({})],
+    ];
+    await withStubs(stubs, async () => {
+        const request = signedRequest(metaPayload('9001'), META_ENV.INSTAGRAM_APP_SECRET);
+        await withStubs([[process.env, 'META_DATA_DELETION_ENABLED', undefined]], async () => {
+            await assert.rejects(callback({ signed_request: request }), (e) => e.statusCode === 404, 'flag off: no callback');
+        });
+        await assert.rejects(callback({ signed_request: signedRequest(metaPayload('9001'), 'forged') }), (e) => e.statusCode === 400);
+        await assert.rejects(callback({}), (e) => e.statusCode === 400);
+        await withStubs([[process.env, 'FACEBOOK_APP_SECRET', undefined], [process.env, 'INSTAGRAM_APP_SECRET', undefined]], async () => {
+            await assert.rejects(callback({ signed_request: request }), (e) => e.statusCode === 503);
+        });
+        assert.equal(store.docs.length, 0, 'nothing recorded for a refused callback');
+
+        const first = await callback({ signed_request: request });
+        assert.equal(first.statusCode, 200);
+        assert.deepEqual(Object.keys(first.body).sort(), ['confirmation_code', 'url']);
+        const code = first.body.confirmation_code;
+        assert.match(code, /^[a-f0-9]{32}$/);
+        assert.equal(first.body.url, `https://app.example.test/data-deletion?code=${code}`);
+
+        assert.deepEqual(linked.performanceSnapshots.map((x) => x.source), ['manual'], 'Instagram readings go, the typed entry stays');
+        assert.equal(linked.actualViews, 500);
+        assert.deepEqual([linked.postUrl, linked.creatorPlatform], [null, null], 'fields recorded as copied are cleared');
+        assert.equal(linked.postedAt.getTime(), typedDate.getTime(), 'the date the user typed stays');
+        assert.equal(linked.connectedCopies, undefined);
+        assert.deepEqual(legacy.performanceSnapshots.map((x) => x.source), [], 'older untagged Instagram readings go too');
+        assert.deepEqual([legacy.postUrl, legacy.postedAt, legacy.creatorFollowers], [null, null, null], 'older copies: link, date and followers matching the account are cleared');
+        assert.equal(legacy.creatorPlatform, 'instagram', 'documented residue: a platform name from an older copy stays');
+        assert.equal(calls.outcomeDelete.length >= 2, true, 'learning copies of removed readings are removed');
+        assert.deepEqual(calls.postDelete, [{ accountId: igId }]);
+        assert.deepEqual(calls.accountWrites[0], ['update', { _id: igId }, { $set: { deleting: true } }], 'marked deleting before anything is removed');
+        const [, , tomb] = calls.accountWrites.find(([kind]) => kind === 'replace');
+        assert.deepEqual(Object.keys(tomb).sort(), ['deletedAt', 'deleting', 'externalId', 'platform', 'userId'], 'the tombstone holds no Instagram data');
+        assert.equal(tomb.externalId, `deleted:${igId}`);
+        assert.equal(accounts[1].gone, undefined, 'the Facebook account with the same number is untouched');
+        const [doc] = store.docs;
+        assert.deepEqual([doc.status, doc.platform, doc.metaUserId, doc.counts], ['completed', 'instagram', null, { accounts: 1, posts: 2, readings: 2 }]);
+        assert.equal(JSON.stringify(doc).includes('9001'), false, 'the Meta user id is not kept once done');
+
+        const again = await callback({ signed_request: request });
+        assert.deepEqual(again.body, first.body, 'a repeated callback gets the same code');
+        assert.equal(store.docs.length, 1);
+
+        const statusRes = fakeRes();
+        statusRes.set = () => statusRes;
+        await AccountsController.metaDataDeletionStatus({ params: { code } }, statusRes);
+        assert.deepEqual(Object.keys(statusRes.body).sort(), ['completedAt', 'status']);
+        assert.equal(statusRes.body.status, 'completed');
+        await withStubs([[process.env, 'META_DATA_DELETION_ENABLED', undefined]], async () => {
+            const offRes = fakeRes();
+            offRes.set = () => offRes;
+            await AccountsController.metaDataDeletionStatus({ params: { code } }, offRes);
+            assert.equal(offRes.body.status, 'completed', 'the status lookup works with the flag off');
+        });
+        const missing = fakeRes();
+        missing.set = () => missing;
+        await assert.rejects(AccountsController.metaDataDeletionStatus({ params: { code: 'b'.repeat(32) } }, missing), (e) => e.statusCode === 404);
+    });
+});
+
+test('Meta data deletion that fails stays pending, is reported once after 3 tries without ids, and least-tried goes first', async () => {
+    const store = fakeDeletionStore();
+    let down = true;
+    const log = [];
+    const reports = [];
+    const report = (e) => reports.push(e.message);
+    let sortUsed = null;
+    await withStubs([
+        ...store.stubs,
+        [MetaDeletionRequest, 'find', (filter) => {
+            const q = query(store.docs.filter((d) => d.status === filter.status && d.metaUserId != null));
+            q.sort = (spec) => { sortUsed = spec; return q; };
+            return q;
+        }],
+        [ConnectedAccount, 'find', () => { if (down) throw new Error('db hiccup for user 4242'); return query([]); }],
+    ], async () => {
+        const body = await Meta.requestMetaDataDeletion({ platform: 'facebook', userId: '4242' }, { env: META_ENV, log: (l) => log.push(l), report });
+        assert.match(body.confirmation_code, /^[a-f0-9]{32}$/);
+        assert.deepEqual([store.docs[0].status, store.docs[0].metaUserId], ['pending', '4242'], 'kept for the retry');
+        assert.deepEqual(await Meta.getMetaDeletionStatus(body.confirmation_code), { status: 'pending' });
+        for (let i = 0; i < 3; i++) await Meta.finishPendingMetaDeletions({ log: (l) => log.push(l), report });
+        assert.deepEqual(sortUsed, { attempts: 1, updatedAt: 1 });
+        assert.equal(store.docs[0].attempts, 4);
+        assert.equal(reports.length, 1, 'reported once, at the third failure');
+        assert.equal(/4242|hiccup/.test(reports[0]), false, 'the report carries no id and no error text');
+        down = false;
+        assert.deepEqual(await Meta.finishPendingMetaDeletions({ log: (l) => log.push(l), report }), { pending: 1, completed: 1 });
+        assert.deepEqual([store.docs[0].status, store.docs[0].metaUserId], ['completed', null]);
+    });
+});
+
+test('Meta deauthorize callback: only the signing platform, accounts need reconnecting, dead tokens wiped, nothing deleted', async () => {
+    const updates = [];
+    let deleted = 0;
+    await withStubs([
+        [process.env, 'META_DATA_DELETION_ENABLED', 'true'],
+        [process.env, 'FACEBOOK_APP_SECRET', META_ENV.FACEBOOK_APP_SECRET],
+        [process.env, 'INSTAGRAM_APP_SECRET', undefined],
+        [ConnectedAccount, 'updateMany', async (filter, update) => { updates.push([filter, update]); return { modifiedCount: 1 }; }],
+        [ConnectedAccount, 'deleteOne', async () => { deleted += 1; }],
+        [ConnectedAccount, 'replaceOne', async () => { deleted += 1; }],
+        [ConnectedPost, 'deleteMany', async () => { deleted += 1; }],
+    ], async () => {
+        const res = fakeRes();
+        await AccountsController.metaDeauthorize({ body: { signed_request: signedRequest(metaPayload('555'), META_ENV.FACEBOOK_APP_SECRET) } }, res);
+        assert.equal(res.statusCode, 200);
+        const [[filter, update]] = updates;
+        assert.deepEqual(filter, { platform: 'facebook', externalId: '555', deleting: { $ne: true } }, 'a Facebook-signed id only touches Facebook accounts');
+        assert.equal(update.$set.status, 'needs_reauth');
+        assert.equal(update.$set['tokens.access'], null);
+        assert.equal(deleted, 0);
+        await assert.rejects(AccountsController.metaDeauthorize({ body: { signed_request: signedRequest(metaPayload('555'), META_ENV.INSTAGRAM_APP_SECRET) } }, fakeRes()), (e) => e.statusCode === 400, 'Instagram secret not set here');
+    });
+});
+
+test('connected readings remember what they filled in; a field the user edits is theirs from then on', async () => {
+    const P = await import('../src/service/performance.service.js');
+    const userId = new mongoose.Types.ObjectId();
+    const accountId = new mongoose.Types.ObjectId();
+    const video = new Video({ filename: 'a.mp4', fileSize: 1, uploader_id: userId, creatorFollowers: 99 });
+    video.save = async () => video;
+    await withStubs([
+        [Video, 'findOne', async () => video],
+        [OutcomeSnapshot, 'deleteMany', async () => ({})],
+        [OutcomeSnapshot, 'bulkWrite', async () => ({})],
+        [VideoFeatures, 'updateOne', async () => ({})],
+    ], async () => {
+        await P.recordConnectedReadings(String(video._id), userId, {
+            source: 'instagram', accountId, postUrl: 'https://www.instagram.com/reel/x/', postedAt: new Date('2026-10-01T00:00:00Z'), followers: 5000,
+            readings: [{ capturedAt: new Date('2026-10-02T00:00:00Z'), views: 100 }],
+        });
+        assert.equal(String(video.performanceSnapshots[0].accountId), String(accountId), 'readings are tagged with the account');
+        assert.deepEqual(video.connectedCopies.map((c) => [...c.fields]), [['postUrl', 'postedAt', 'creatorPlatform']], 'followers the user gave are not recorded as copied');
+        await P.setPostDetails(userId, String(video._id), { postUrl: 'https://www.instagram.com/reel/mine/' });
+        assert.deepEqual(video.connectedCopies.map((c) => [...c.fields]), [['postedAt', 'creatorPlatform']]);
+        await P.removeConnectedReadings(String(video._id), userId, { accountId, source: 'instagram' });
+        assert.deepEqual([video.postUrl, video.postedAt, video.creatorPlatform, video.creatorFollowers, video.performanceSnapshots.length],
+            ['https://www.instagram.com/reel/mine/', null, null, 99, 0]);
+    });
+});
+
+test('a sync that overlaps a data deletion stops writing and takes back what it wrote', async () => {
+    const now = Date.UTC(2026, 10, 21, 6);
+    const account = new ConnectedAccount({
+        userId: new mongoose.Types.ObjectId(), platform: 'tiktok', externalId: 'open-1',
+        tokens: { access: encryptToken('tt-access', tokenKey(ENV)), accessExpiresAt: new Date(now + 10 * DAY) },
+    });
+    let saved = 0;
+    account.save = async () => { saved += 1; };
+    let lookups = 0;
+    const writes = [];
+    const fetchImpl = fakeFetch([
+        ['/user/info/', { data: { user: { open_id: 'open-1', username: 'maker', follower_count: 9000 } } }],
+        ['/video/list/', { data: { videos: [{ id: '111', create_time: Math.floor((now - DAY) / 1000), duration: 24, view_count: 4200 }], has_more: false } }],
+    ]);
+    await withStubs([
+        [process.env, 'ACCOUNTS_TOKEN_KEY', ENV.ACCOUNTS_TOKEN_KEY],
+        // First the sync loads the account; by the time it would write, a deletion has marked it.
+        [ConnectedAccount, 'findById', () => { lookups += 1; return query(lookups === 1 ? account : { deleting: true }); }],
+        [ConnectedAccount, 'exists', async () => null],
+        [ConnectedAccount, 'updateOne', async (f, u) => { writes.push(['account', u]); return {}; }],
+        [ConnectedAccount, 'replaceOne', async () => { writes.push(['tombstone']); return {}; }],
+        [ConnectedPost, 'findOne', async () => { throw new Error('no post may be written'); }],
+        [ConnectedPost, 'find', () => query([])],
+        [ConnectedPost, 'deleteMany', async () => { writes.push(['posts']); return { deletedCount: 0 }; }],
+        [Video, 'find', () => query([])],
+    ], async () => {
+        const out = await A.syncAccount(account._id, { env: ENV, fetchImpl, now });
+        assert.equal(out.discarded, true);
+        assert.equal(saved, 0, 'the account is not saved back');
+        assert.deepEqual(writes.map((w) => w[0]), ['account', 'posts', 'tombstone'], 'the deletion is run again, which takes back anything written');
+    });
+    await withStubs([[ConnectedAccount, 'findById', () => query({ deleting: true })]], async () => {
+        await assert.rejects(A.syncAccount(account._id, { env: ENV, fetchImpl, now }), /not found/i, 'an account being deleted is not synced');
+    });
+});
+
+/** Model stubs under deleteAccountData that succeed and record which accounts were tombstoned. */
+const deletionStubs = (tombstoned) => [
+    [ConnectedAccount, 'updateOne', async () => ({})],
+    [ConnectedAccount, 'exists', async () => null],
+    [ConnectedAccount, 'replaceOne', async (filter) => { tombstoned.push(String(filter._id)); return {}; }],
+    [ConnectedPost, 'find', () => query([])],
+    [ConnectedPost, 'deleteMany', async () => ({ deletedCount: 0 })],
+    [Video, 'find', () => query([])],
+];
+
+test('deletions that stopped partway are finished daily, least-tried first, reported once after 3 failures', async () => {
+    const account = { _id: new mongoose.Types.ObjectId(), platform: 'instagram', deleteAttempts: undefined };
+    const seen = {};
+    const reports = [];
+    let failing = true;
+    await withStubs([
+        [ConnectedAccount, 'find', (filter) => {
+            seen.filter = filter;
+            const q = query([account]);
+            q.sort = (spec) => { seen.sort = spec; return q; };
+            return q;
+        }],
+        [ConnectedAccount, 'updateOne', async (filter, update) => { Object.assign(account, update.$set); return {}; }],
+    ], async () => {
+        const remove = async () => { if (failing) throw new Error('db hiccup for 9001'); };
+        for (let i = 0; i < 4; i++) await A.finishInterruptedDeletions({ remove, report: (e) => reports.push(e.message) });
+        assert.deepEqual(seen.filter, { deleting: true, deletedAt: null }, 'any account left deleting without a tombstone');
+        assert.deepEqual(seen.sort, { deleteAttempts: 1, updatedAt: 1 });
+        assert.equal(account.deleteAttempts, 4);
+        assert.equal(reports.length, 1);
+        assert.equal(/9001|hiccup/.test(reports[0]), false, 'no ids, no error text');
+        failing = false;
+        assert.deepEqual(await A.finishInterruptedDeletions({ remove, report: (e) => reports.push(e.message) }), { pending: 1, completed: 1, failed: 0 });
+    });
+});
+
+test('reconnecting an account whose deletion stopped partway finishes it first and never reuses that record', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    const stuck = { _id: new mongoose.Types.ObjectId(), userId, platform: 'instagram', externalId: '17841400000000', deleting: true, followers: 1 };
+    const upserts = [];
+    const fetchImpl = fakeFetch([
+        ['api.instagram.com/oauth/access_token', { access_token: 'short', user_id: 9001 }],
+        ['ig_exchange_token', { access_token: 'long', expires_in: 5184000 }],
+        ['/me?fields', { id: '9001', user_id: '17841400000000', username: 'reelmaker' }],
+    ]);
+    const tombstoned = [];
+    const connect = () => A.finishConnect('instagram', { code: 'c', state: 's' }, { env: ENV, fetchImpl, syncInBackground: false });
+    await withStubs([
+        ...deletionStubs(tombstoned),
+        [process.env, 'ACCOUNTS_TOKEN_KEY', ENV.ACCOUNTS_TOKEN_KEY],
+        [AccountOAuthState, 'findOneAndDelete', async () => ({ userId, platform: 'instagram', codeVerifier: null, expiresAt: new Date(Date.now() + 60_000) })],
+        [ConnectedAccount, 'findOne', async (filter) => (filter.deleting === true && !tombstoned.length ? stuck : null)],
+        [ConnectedAccount, 'findOneAndUpdate', async (filter, update) => { upserts.push([filter, update]); return { _id: new mongoose.Types.ObjectId() }; }],
+    ], async () => {
+        await withStubs([[ConnectedPost, 'find', () => { throw new Error('db hiccup'); }]], async () => {
+            const url = new URL(await connect());
+            assert.equal(url.searchParams.get('error'), 'still_deleting');
+            assert.equal(url.searchParams.get('detail'), A.STILL_DELETING_MESSAGE);
+            assert.equal(upserts.length, 0, 'nothing is connected while the old data is still there');
+        });
+        assert.equal(await connect(), 'https://app.example.test/accounts?connected=instagram');
+        assert.deepEqual(tombstoned, [String(stuck._id)], 'the unfinished deletion was completed first');
+        const [[filter, update]] = upserts;
+        assert.deepEqual(filter.deleting, { $ne: true }, 'a record being deleted is never reused');
+        assert.ok(update.$set.authorizedAt instanceof Date);
+    });
+});
+
+test('a Meta deletion covers accounts authorized before the request; one reconnected afterwards is kept', async () => {
+    const t0 = new Date('2026-11-01T00:00:00Z');
+    const accounts = [
+        { _id: new mongoose.Types.ObjectId(), userId: new mongoose.Types.ObjectId(), platform: 'instagram', externalId: 'a', scopedUserIds: ['9001'], authorizedAt: new Date('2026-10-01') },
+        { _id: new mongoose.Types.ObjectId(), userId: new mongoose.Types.ObjectId(), platform: 'instagram', externalId: 'b', scopedUserIds: ['9001'], connectedAt: new Date('2026-09-01') },
+        { _id: new mongoose.Types.ObjectId(), userId: new mongoose.Types.ObjectId(), platform: 'instagram', externalId: 'c', scopedUserIds: ['9001'], connectedAt: new Date('2026-09-01'), authorizedAt: new Date('2026-11-02') },
+    ];
+    const tombstoned = [];
+    const store = fakeDeletionStore();
+    let down = true;
+    await withStubs([
+        ...deletionStubs(tombstoned),
+        ...store.stubs,
+        [ConnectedAccount, 'find', (filter) => { if (down) throw new Error('db hiccup'); return query(accounts.filter((a) => matchesFilter(a, filter))); }],
+    ], async () => {
+        await Meta.requestMetaDataDeletion({ platform: 'instagram', userId: '9001' }, { env: META_ENV, now: t0.getTime(), log: () => {}, report: () => {} });
+        assert.equal(store.docs[0].cutoffAt.getTime(), t0.getTime());
+        down = false;
+        // The person reconnected account c after asking for deletion; the retry runs later.
+        assert.deepEqual(await Meta.finishPendingMetaDeletions({ now: Date.UTC(2026, 10, 5), report: () => {} }), { pending: 1, completed: 1 });
+        assert.deepEqual(tombstoned.sort(), [String(accounts[0]._id), String(accounts[1]._id)].sort(), 'authorized before the request (or connected before, for older records)');
+        assert.equal(store.docs[0].counts.accounts, 2);
+    });
+});
+
+test('with a database: Meta deletion and disconnect with deleteData remove Meta data and keep the user and uploads', { skip: !HAS_DB }, async () => {
+    const user = await makeUser();
+    const video = await makeVideo(user._id, { duration: 18, createdAt: new Date(Date.now() - 3 * DAY) });
+    await Video.updateOne({ _id: video._id }, { $push: { performanceSnapshots: { $each: [{ capturedAt: new Date(Date.now() - 2 * DAY), views: 10, source: 'manual' }, { capturedAt: new Date(Date.now() - DAY), views: 900, source: 'instagram' }] } } });
+    const ig = await ConnectedAccount.create({ userId: user._id, platform: 'instagram', externalId: '178414', scopedUserIds: ['9001'], tokens: { access: encryptToken('long') } });
+    await ConnectedPost.create({ accountId: ig._id, userId: user._id, platform: 'instagram', externalId: 'm1', videoId: video._id });
+    const tt = await ConnectedAccount.create({ userId: user._id, platform: 'tiktok', externalId: '9001' });
+    const body = await Meta.requestMetaDataDeletion({ platform: 'instagram', userId: '9001' }, { env: META_ENV });
+    const tomb = await ConnectedAccount.findById(ig._id).lean();
+    assert.deepEqual([tomb.deleting, tomb.externalId, tomb.tokens?.access ?? null, tomb.scopedUserIds ?? null], [true, `deleted:${ig._id}`, null, null]);
+    assert.equal((await A.listAccounts(user._id, { env: ENV })).accounts.some((a) => a.id === String(ig._id)), false, 'the tombstone is not listed');
+    assert.equal(await ConnectedPost.countDocuments({ accountId: ig._id }), 0);
+    assert.equal(await ConnectedAccount.countDocuments({ _id: tt._id }), 1, 'a TikTok account with the same number is not Meta data');
+    assert.deepEqual((await Video.findById(video._id).lean()).performanceSnapshots.map((x) => x.source), ['manual']);
+    assert.ok(await User.exists({ _id: user._id }));
+    assert.equal((await Meta.getMetaDeletionStatus(body.confirmation_code)).status, 'completed');
+    await assert.rejects(A.syncAccount(ig._id, { env: ENV, fetchImpl: fakeFetch([]) }), /not found/i, 'a deleted account is never synced again');
+
+    await Video.updateOne({ _id: video._id }, { $push: { performanceSnapshots: { capturedAt: new Date(), views: 50, source: 'tiktok', accountId: tt._id } } });
+    await ConnectedPost.create({ accountId: tt._id, userId: user._id, platform: 'tiktok', externalId: 'v1', videoId: video._id });
+    const out = await A.disconnect(user._id, String(tt._id), { env: ENV, fetchImpl: fakeFetch([]), deleteData: true });
+    assert.equal(out.deleted.readings, 1);
+    assert.deepEqual((await Video.findById(video._id).lean()).performanceSnapshots.map((x) => x.source), ['manual']);
 });
