@@ -95,6 +95,7 @@ const mediaFor = (p, brand = null) => ({
     durationSec: p.source?.durationSec ?? 0,
     skill: p.skill ?? null,
     screenRecordingSec: isEditorFeaturesV2() && p.screenRecording?.proxyKey ? p.screenRecording.durationSec ?? 0 : 0,
+    screenAspect: p.screenRecording?.width && p.screenRecording?.height ? p.screenRecording.width / p.screenRecording.height : 16 / 9,
 });
 
 /**
