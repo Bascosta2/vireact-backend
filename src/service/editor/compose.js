@@ -3,6 +3,7 @@ import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } fro
 import { HOOK_VARIANTS, sanitizeBrand, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
 import { removeRepeats } from './no-repeats.js';
 import { repairWordTimings } from './cut-candidates.js';
+import { applyBeatSwaps } from './storyboard.js';
 
 /**
  * Combine Claude's plan with the creator's review-screen changes into the exact props the Remotion
@@ -127,7 +128,7 @@ export const EDIT_FLAGS = ['keepOriginalOrder', 'captionsOff', 'hookOverlayOff',
  * @param {object} input body from the client
  * @param {{wordCount:number, trackIds:Set<string>}} ctx
  */
-export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() } = {}) {
+export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set(), v2 = false } = {}) {
     const out = {};
     if ('disabledSegments' in input) out.disabledSegments = idList(input.disabledSegments);
     if ('restoredCandidates' in input) out.restoredCandidates = idList(input.restoredCandidates, 1000);
@@ -151,6 +152,8 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() 
         else if (typeof id === 'string' && trackIds.has(id)) out.musicTrackId = id;
     }
     if ('musicVolume' in input && Number.isFinite(Number(input.musicVolume))) out.musicVolume = Math.min(0.6, Math.max(0, Number(input.musicVolume)));
+    // Storyboard review (EDITOR_FEATURES_V2): approval only. Swapped beats are written by the swap endpoint, never by a PATCH.
+    if (v2 && 'storyboardApproved' in input) out.storyboardApproved = bool(input.storyboardApproved);
     if (['fill', 'fit_blur', 'split'].includes(input.framingMode)) out.framingMode = input.framingMode;
     if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
     // Another animation style for an edit made with one (compose ignores it for every other edit).
@@ -246,7 +249,9 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     const ss = sr?.sfx ?? null;
     // The creator's brand sheet (media.brand, only passed when EDITOR_FEATURES_V2 is on) wins over a style's accent.
     const brand = sanitizeBrand(media.brand);
-    const base = withDefaults(rawPlan);
+    const withLayers = withDefaults(rawPlan);
+    // A swapped storyboard beat (EDITOR_FEATURES_V2) replaces that segment's graphics and sounds.
+    const base = media.v2 && edits.beatSwaps ? applyBeatSwaps(withLayers, edits.beatSwaps) : withLayers;
     // An editing skill narrows the plan to its style before anything is placed.
     const plan = sr ? {
         ...base,

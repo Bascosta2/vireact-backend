@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { authenticateToken } from '../middleware/auth.js';
 import {
     requireEditorAccess,
@@ -12,6 +13,7 @@ import {
     getEditProject,
     updateEdits,
     regenerateEdit,
+    swapStoryboardBeat,
     startEditRender,
     getEditRender,
     scoreEditRender,
@@ -20,6 +22,15 @@ import {
 
 /** Editor tab: AI edits of the creator's own footage. The QStash job webhook is mounted in app.js. */
 const editorRoutes = Router();
+
+/** Each swap is a paid planner call: 10 a minute per signed-in user (in-memory, like the other limits). */
+const swapRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    keyGenerator: (req) => String(req.user?._id ?? 'anon'),
+    validate: false,
+    message: { error: 'Too many swaps, try again in a minute' },
+});
 
 editorRoutes.use(authenticateToken);
 
@@ -35,6 +46,7 @@ editorRoutes.get('/projects/:id', getEditProject);
 editorRoutes.post('/projects/:id/uploaded', confirmEditUpload);
 editorRoutes.patch('/projects/:id/edits', updateEdits);
 editorRoutes.post('/projects/:id/regenerate', regenerateEdit);
+editorRoutes.post('/projects/:id/storyboard/swap', swapRateLimit, swapStoryboardBeat);
 editorRoutes.post('/projects/:id/render', startEditRender);
 editorRoutes.get('/projects/:id/render/:renderId', getEditRender);
 editorRoutes.post('/projects/:id/score', scoreEditRender);

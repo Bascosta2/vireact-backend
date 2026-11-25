@@ -253,7 +253,7 @@ export async function planEdit({ project, profile, revision = null }, deps = {})
     const messages = [{ role: 'user', content }];
     if (revision?.previousPlan) {
         messages.push({ role: 'assistant', content: JSON.stringify(toSchemaShape(revision.previousPlan)) });
-        messages.push({ role: 'user', content: `The creator reviewed that edit and asks: "${String(revision.note ?? '').slice(0, 500)}". Return a revised full plan that follows their request and every rule above.` });
+        messages.push({ role: 'user', content: `The creator reviewed that edit and asks: "${String(revision.note ?? '').slice(0, 500)}". Return a revised full plan that follows their request and every rule above.${revision.storyboardNote ? `\n${revision.storyboardNote}` : ''}` });
     }
 
     const ctx = {

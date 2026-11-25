@@ -86,7 +86,7 @@ const editProjectSchema = new mongoose.Schema({
         createdAt: { type: Date, default: Date.now },
     }],
     /** Set while a regeneration is queued, so the job (and a sweeper retry) knows to replan with the note. */
-    pendingRevision: { type: new mongoose.Schema({ note: String, previousPlan: mongoose.Schema.Types.Mixed }, { _id: false }), default: null },
+    pendingRevision: { type: new mongoose.Schema({ note: String, previousPlan: mongoose.Schema.Types.Mixed, keepEdits: mongoose.Schema.Types.Mixed }, { _id: false }), default: null },
     renders: { type: [renderSchema], default: [] },
 
     billing: {
