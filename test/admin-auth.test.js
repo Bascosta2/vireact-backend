@@ -4,6 +4,8 @@ import { isValidAdminKey, adminAuth, ADMIN_RATE_LIMIT } from '../src/middleware/
 import { signup, verifyEmail, login, confirmEmailChange } from '../src/controller/auth.controller.js';
 import { updateProfile, updatePassword } from '../src/controller/profile.controller.js';
 import { maskEmail, buildEmailChangeConfirmEmail, buildEmailChangeNoticeEmail, EMAIL_CHANGE_TTL_MS } from '../src/service/auth.service.js';
+import { createEarlyAccessService } from '../src/service/early-access.service.js';
+import { EarlyAccess } from '../src/model/early-access.model.js';
 import { AUTH_RATE_LIMITS } from '../src/constants.js';
 import crypto from 'node:crypto';
 import { User } from '../src/model/user.model.js';
@@ -555,3 +557,39 @@ test('profile and confirm endpoints are rate limited; unexpected profile errors 
     }
 });
 
+test('early access rejects operator objects and bad formats before any query, and hides internal errors', async () => {
+    const calls = [];
+    const original = { findOne: EarlyAccess.findOne, save: EarlyAccess.prototype.save };
+    EarlyAccess.findOne = async (filter) => { calls.push(filter); return null; };
+    const base = { name: 'Pat', email: 'pat@example.invalid', contentGoalNote: 'grow' };
+    try {
+        for (const body of [
+            { ...base, email: { $regex: '^a' } },
+            { ...base, phone: { $regex: '^\\+1' } },
+            { ...base, phone: ['+15551234567'] },
+            { ...base, email: 'not-an-email' },
+            { ...base, phone: 'call me' },
+            { ...base, name: { $ne: null } },
+        ]) {
+            await assert.rejects(createEarlyAccessService(body), (e) => e.statusCode === 400, JSON.stringify(body));
+        }
+        assert.deepEqual(calls, []);
+
+        EarlyAccess.prototype.save = async function () { return this; };
+        const saved = await createEarlyAccessService({ ...base, email: ' Pat@Example.invalid ', phone: '+1 (555) 123-4567' });
+        assert.equal(saved.email, 'pat@example.invalid');
+        assert.deepEqual(calls, [{ email: 'pat@example.invalid' }, { phone: '+1 (555) 123-4567' }]);
+
+        const quiet = console.error;
+        console.error = () => {};
+        EarlyAccess.prototype.save = async () => { throw new Error('E_INTERNAL: replica set host-7 down'); };
+        try {
+            await assert.rejects(createEarlyAccessService({ ...base, email: 'other@example.invalid' }), (e) => e.statusCode === 500 && e.message === 'Failed to create early access');
+        } finally {
+            console.error = quiet;
+        }
+    } finally {
+        EarlyAccess.findOne = original.findOne;
+        EarlyAccess.prototype.save = original.save;
+    }
+});
