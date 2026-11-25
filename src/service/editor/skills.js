@@ -398,3 +398,32 @@ export const hookLines = (text, maxLine = 24) => {
     }
     return best ? best.lines : [clean];
 };
+
+/**
+ * Brand sheet fonts a creator can pick (EDITOR_FEATURES_V2). Each name is a module of
+ * @remotion/google-fonts that the frontend composition loads (vireact-frontend/src/remotion/brand.ts).
+ */
+export const BRAND_FONTS = Object.freeze([
+    'Anton', 'Archivo Black', 'Bebas Neue', 'DM Sans', 'Inter', 'Lora', 'Manrope', 'Montserrat', 'Oswald', 'Outfit',
+    'Playfair Display', 'Poppins', 'Roboto', 'Space Grotesk', 'Fredoka', 'Bangers',
+]);
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+/** The first invalid field of a brand sheet input (so a save can be refused with its name), or null. */
+export function brandProblem(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return 'brand';
+    for (const key of ['accent', 'secondary']) if (input[key] != null && !HEX.test(String(input[key]))) return key;
+    for (const key of ['displayFont', 'bodyFont']) if (input[key] != null && !BRAND_FONTS.includes(input[key])) return key;
+    const known = new Set(['accent', 'secondary', 'displayFont', 'bodyFont']);
+    return Object.keys(input).find((k) => !known.has(k)) ?? null;
+}
+
+/** Clean brand sheet input: only known fonts and 6-digit hex colors survive; null when nothing is left. */
+export function sanitizeBrand(input) {
+    if (!input || typeof input !== 'object') return null;
+    const out = {};
+    for (const key of ['accent', 'secondary']) if (HEX.test(String(input[key] ?? ''))) out[key] = String(input[key]).toUpperCase();
+    for (const key of ['displayFont', 'bodyFont']) if (BRAND_FONTS.includes(input[key])) out[key] = input[key];
+    return Object.keys(out).length ? out : null;
+}

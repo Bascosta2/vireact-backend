@@ -179,6 +179,16 @@ const userSchema = new mongoose.Schema({
             updatedAt: Date
         }, { _id: false }),
         default: undefined
+    },
+    /** Editor brand sheet (EDITOR_FEATURES_V2): the creator's own colors and fonts, applied to every edit. */
+    editorBrand: {
+        type: new mongoose.Schema({
+            accent: String,
+            secondary: String,
+            displayFont: String,
+            bodyFont: String,
+        }, { _id: false }),
+        default: undefined
     }
 }, { timestamps: true });
 

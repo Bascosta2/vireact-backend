@@ -16,8 +16,9 @@ import { isRenderConfigured, renderProgress, startRender } from '../service/edit
 import { uploadVideoUrlToTwelveLabsService } from '../service/video.service.js';
 import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
-import { hasEditorAccess } from '../config/flags.js';
-import { SKILLS, isSkill } from '../service/editor/skills.js';
+import { hasEditorAccess, isEditorFeaturesV2 } from '../config/flags.js';
+import { User } from '../model/user.model.js';
+import { BRAND_FONTS, SKILLS, brandProblem, isSkill, sanitizeBrand } from '../service/editor/skills.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
@@ -78,7 +79,11 @@ async function soundUrls(props) {
     };
 }
 
-const mediaFor = (p) => ({
+/** The brand sheet reaches the composition only while EDITOR_FEATURES_V2 is on. */
+const brandFor = (user) => (isEditorFeaturesV2() ? user?.editorBrand ?? null : null);
+
+const mediaFor = (p, brand = null) => ({
+    brand,
     words: p.media?.words ?? [],
     silences: p.media?.silences ?? [],
     cutCandidates: p.media?.cutCandidates ?? [],
@@ -106,7 +111,7 @@ const toListItem = async (p) => ({
 });
 
 /** Full detail for the project page (preview props are signed and ready to play). */
-async function toDetail(p) {
+async function toDetail(p, brand = null) {
     const base = await toListItem(p);
     const detail = {
         ...base,
@@ -123,9 +128,9 @@ async function toDetail(p) {
         words: [],
     };
     if (p.status === EDIT_STATUS.READY && p.plan) {
-        const props = buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p));
+        const props = buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p, brand));
         // Counts with every layer switched on, so a toggle stays visible after it is turned off.
-        const full = buildRenderProps(p.plan, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false }, mediaFor(p));
+        const full = buildRenderProps(p.plan, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false }, mediaFor(p, brand));
         detail.plan = {
             summary: p.plan.summary,
             hookStrategy: p.plan.hookStrategy,
@@ -248,6 +253,25 @@ export const confirmEditUpload = async (req, res, next) => {
     }
 };
 
+/** Brand sheet (EDITOR_FEATURES_V2): the creator's colors and fonts. */
+export const getBrand = (req, res, next) => {
+    if (!isEditorFeaturesV2()) return next(new ApiError(404, 'Not found'));
+    ok(res, 'Brand sheet', { brand: req.user.editorBrand ?? null, fonts: BRAND_FONTS });
+};
+
+export const saveBrand = async (req, res, next) => {
+    try {
+        if (!isEditorFeaturesV2()) throw new ApiError(404, 'Not found');
+        const bad = req.body?.brand === null ? null : brandProblem(req.body?.brand);
+        if (bad) throw new ApiError(400, `Your brand sheet has an invalid "${bad}": use a color like #FF5A36 and one of the listed fonts.`);
+        const brand = sanitizeBrand(req.body.brand);
+        await User.updateOne({ _id: req.user._id }, brand ? { $set: { editorBrand: brand } } : { $unset: { editorBrand: '' } });
+        ok(res, 'Brand sheet saved', { brand });
+    } catch (error) {
+        next(error);
+    }
+};
+
 /** The editing skills a new edit can follow (Skills tab). */
 export const listEditSkills = (req, res) => ok(res, 'Skills', { skills: Object.values(SKILLS).map((s) => ({ id: s.id, name: s.name, version: s.version, kind: s.kind ?? 'editing', category: s.category ?? 'talking-head' })) });
 
@@ -273,7 +297,7 @@ export const listEditProjects = async (req, res, next) => {
 export const getEditProject = async (req, res, next) => {
     try {
         const project = await ownedProject(req);
-        ok(res, 'Edit', await toDetail(project.toObject()));
+        ok(res, 'Edit', await toDetail(project.toObject(), brandFor(req.user)));
     } catch (error) {
         next(error);
     }
@@ -291,7 +315,7 @@ export const updateEdits = async (req, res, next) => {
         project.edits = edits;
         project.markModified('edits');
         await project.save();
-        const props = buildRenderProps(project.plan, edits, mediaFor(project));
+        const props = buildRenderProps(project.plan, edits, mediaFor(project, brandFor(req.user)));
         ok(res, 'Saved', { edits, props: { ...props, ...(await soundUrls(props)) } });
     } catch (error) {
         next(error);
@@ -337,7 +361,7 @@ export const startEditRender = async (req, res, next) => {
         if (active) return ok(res, 'Already exporting', { renderId: active.id });
         if ((project.renders ?? []).length >= 10) throw new ApiError(429, 'This edit has been exported 10 times. Download an earlier export instead.');
 
-        const props = buildRenderProps(project.plan, project.edits ?? {}, mediaFor(project));
+        const props = buildRenderProps(project.plan, project.edits ?? {}, mediaFor(project, brandFor(req.user)));
         const sounds = await soundUrls(props);
         // The final render uses the full-quality render master (the original upload for older edits), not the preview proxy.
         const inputProps = { ...props, ...sounds, videoUrl: await storage.presignDownload(project.source.masterKey || project.source.key, { expiresIn: 3 * 60 * 60 }) };

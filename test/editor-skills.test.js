@@ -4,7 +4,7 @@ import { validateEdl } from '../src/service/editor/edl.js';
 import { buildRenderProps, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
-import { SKILLS, casualCase, hookLines, isSkill } from '../src/service/editor/skills.js';
+import { BRAND_FONTS, brandProblem, SKILLS, casualCase, hookLines, isSkill, sanitizeBrand } from '../src/service/editor/skills.js';
 
 const words = [
     { w: 'Today', start: 0.4, end: 0.7 },
@@ -182,4 +182,26 @@ test('styles are grouped by what they are for; storytelling styles paint a scene
     assert.equal(buildRenderProps(plan(), {}, media('remotion-reel')).skill.layout, undefined);
     // Switching a story to a non-story style shows the footage.
     assert.equal(buildRenderProps(plan(), { animationStyle: 'comic-art' }, media('watercolour')).skill.layout, 'footage');
+});
+
+test('brand sheet: only hex colors and listed fonts survive, and the accent beats a style accent', () => {
+    assert.equal(sanitizeBrand(null), null);
+    assert.equal(sanitizeBrand({ accent: 'red', displayFont: 'Comic Sans' }), null);
+    assert.deepEqual(sanitizeBrand({ accent: '#ff5a36', secondary: '#123', displayFont: 'Anton', bodyFont: 'Inter', evil: 1 }), { accent: '#FF5A36', displayFont: 'Anton', bodyFont: 'Inter' });
+    assert.ok(BRAND_FONTS.includes('Anton'));
+    const branded = buildRenderProps(plan(), {}, { ...media('comic-art'), brand: { accent: '#00AAFF', displayFont: 'Anton' } });
+    assert.equal(branded.look.accent, '#00AAFF');
+    assert.deepEqual(branded.brand, { accent: '#00AAFF', displayFont: 'Anton' });
+    // No brand: nothing changes.
+    const plain = buildRenderProps(plan(), {}, media('comic-art'));
+    assert.equal(plain.brand, undefined);
+    assert.equal(plain.look.accent, SKILLS['comic-art'].render.accent);
+});
+
+test('brand sheet save names the first invalid field instead of dropping it', () => {
+    assert.equal(brandProblem({ accent: '#FF5A36', displayFont: 'Anton' }), null);
+    assert.equal(brandProblem({ accent: 'red' }), 'accent');
+    assert.equal(brandProblem({ accent: '#FF5A36', bodyFont: 'Comic Sans' }), 'bodyFont');
+    assert.equal(brandProblem({ evil: 1 }), 'evil');
+    assert.equal(brandProblem('x'), 'brand');
 });

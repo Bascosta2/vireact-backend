@@ -7,6 +7,8 @@ import {
     confirmEditUpload,
     listEditProjects,
     listEditSkills,
+    getBrand,
+    saveBrand,
     getEditProject,
     updateEdits,
     regenerateEdit,
@@ -25,6 +27,8 @@ editorRoutes.use(authenticateToken);
 editorRoutes.get('/usage', getEditorUsage);
 editorRoutes.use(requireEditorAccess);
 editorRoutes.get('/skills', listEditSkills);
+editorRoutes.get('/brand', getBrand);
+editorRoutes.put('/brand', saveBrand);
 editorRoutes.get('/projects', listEditProjects);
 editorRoutes.post('/projects', createEditProject);
 editorRoutes.get('/projects/:id', getEditProject);

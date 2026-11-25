@@ -1,6 +1,6 @@
 import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
-import { HOOK_VARIANTS, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
+import { HOOK_VARIANTS, sanitizeBrand, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
 import { removeRepeats } from './no-repeats.js';
 import { repairWordTimings } from './cut-candidates.js';
 
@@ -234,6 +234,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     const ss = sr?.sfx ?? null;
     /** Animated storytelling: the style's painted scene fills the frame (the footage only gives its sound). */
     const sceneOn = sr?.layout === 'scene' && !edits.sceneOff;
+    // The creator's brand sheet (media.brand, only passed when EDITOR_FEATURES_V2 is on) wins over a style's accent.
+    const brand = sanitizeBrand(media.brand);
     const base = withDefaults(rawPlan);
     // An editing skill narrows the plan to its style before anything is placed.
     const plan = sr ? {
@@ -450,9 +452,10 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         transitions,
         effects,
         // An animation style sets its own palette and picture treatment (the composition ignores the grade).
-        look: { grade: sr?.accent ? 'none' : plan.look.grade, accent: sr?.accent ?? ACCENT_HEX[plan.look.accent] ?? ACCENT_HEX.yellow, progressBar: plan.look.progressBar, motion: plan.look.motion },
+        look: { grade: sr?.accent ? 'none' : plan.look.grade, accent: brand?.accent ?? sr?.accent ?? ACCENT_HEX[plan.look.accent] ?? ACCENT_HEX.yellow, progressBar: plan.look.progressBar, motion: plan.look.motion },
         sfx,
         music,
+        ...(brand ? { brand } : {}),
         framing: { mode: edits.framingMode ?? plan.framing.mode, focusX: plan.framing.focusX },
         ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [], ...(sr?.layout ? { layout: sceneOn ? 'scene' : 'footage' } : {}) } } : {}),
     };
