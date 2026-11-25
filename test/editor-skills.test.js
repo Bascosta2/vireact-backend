@@ -275,3 +275,29 @@ test('storyboard: swap cleaning, carry rules and export gate', () => {
     assert.equal(storyboardBlocksExport({ storyboardApproved: true }, true), false);
     assert.equal(storyboardBlocksExport({ storyboardApproved: false }, false), false);
 });
+
+test('styles are grouped by what they are for; storytelling styles paint a scene the creator can turn off', async () => {
+    const { styleCategory } = await import('../src/service/editor/skills.js');
+    assert.equal(styleCategory('chalkboard'), 'talking-head');
+    assert.equal(styleCategory('pixel-art'), 'any-footage');
+    assert.equal(styleCategory('watercolour'), 'storytelling');
+    assert.equal(SKILLS['sumi-e'].category, 'storytelling');
+    assert.match(SKILLS['sumi-e'].plannerRules, /ANIMATED STORYTELLING/);
+    assert.doesNotMatch(SKILLS['pixel-art'].plannerRules, /ANIMATED STORYTELLING/);
+
+    const withCallout = () => {
+        const p = plan();
+        p.graphics.push({ type: 'callout', start: 3.3, end: 4.3, text: 'Look', subtext: '', items: [], focusX: 0.5, focusY: 0.4 });
+        return p;
+    };
+    const story = buildRenderProps(withCallout(), {}, media('watercolour'), { density: null });
+    assert.equal(story.skill.layout, 'scene');
+    assert.ok(!story.graphics.some((g) => g.type === 'callout'), 'no callouts over a painted scene');
+    const footage = buildRenderProps(withCallout(), sanitizeEdits({ sceneOff: true }), media('watercolour'), { density: null });
+    assert.equal(footage.skill.layout, 'footage');
+    assert.ok(footage.graphics.some((g) => g.type === 'callout'));
+    assert.equal(buildRenderProps(plan(), {}, media('pixel-art')).skill.layout, 'footage');
+    assert.equal(buildRenderProps(plan(), {}, media('remotion-reel')).skill.layout, undefined);
+    // Switching a story to a non-story style shows the footage.
+    assert.equal(buildRenderProps(plan(), { animationStyle: 'comic-art' }, media('watercolour')).skill.layout, 'footage');
+});
