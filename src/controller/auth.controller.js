@@ -111,7 +111,7 @@ export const signupUser = async (req, res, next) => {
                 ApiResponse.success(
                     201,
                     "Check your email to finish signing up.",
-                    { user: { name, email: user.email, isEmailVerified: false }, verificationEmailSent, verificationEmail }
+                    { user: { name, email: user.email, isEmailVerified: false }, verificationEmailSent, verificationEmail, resignup: true }
                 )
             );
         }
@@ -129,7 +129,7 @@ export const signupUser = async (req, res, next) => {
                     ApiResponse.success(
                         201,
                         "Account created. You're signed in.",
-                        { user, accessToken, verificationEmailSent, verificationEmail }
+                        { user, accessToken, verificationEmailSent, verificationEmail, resignup: false }
                     )
                 );
         }
@@ -138,7 +138,7 @@ export const signupUser = async (req, res, next) => {
             ApiResponse.success(
                 201,
                 "User Created Successfully",
-                { user, verificationEmailSent, verificationEmail }
+                { user, verificationEmailSent, verificationEmail, resignup: false }
             )
         );
 
@@ -320,10 +320,11 @@ export const verifyEmail = async (req, res, next) => {
             throw new ApiError(400, "Verification token is required.");
         }
 
-        const { status, message } = await verifyEmailService(token);
+        const { status, message, resetToken } = await verifyEmailService(token);
 
-        // { success: true, message, data: { status: 'verified' | 'already_verified' } }
-        res.status(200).json(ApiResponse.success(200, message, { status }));
+        // { success: true, message, data: { status: 'verified' | 'already_verified' } }, or after competing
+        // signups { status: 'verified_set_password', resetToken } (use it with POST /auth/reset-password).
+        res.status(200).json(ApiResponse.success(200, message, resetToken ? { status, resetToken } : { status }));
     } catch (error) {
         next(error)
     }
