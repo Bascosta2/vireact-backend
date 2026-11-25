@@ -1,11 +1,12 @@
 import { Admin } from "../model/admin.model.js";
-import { FRONTEND_URL, REFRESH_TOKEN_SECRET, RESEND_FROM_EMAIL, RESEND_REPLY_TO, NODE_ENV } from "../config/index.js";
+import { FRONTEND_URL, RESEND_FROM_EMAIL, RESEND_REPLY_TO, NODE_ENV } from "../config/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../model/user.model.js";
 import crypto from "crypto"
+import bcrypt from "bcryptjs";
 import resend from "../lib/resend.js";
-import { OAUTH_PROVIDERS } from "../constants.js";
-import jwt from "jsonwebtoken";
+import { BCRYPT_COST, OAUTH_PROVIDERS } from "../constants.js";
+import { verifyRefreshToken } from "../utils/jwt.js";
 import { hashRefreshToken, refreshTokenMatches } from "../utils/refresh-token-hash.js";
 import { captureError } from "./ops-monitoring.service.js";
 
@@ -24,7 +25,8 @@ export const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Clears an email change that has not been confirmed (a new password cancels it too). */
 export const NO_PENDING_EMAIL_CHANGE = Object.freeze({ pendingEmail: null, emailChangeTokenHash: null, emailChangeExpires: null });
 
-export const PASSWORD_MIN_LENGTH = 6;
+/** Same minimum as change-password (profile.service.js). Applies to signup and password reset. */
+export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
 
 export const normalizeEmail = (email) => (typeof email === 'string' ? email.trim().toLowerCase() : '');
@@ -349,6 +351,18 @@ export const signupAdminService =
         }
     };
 
+// Generic credential-failure response for unknown email and wrong password, so accounts
+// cannot be enumerated. Messages that need the correct password first (unverified email)
+// or that are a usability signal (Google-only account) are specific.
+const GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email or password";
+
+/** A bcrypt hash of a random password, made once, compared against when no admin has the email. */
+let dummyPasswordHashPromise = null;
+const dummyPasswordHash = () => {
+    dummyPasswordHashPromise ??= bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_COST);
+    return dummyPasswordHashPromise;
+};
+
 export const loginAdminService = async (email, password) => {
     // Plain strings only, so an operator object (e.g. {"$ne": null}) can never pick an admin.
     if (typeof email !== 'string' || !email || typeof password !== 'string' || !password) {
@@ -358,13 +372,15 @@ export const loginAdminService = async (email, password) => {
     const admin = await Admin.findOne({ email });
 
     if (!admin) {
-        throw new ApiError(404, "Admin Not Found");
+        // Same work and same answer as a wrong password, so admin emails cannot be discovered.
+        await bcrypt.compare(password, await dummyPasswordHash());
+        throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
     const isPasswordValid = await admin.comparePassword(password);
 
     if (!isPasswordValid) {
-        throw new ApiError(400, "Invalid Password");
+        throw new ApiError(401, GENERIC_LOGIN_ERROR_MESSAGE);
     }
 
     return admin;
@@ -565,11 +581,6 @@ export const resendEmailVerificationService = async (email) => {
     return generic;
 };
 
-
-// Generic credential-failure response for unknown email and wrong password, so accounts
-// cannot be enumerated. Messages that need the correct password first (unverified email)
-// or that are a usability signal (Google-only account) are specific.
-const GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email or password";
 
 export const loginUserService = async (email, password) => {
     const user = await User.findOne({ email: normalizeEmail(email) }).select(VERIFICATION_FIELDS);
@@ -828,7 +839,7 @@ export const refreshTokenService = async (refreshToken) => {
             throw new ApiError(401, "Refresh token is required");
         }
 
-        const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET);
+        const decoded = verifyRefreshToken(refreshToken);
 
         const user = await User.findById(decoded._id).select('+refreshSessions');
         if (!user) {

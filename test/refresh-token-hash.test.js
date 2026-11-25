@@ -19,11 +19,14 @@ import {
     replyToAddress,
     EMAIL_VERIFICATION_STATUS,
     EMAIL_VERIFICATION_TTL_MS,
+    PASSWORD_MIN_LENGTH,
     EMAIL_RESEND_COOLDOWN_MS,
     VERIFICATION_EMAIL,
 } from '../src/service/auth.service.js';
 import resend from '../src/lib/resend.js';
-import { AUTH_RATE_LIMITS } from '../src/constants.js';
+import jwt from 'jsonwebtoken';
+import { AUTH_RATE_LIMITS, BCRYPT_COST } from '../src/constants.js';
+import { verifyAccessToken, verifyRefreshToken, JWT_ALGORITHM } from '../src/utils/jwt.js';
 import { User } from '../src/model/user.model.js';
 import { Admin } from '../src/model/admin.model.js';
 
@@ -450,4 +453,134 @@ test('login, signup, verify and resend each have their own per-IP limit', () => 
     assert.equal(AUTH_RATE_LIMITS['/api/v1/auth/verify-email'].max, 60);
     assert.ok(AUTH_RATE_LIMITS['/api/v1/auth/signup'].max <= 20);
     assert.ok(AUTH_RATE_LIMITS['/api/v1/auth/resend-verification'].max <= 20);
+});
+
+// JWT hardening: one algorithm (HS256), typed tokens (`typ`), and tokens issued before `typ` existed keep
+// working as their own type only. No database needed.
+
+const ACCESS_SECRET = 'a'.repeat(40);
+const REFRESH_SECRET = 'r'.repeat(40);
+
+/** Run fn with these JWT secrets (refresh undefined = unset, so it falls back to the access secret). */
+const withJwtSecrets = (access, refresh, fn) => {
+    const prev = { access: process.env.ACCESS_TOKEN_SECRET, refresh: process.env.REFRESH_TOKEN_SECRET };
+    process.env.ACCESS_TOKEN_SECRET = access;
+    if (refresh === undefined) delete process.env.REFRESH_TOKEN_SECRET;
+    else process.env.REFRESH_TOKEN_SECRET = refresh;
+    try {
+        return fn();
+    } finally {
+        for (const [key, value] of [['ACCESS_TOKEN_SECRET', prev.access], ['REFRESH_TOKEN_SECRET', prev.refresh]]) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    }
+};
+
+const isInvalidToken = (e) => e?.name === 'JsonWebTokenError';
+
+test('user and admin tokens are HS256 with typ, and each type is rejected where the other is expected', () => {
+    for (const refreshSecret of [REFRESH_SECRET, undefined]) {
+        withJwtSecrets(ACCESS_SECRET, refreshSecret, () => {
+            for (const account of [new User({ name: 'T', email: 't@example.invalid' }), new Admin({ name: 'A', email: 'a@example.invalid', password: 'x' })]) {
+                const access = account.generateAccessToken();
+                const refresh = account.generateRefreshToken();
+                assert.equal(jwt.decode(access, { complete: true }).header.alg, JWT_ALGORITHM);
+                assert.equal(jwt.decode(access).typ, 'access');
+                assert.equal(jwt.decode(refresh).typ, 'refresh');
+                assert.equal(verifyAccessToken(access)._id, String(account._id));
+                assert.equal(verifyRefreshToken(refresh)._id, String(account._id));
+                assert.throws(() => verifyAccessToken(refresh), isInvalidToken);
+                assert.throws(() => verifyRefreshToken(access), isInvalidToken);
+            }
+        });
+    }
+});
+
+test('only HS256 is accepted: alg none and other HMAC algorithms are rejected', () => {
+    withJwtSecrets(ACCESS_SECRET, REFRESH_SECRET, () => {
+        const payload = { _id: 'u1', typ: 'access' };
+        const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+        const exp = Math.floor(Date.now() / 1000) + 600;
+        const unsigned = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ ...payload, exp })}.`;
+        assert.throws(() => verifyAccessToken(unsigned), isInvalidToken);
+        for (const algorithm of ['HS384', 'HS512']) {
+            const token = jwt.sign(payload, ACCESS_SECRET, { algorithm, expiresIn: '30m' });
+            assert.throws(() => verifyAccessToken(token), isInvalidToken, algorithm);
+        }
+        // A caller can never widen the allowed algorithms.
+        const hs512 = jwt.sign(payload, ACCESS_SECRET, { algorithm: 'HS512', expiresIn: '30m' });
+        assert.throws(() => verifyAccessToken(hs512, { algorithms: ['HS512'] }), isInvalidToken);
+    });
+});
+
+test('tokens issued before typ existed still work as their own type during the transition, never the other', () => {
+    for (const refreshSecret of [REFRESH_SECRET, undefined]) {
+        withJwtSecrets(ACCESS_SECRET, refreshSecret, () => {
+            const refreshKey = refreshSecret || ACCESS_SECRET;
+            const legacyAccess = jwt.sign({ _id: 'u1', email: 'u@example.invalid' }, ACCESS_SECRET, { expiresIn: '30m' });
+            const legacyRefresh = jwt.sign({ _id: 'u1', email: 'u@example.invalid', jti: 'j1' }, refreshKey, { expiresIn: '30d' });
+            assert.equal(verifyAccessToken(legacyAccess)._id, 'u1');
+            assert.equal(verifyRefreshToken(legacyRefresh)._id, 'u1');
+            assert.throws(() => verifyAccessToken(legacyRefresh), isInvalidToken);
+            assert.throws(() => verifyRefreshToken(legacyAccess), isInvalidToken);
+        });
+    }
+});
+
+test('an expired refresh token still identifies the session at logout (ignoreExpiration), but not for refreshing', () => {
+    withJwtSecrets(ACCESS_SECRET, REFRESH_SECRET, () => {
+        const now = Math.floor(Date.now() / 1000);
+        for (const extra of [{ typ: 'refresh' }, {}]) {
+            const expired = jwt.sign({ _id: 'u1', iat: now - 40 * 86400, exp: now - 10 * 86400, ...extra }, REFRESH_SECRET);
+            assert.equal(verifyRefreshToken(expired, { ignoreExpiration: true })._id, 'u1');
+            assert.throws(() => verifyRefreshToken(expired), (e) => e?.name === 'TokenExpiredError');
+        }
+    });
+});
+
+test('admin login: unknown email and wrong password get the same 401 "Invalid email or password"', async () => {
+    const original = Admin.findOne;
+    const admin = { _id: 'a1', comparePassword: async (pw) => pw === 'right-password' };
+    try {
+        const messages = [];
+        for (const found of [null, admin]) {
+            Admin.findOne = async () => found;
+            await assert.rejects(loginAdminService('admin@example.invalid', 'wrong-password'), (e) => {
+                messages.push(e.message);
+                return e.statusCode === 401;
+            });
+        }
+        assert.deepEqual(messages, ['Invalid email or password', 'Invalid email or password']);
+        Admin.findOne = async () => admin;
+        assert.equal(await loginAdminService('admin@example.invalid', 'right-password'), admin);
+    } finally {
+        Admin.findOne = original;
+    }
+});
+
+test('new password hashes use bcrypt cost 12; existing cost-10 hashes still log in', async () => {
+    assert.equal(BCRYPT_COST, 12);
+    const user = new User({ name: 'T', email: 'cost@example.invalid', password: 'new-password-1' });
+    // Run the model's pre-save hooks (where the password is hashed) without a database.
+    await new Promise((resolve, reject) => User.schema.s.hooks.execPre('save', user, [], (err) => (err ? reject(err) : resolve())));
+    assert.equal(bcrypt.getRounds(user.password), 12);
+    assert.ok(await user.comparePassword('new-password-1'));
+
+    const old = new User({ name: 'O', email: 'old@example.invalid' });
+    old.password = bcrypt.hashSync('old-password', 10);
+    assert.ok(await old.comparePassword('old-password'));
+    assert.ok(!(await old.comparePassword('wrong-password')));
+});
+
+test('signup and password reset need at least 8 characters (checked before any query)', async () => {
+    assert.equal(PASSWORD_MIN_LENGTH, 8);
+    const spy = spyFindOne(User);
+    try {
+        await assert.rejects(customSignupUserService('X', 'short@example.invalid', '7-chars', 'local'), (e) => e.statusCode === 400 && /at least 8/.test(e.message));
+        await assert.rejects(resetPasswordService('a'.repeat(64), '7-chars'), (e) => e.statusCode === 400 && /at least 8/.test(e.message));
+        assert.deepEqual(spy.calls, []);
+    } finally {
+        spy.restore();
+    }
 });

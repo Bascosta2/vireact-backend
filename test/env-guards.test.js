@@ -5,6 +5,7 @@ import {
     assertSafeDatabase,
     assertSafeStripeKey,
     databaseNameFromUri,
+    jwtSecretProblems,
     redactHost,
 } from '../src/config/env-guards.js';
 
@@ -91,4 +92,16 @@ test('server refuses to start with a non-test Stripe key', () => {
     const r = runServer({ NODE_ENV: 'development', DB_NAME: 'vireact_dev', DB_URL: `${SRV}/vireact_dev`, STRIPE_SECRET_KEY: 'sk_live_dummy' });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /STRIPE_SECRET_KEY is not a test-mode key/);
+});
+
+test('jwtSecretProblems flags shared or short JWT secrets without printing them', () => {
+    const long = (c) => c.repeat(32);
+    assert.deepEqual(jwtSecretProblems({ ACCESS_TOKEN_SECRET: long('a'), REFRESH_TOKEN_SECRET: long('r') }), []);
+    assert.deepEqual(jwtSecretProblems({ ACCESS_TOKEN_SECRET: long('a'), REFRESH_TOKEN_SECRET: long('a') }), ['ACCESS_TOKEN_SECRET and REFRESH_TOKEN_SECRET are the same']);
+    // REFRESH_TOKEN_SECRET unset falls back to the access secret: the same secret.
+    assert.deepEqual(jwtSecretProblems({ ACCESS_TOKEN_SECRET: long('a') }), ['ACCESS_TOKEN_SECRET and REFRESH_TOKEN_SECRET are the same']);
+    const short = jwtSecretProblems({ ACCESS_TOKEN_SECRET: 'short-access', REFRESH_TOKEN_SECRET: 'short-refresh' });
+    assert.deepEqual(short, ['ACCESS_TOKEN_SECRET is shorter than 32 characters', 'REFRESH_TOKEN_SECRET is shorter than 32 characters']);
+    assert.ok(!short.join(' ').includes('short-access'));
+    assert.equal(jwtSecretProblems({}).length, 2);
 });

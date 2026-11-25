@@ -12,8 +12,7 @@ import {
     revokeRefreshSession,
     VERIFICATION_EMAIL
 } from "../service/auth.service.js";
-import jwt from "jsonwebtoken";
-import { REFRESH_TOKEN_SECRET } from "../config/index.js";
+import { verifyRefreshToken } from "../utils/jwt.js";
 import { Admin } from "../model/admin.model.js";
 import { User } from "../model/user.model.js";
 import { COOKIE_OPTIONS, OAUTH_PROVIDERS, ROLES } from "../constants.js";
@@ -72,12 +71,8 @@ const getProviderDisplayName = (provider) => {
 // Signup User
 export const signupUser = async (req, res, next) => {
     try {
-        const {
-            name,
-            email,
-            password,
-            provider = OAUTH_PROVIDERS.LOCAL
-        } = req.body;
+        // Any client-supplied `provider` is ignored: email + password signups are always local accounts.
+        const { name, email, password } = req.body;
 
         if (!name || !email || !password) {
             throw new ApiError(400, "All fields are required.")
@@ -91,7 +86,7 @@ export const signupUser = async (req, res, next) => {
             name,
             email,
             password,
-            provider,
+            OAUTH_PROVIDERS.LOCAL,
             attribution
         )
 
@@ -360,7 +355,7 @@ export const logoutUser = async (req, res, next) => {
         let userId = req.user?._id;
         if (!userId && cookieToken) {
             try {
-                userId = jwt.verify(cookieToken, REFRESH_TOKEN_SECRET, { ignoreExpiration: true })?._id;
+                userId = verifyRefreshToken(cookieToken, { ignoreExpiration: true })?._id;
             } catch {
                 userId = null;
             }

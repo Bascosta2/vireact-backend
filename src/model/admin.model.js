@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import bcrypt, { compare } from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } from "../config/index.js";
+import { signToken, TOKEN_TYPE } from "../utils/jwt.js";
+import { BCRYPT_COST } from "../constants.js";
 
 const adminSchema = new mongoose.Schema({
     name: {
@@ -25,7 +25,7 @@ const adminSchema = new mongoose.Schema({
 
 adminSchema.pre("save", async function (next) {
     if (this.isModified("password")) {
-        this.password = await bcrypt.hash(this.password, 10);
+        this.password = await bcrypt.hash(this.password, BCRYPT_COST);
     }
     next();
 });
@@ -35,19 +35,11 @@ adminSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 adminSchema.methods.generateAccessToken = function () {
-    return jwt.sign(
-        { _id: this._id, email: this.email },
-        ACCESS_TOKEN_SECRET,
-        { expiresIn: "30m" }
-    );
+    return signToken(TOKEN_TYPE.ACCESS, { _id: this._id, email: this.email }, "30m");
 };
 
 adminSchema.methods.generateRefreshToken = function () {
-    return jwt.sign(
-        { _id: this._id, email: this.email },
-        REFRESH_TOKEN_SECRET,
-        { expiresIn: "30d" }
-    );
+    return signToken(TOKEN_TYPE.REFRESH, { _id: this._id, email: this.email }, "30d");
 };
 
 export const Admin = mongoose.model("Admin", adminSchema);

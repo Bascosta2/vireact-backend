@@ -1,8 +1,7 @@
-import jwt from 'jsonwebtoken';
 import { User } from '../model/user.model.js';
 import { Admin } from '../model/admin.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { ACCESS_TOKEN_SECRET } from '../config/index.js';
+import { verifyAccessToken } from '../utils/jwt.js';
 
 /**
  * JWT Authentication Middleware
@@ -20,7 +19,7 @@ export const authenticateToken = async (req, res, next) => {
         }
 
         // Verify the token
-        const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
+        const decoded = verifyAccessToken(token);
 
         // Find user by ID from token. Explicit field exclusion is defense-in-depth
         // alongside the schema-level toJSON transform — req.user is forwarded to
@@ -65,7 +64,7 @@ export const optionalAuth = async (req, res, next) => {
             return next();
         }
 
-        const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
+        const decoded = verifyAccessToken(token);
 
         let user = await User.findById(decoded._id).select('-password -refreshToken -emailVerificationToken');
         
