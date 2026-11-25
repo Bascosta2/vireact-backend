@@ -54,7 +54,9 @@ const extraFeatures = rowFeatures;
 
 /** Public videos: settled readings, leave-one-out creator medians. */
 export const socialRows = async ({ now = Date.now(), halfLifeDays = 120 } = {}) => {
-    const videos = await SocialVideo.find({ 'latest.views': { $ne: null }, postedAt: { $ne: null }, creatorId: { $ne: null } })
+    // Instagram Reels are collected but not trained on yet: the model has no platform feature, and Reels
+    // views (a different counter, a different feed) must not shift the TikTok-calibrated baselines.
+    const videos = await SocialVideo.find({ platform: { $ne: 'instagram' }, 'latest.views': { $ne: null }, postedAt: { $ne: null }, creatorId: { $ne: null } })
         .select('_id creatorId latest postedAt soundId soundTitle language').lean();
     const soundIndex = buildSoundIndex(videos);
     const settled = videos.filter((v) => new Date(v.latest.at ?? now).getTime() - new Date(v.postedAt).getTime() >= 7 * DAY_MS);

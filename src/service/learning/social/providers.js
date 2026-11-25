@@ -44,6 +44,31 @@ export const getProvider = (env = process.env) => {
     return adapter ? { name, ...adapter } : null;
 };
 
+/**
+ * Extra platforms (Instagram Reels) register here: registerPlatformProvider('instagram', (env) => adapter | null).
+ * Kept apart from LEARNING_PROVIDER so TikTok collection is untouched; each factory decides from env
+ * whether its platform is switched on and fully configured.
+ */
+const platformRegistry = new Map();
+const platformOverrides = new Map();
+
+export const registerPlatformProvider = (platform, factory) => {
+    platformRegistry.set(String(platform).toLowerCase(), factory);
+};
+
+/** The adapter for an extra platform, or null when it is off or not configured. */
+export const getPlatformProvider = (platform, env = process.env) => {
+    const key = String(platform).toLowerCase();
+    if (platformOverrides.has(key)) return platformOverrides.get(key);
+    const adapter = platformRegistry.get(key)?.(env);
+    return adapter ? { name: String(env.LEARNING_PROVIDER ?? '').trim().toLowerCase(), ...adapter } : null;
+};
+
+export const setPlatformProviderForTests = (platform, provider) => {
+    if (provider) platformOverrides.set(String(platform).toLowerCase(), { name: provider.name ?? 'test', ...provider });
+    else platformOverrides.delete(String(platform).toLowerCase());
+};
+
 export const setProviderForTests = (provider) => {
     testOverride = provider ? { name: provider.name ?? 'test', ...provider } : null;
 };
