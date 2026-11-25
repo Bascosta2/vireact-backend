@@ -60,7 +60,6 @@ export function assertSafeStripeKey(env = process.env) {
     }
 }
 
-/** Loggable host fragment: first 4 characters of the first label only, e.g. "clus***". */
 /** Shortest accepted ACCESS_TOKEN_SECRET / REFRESH_TOKEN_SECRET (HS256 wants at least 256 bits). */
 export const MIN_JWT_SECRET_LENGTH = 32;
 
@@ -78,6 +77,7 @@ export function jwtSecretProblems(env = process.env) {
     return problems;
 }
 
+/** Loggable host fragment: first 4 characters of the first label only, e.g. "clus***". */
 export function redactHost(host) {
     if (!host || typeof host !== 'string') return 'unknown';
     const label = host.split('.')[0] || '';

@@ -14,6 +14,7 @@ import '../config/load-env.js';
  * lived 30 minutes, refresh tokens 30 days. Old access tokens are gone 30 minutes after deploy and old
  * refresh tokens within 30 days; after that the legacy branch in verifyToken can be removed.
  */
+// TODO(2026-12-26 at the earliest, 30 days after merge): drop legacyTypeOf and require `typ` on every token.
 
 export const JWT_ALGORITHM = 'HS256';
 
