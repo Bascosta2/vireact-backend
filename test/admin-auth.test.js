@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isValidAdminKey, adminAuth, ADMIN_RATE_LIMIT } from '../src/middleware/adminAuth.js';
-import { signup, verifyEmail, login } from '../src/controller/auth.controller.js';
+import { signup, verifyEmail, login, confirmEmailChange } from '../src/controller/auth.controller.js';
+import { updateProfile, updatePassword } from '../src/controller/profile.controller.js';
+import { maskEmail, buildEmailChangeConfirmEmail, buildEmailChangeNoticeEmail, EMAIL_CHANGE_TTL_MS } from '../src/service/auth.service.js';
+import { AUTH_RATE_LIMITS } from '../src/constants.js';
+import crypto from 'node:crypto';
 import { User } from '../src/model/user.model.js';
 import resend from '../src/lib/resend.js';
 import { fakeRes } from './helpers/test-db.js';
@@ -268,3 +272,286 @@ test('POST /auth/verify-email after competing signups answers verified_set_passw
         resend.emails.send = sentBefore;
     }
 });
+
+// Email changes (security fix): a new email is pending until the new inbox confirms it. No database.
+
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
+/** Does an in-memory doc match a Mongo filter? Supports equality, null, $ne, $gt, $in, $nin. */
+const matchesFilter = (doc, filter) => Object.entries(filter).every(([key, cond]) => {
+    const value = doc[key];
+    if (cond !== null && typeof cond === 'object' && !(cond instanceof Date)) {
+        if ('$ne' in cond) return String(value) !== String(cond.$ne);
+        if ('$gt' in cond) return value != null && value > cond.$gt;
+        if ('$in' in cond) return cond.$in.map(String).includes(String(value));
+        if ('$nin' in cond) return !cond.$nin.map(String).includes(String(value));
+        throw new Error(`fake User: unsupported filter ${JSON.stringify(cond)}`);
+    }
+    return cond === null ? value == null : String(value) === String(cond);
+});
+
+/** Swap User statics for several in-memory documents; records every filter User.findOne receives. */
+const withFakeUsers = async (docs, fn) => {
+    const original = { findOne: User.findOne, findById: User.findById, updateOne: User.updateOne };
+    const findOneFilters = [];
+    const query = (found) => {
+        const q = Object.assign(Promise.resolve(found), {
+            select: () => q,
+            collation: () => q,
+            lean: async () => (found ? { ...found } : null),
+        });
+        return q;
+    };
+    User.findOne = (filter) => {
+        findOneFilters.push(filter);
+        return query(docs.find((d) => matchesFilter(d, filter)) ?? null);
+    };
+    User.findById = (id) => query(docs.find((d) => String(d._id) === String(id)) ?? null);
+    User.updateOne = async (filter, update) => {
+        const doc = docs.find((d) => matchesFilter(d, filter));
+        if (!doc) return { modifiedCount: 0 };
+        Object.assign(doc, update.$set);
+        for (const key of Object.keys(update.$unset || {})) delete doc[key];
+        for (const [key, cond] of Object.entries(update.$pull || {})) {
+            doc[key] = (doc[key] || []).filter((item) => !matchesFilter(item, cond));
+        }
+        return { modifiedCount: 1 };
+    };
+    try {
+        return await fn({ findOneFilters });
+    } finally {
+        Object.assign(User, original);
+    }
+};
+
+/** Capture outgoing emails instead of sending them. */
+const withSentEmails = async (fn) => {
+    const original = resend.emails.send;
+    const sent = [];
+    resend.emails.send = async (message) => { sent.push(message); return { data: { id: 'test' }, error: null }; };
+    try {
+        return await fn(sent);
+    } finally {
+        resend.emails.send = original;
+    }
+};
+
+const localUser = (overrides = {}) => ({
+    _id: 'owner1', name: 'Victim', email: 'owner@example.invalid', password: 'hash', provider: 'local',
+    isEmailVerified: true, pendingEmail: null, emailChangeTokenHash: null, emailChangeExpires: null,
+    refreshToken: 'h-current', refreshSessions: [{ hash: 'h-current' }, { hash: 'h-other' }],
+    comparePassword: async (candidate) => candidate === 'right-password',
+    save: async function () { return this; },
+    ...overrides,
+});
+
+const callUpdateProfile = async (body, userId = 'owner1') => {
+    let err;
+    const res = fakeRes();
+    await updateProfile({ user: { _id: userId }, body }, res, (e) => { err = e; });
+    return { err, res };
+};
+
+const confirmTokenFrom = (message) => message.text.match(/token=([a-f0-9]{64})/)?.[1];
+
+test('email change emails: masked address, escaped HTML, plain-text part, 24 hour link', () => {
+    assert.equal(maskEmail('jane.doe@gmail.com'), 'j***@g***.com');
+    assert.equal(maskEmail('a@b'), 'a***@b***');
+    assert.equal(EMAIL_CHANGE_TTL_MS, 24 * 60 * 60 * 1000);
+
+    const confirm = buildEmailChangeConfirmEmail('https://vireact.io/confirm-email-change?token=x&"<y>');
+    assert.match(confirm.html, /token=x&amp;&quot;&lt;y&gt;/);
+    assert.match(confirm.text, /token=x&"<y>/);
+    assert.match(confirm.text, /24 hours/);
+
+    for (const completed of [false, true]) {
+        const notice = buildEmailChangeNoticeEmail({ maskedNewEmail: maskEmail('attacker@evil.example'), completed });
+        assert.ok(!`${notice.html}${notice.text}`.includes('attacker@evil.example'));
+        assert.match(notice.text, /a\*\*\*@e\*\*\*\.example/);
+    }
+});
+
+test('PATCH /profile with a new email keeps the old email, needs the current password, and emails both inboxes', async () => {
+    const doc = localUser();
+    await withSentEmails(async (sent) => {
+        await withFakeUsers([doc], async () => {
+            const missing = await callUpdateProfile({ name: 'Victim', email: 'victim@gmail.com' });
+            assert.equal(missing.err?.statusCode, 400);
+            const wrong = await callUpdateProfile({ name: 'Victim', email: 'victim@gmail.com', currentPassword: 'nope' });
+            assert.equal(wrong.err?.statusCode, 401);
+            assert.equal(sent.length, 0);
+            assert.equal(doc.pendingEmail, null);
+
+            const { err, res } = await callUpdateProfile({ name: 'Renamed', email: ' Victim@Gmail.com ', currentPassword: 'right-password' });
+            assert.ifError(err);
+            assert.equal(doc.email, 'owner@example.invalid', 'stored email must not change before confirmation');
+            assert.equal(doc.isEmailVerified, true);
+            assert.equal(doc.name, 'Renamed');
+            assert.equal(doc.pendingEmail, 'victim@gmail.com');
+            assert.equal(res.body.data.emailChange.pendingEmail, 'victim@gmail.com');
+            assert.equal(res.body.data.user.email, 'owner@example.invalid');
+            const ttl = doc.emailChangeExpires.getTime() - Date.now();
+            assert.ok(ttl > EMAIL_CHANGE_TTL_MS - 60_000 && ttl <= EMAIL_CHANGE_TTL_MS);
+
+            const [confirm, notice] = sent;
+            assert.equal(confirm.to, 'victim@gmail.com');
+            const token = confirmTokenFrom(confirm);
+            assert.ok(token);
+            assert.equal(doc.emailChangeTokenHash, sha256(token), 'only the hash is stored');
+            assert.equal(notice.to, 'owner@example.invalid');
+            assert.ok(!notice.text.includes('victim@gmail.com'));
+        });
+    });
+});
+
+test('PATCH /profile: Google accounts cannot change email; another account using it is 409; the current email cancels a pending change', async () => {
+    const google = localUser({ _id: 'g1', provider: 'google', password: undefined });
+    const taken = localUser({ _id: 'other', email: 'taken@example.invalid' });
+    const pending = localUser({ _id: 'p1', email: 'p1@example.invalid', pendingEmail: 'next@example.invalid', emailChangeTokenHash: 'x', emailChangeExpires: new Date(Date.now() + 1000) });
+    await withSentEmails(async (sent) => {
+        await withFakeUsers([google, taken, pending, localUser()], async () => {
+            assert.equal((await callUpdateProfile({ name: 'G', email: 'new@example.invalid' }, 'g1')).err?.statusCode, 403);
+            assert.equal((await callUpdateProfile({ name: 'V', email: 'taken@example.invalid', currentPassword: 'right-password' })).err?.statusCode, 409);
+
+            const { err, res } = await callUpdateProfile({ name: 'P', email: 'P1@example.invalid' }, 'p1');
+            assert.ifError(err);
+            assert.equal(res.body.data.emailChange, null);
+            assert.equal(pending.pendingEmail, null);
+            assert.equal(pending.emailChangeTokenHash, null);
+            assert.equal(sent.length, 0);
+        });
+    });
+});
+
+test('POST /auth/confirm-email-change switches the email once, signs out every device and tells the old inbox (masked)', async () => {
+    const doc = localUser();
+    await withSentEmails(async (sent) => {
+        await withFakeUsers([doc], async () => {
+            await callUpdateProfile({ name: 'Victim', email: 'new@example.invalid', currentPassword: 'right-password' });
+            const token = confirmTokenFrom(sent[0]);
+            sent.length = 0;
+
+            const res = fakeRes();
+            await confirmEmailChange({ body: { token } }, res, assert.ifError);
+            assert.equal(res.body.data.email, 'new@example.invalid');
+            assert.deepEqual(res.cleared.sort(), ['accessToken', 'refreshToken']);
+            assert.equal(doc.email, 'new@example.invalid');
+            assert.equal(doc.isEmailVerified, true);
+            assert.equal(doc.pendingEmail, null);
+            assert.equal(doc.emailChangeTokenHash, null);
+            assert.deepEqual(doc.refreshSessions, []);
+            assert.equal(doc.refreshToken, undefined);
+            assert.equal(sent.length, 1);
+            assert.equal(sent[0].to, 'owner@example.invalid');
+            assert.ok(!sent[0].text.includes('new@example.invalid'));
+
+            let err;
+            await confirmEmailChange({ body: { token } }, fakeRes(), (e) => { err = e; });
+            assert.equal(err?.statusCode, 400, 'a link works once');
+        });
+    });
+});
+
+test('POST /auth/confirm-email-change: malformed tokens fail before any query; expired links fail; a taken address is 409', async () => {
+    const spy = spyUserFindOne();
+    try {
+        for (const token of [{ $ne: null }, ['a'.repeat(64)], 'a'.repeat(63), undefined]) {
+            let err;
+            await confirmEmailChange({ body: { token } }, fakeRes(), (e) => { err = e; });
+            assert.equal(err?.statusCode, 400);
+        }
+        assert.deepEqual(spy.calls, []);
+    } finally {
+        spy.restore();
+    }
+
+    const expired = localUser({ pendingEmail: 'new@example.invalid', emailChangeTokenHash: sha256(HEX('b')), emailChangeExpires: new Date(Date.now() - 1000) });
+    await withFakeUsers([expired], async () => {
+        let err;
+        await confirmEmailChange({ body: { token: HEX('b') } }, fakeRes(), (e) => { err = e; });
+        assert.equal(err?.statusCode, 400);
+        assert.equal(expired.email, 'owner@example.invalid');
+    });
+
+    const racer = localUser({ pendingEmail: 'new@example.invalid', emailChangeTokenHash: sha256(HEX('c')), emailChangeExpires: new Date(Date.now() + 60_000) });
+    const squatter = localUser({ _id: 'squatter', email: 'new@example.invalid' });
+    await withFakeUsers([racer, squatter], async () => {
+        let err;
+        await confirmEmailChange({ body: { token: HEX('c') } }, fakeRes(), (e) => { err = e; });
+        assert.equal(err?.statusCode, 409);
+        assert.equal(racer.email, 'owner@example.invalid');
+        assert.equal(racer.pendingEmail, null);
+    });
+});
+
+test('Continue with Google never matches a pending email, and taking over an unverified account drops its devices', async () => {
+    const profile = (email) => ({ id: 'google-123', emails: [{ value: email, verified: true }], displayName: 'G', photos: [] });
+
+    const attacker = localUser({ _id: 'attacker', email: 'attacker@example.invalid', pendingEmail: 'victim@gmail.com' });
+    const createdBefore = User.prototype.save;
+    User.prototype.save = async function () { return this; };
+    try {
+        await withFakeUsers([attacker], async ({ findOneFilters }) => {
+            const user = await User.findOrCreateByGoogleProfile(profile('victim@gmail.com'));
+            assert.notEqual(String(user._id), 'attacker');
+            assert.equal(attacker.googleId, undefined);
+            assert.ok(findOneFilters.every((f) => !('pendingEmail' in f)));
+        });
+    } finally {
+        User.prototype.save = createdBefore;
+    }
+
+    const squatter = localUser({ _id: 'squat', email: 'victim@gmail.com', isEmailVerified: false, save: async function () { return this; } });
+    await withFakeUsers([squatter], async () => {
+        const user = await User.findOrCreateByGoogleProfile(profile('victim@gmail.com'));
+        assert.equal(String(user._id), 'squat');
+        assert.equal(squatter.password, undefined);
+        assert.deepEqual(squatter.refreshSessions, []);
+        assert.equal(squatter.refreshToken, undefined);
+        assert.equal(squatter.isEmailVerified, true);
+    });
+});
+
+test('PATCH /profile/password keeps this device, signs out the others, cancels a pending email change', async () => {
+    const doc = localUser({ pendingEmail: 'x@example.invalid', emailChangeTokenHash: 'h', emailChangeExpires: new Date(Date.now() + 1000) });
+    const { hashRefreshToken } = await import('../src/utils/refresh-token-hash.js');
+    await withFakeUsers([doc], async () => {
+        // Sessions are stored as hashes of the refresh tokens; this device presents 'this-device' in its cookie.
+        doc.refreshSessions = [{ hash: hashRefreshToken('this-device') }, { hash: hashRefreshToken('laptop') }];
+        doc.refreshToken = hashRefreshToken('laptop');
+        const res = fakeRes();
+        await updatePassword({
+            user: { _id: 'owner1' },
+            cookies: { refreshToken: 'this-device' },
+            body: { currentPassword: 'right-password', newPassword: 'new-password-1', confirmPassword: 'new-password-1' },
+        }, res, assert.ifError);
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(doc.refreshSessions, [{ hash: hashRefreshToken('this-device') }]);
+        assert.equal(doc.refreshToken, undefined);
+        assert.equal(doc.pendingEmail, null);
+        assert.equal(doc.emailChangeTokenHash, null);
+    });
+});
+
+test('profile and confirm endpoints are rate limited; unexpected profile errors return a generic message', async () => {
+    assert.equal(AUTH_RATE_LIMITS['/api/v1/auth/confirm-email-change'].max, 20);
+    const { default: profileRoutes } = await import('../src/route/profile.route.js');
+    const limited = profileRoutes.stack
+        .filter((layer) => layer.route?.methods?.patch)
+        .map((layer) => [layer.route.path, layer.route.stack.length]);
+    assert.deepEqual(limited.filter(([path]) => path !== '/notification-preferences'), [['/', 2], ['/password', 2]]);
+
+    const quiet = console.error;
+    console.error = () => {};
+    const original = User.findById;
+    User.findById = () => { throw new Error('connection to db-internal-host:27017 refused'); };
+    try {
+        const { err } = await callUpdateProfile({ name: 'A', email: 'a@example.invalid' });
+        assert.equal(err?.statusCode, 500);
+        assert.equal(err?.message, 'Failed to update user profile.');
+    } finally {
+        User.findById = original;
+        console.error = quiet;
+    }
+});
+

@@ -42,23 +42,29 @@ export const updateProfile = async (req, res, next) => {
             throw new ApiError(401, "Authentication required.");
         }
 
-        const { name, email } = req.body;
+        const { name, email, currentPassword } = req.body ?? {};
 
         if (!name || !email) {
             throw new ApiError(400, "Name and email are required.");
         }
 
-        const updatedUser = await updateUserProfileService(
+        const { user, emailChange } = await updateUserProfileService(
             req.user._id,
             name,
-            email
+            email,
+            currentPassword
         );
+
+        // A new email is not applied yet: the frontend shows "confirm your new email" while emailChange is set.
+        const message = emailChange
+            ? "Profile updated. Open the link we sent to your new email to finish changing it."
+            : "Profile updated successfully";
 
         res.status(200).json(
             ApiResponse.success(
                 200,
-                "Profile updated successfully",
-                { user: updatedUser }
+                message,
+                { user, emailChange }
             )
         );
     } catch (error) {
@@ -76,23 +82,25 @@ export const updatePassword = async (req, res, next) => {
             throw new ApiError(401, "Authentication required.");
         }
 
-        const { currentPassword, newPassword, confirmPassword } = req.body;
+        const { currentPassword, newPassword, confirmPassword } = req.body ?? {};
 
         if (!currentPassword || !newPassword || !confirmPassword) {
             throw new ApiError(400, "Current password, new password, and confirm password are required.");
         }
 
+        // This device stays signed in; every other device is signed out.
         await updateUserPasswordService(
             req.user._id,
             currentPassword,
             newPassword,
-            confirmPassword
+            confirmPassword,
+            req.cookies?.refreshToken || req.body?.refreshToken
         );
 
         res.status(200).json(
             ApiResponse.success(
                 200,
-                "Password updated successfully"
+                "Password updated. Other devices have been signed out."
             )
         );
     } catch (error) {

@@ -1,6 +1,26 @@
 import { User } from "../model/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { OAUTH_PROVIDERS } from "../constants.js";
+import {
+    normalizeEmail,
+    findOtherUserWithEmail,
+    startEmailChange,
+    cancelEmailChange,
+    revokeOtherRefreshSessions,
+    NO_PENDING_EMAIL_CHANGE,
+    PASSWORD_MAX_LENGTH
+} from "./auth.service.js";
+
+const PROFILE_FIELDS = "-password -refreshToken -emailVerificationToken";
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_LENGTH = 254;
+
+/** Unexpected errors: log the detail, answer with a generic message (never the raw internal error). */
+const toApiError = (error, context, publicMessage) => {
+    if (error instanceof ApiError) return error;
+    console.error(`[Profile] ${context} failed:`, error?.message || error);
+    return new ApiError(500, publicMessage);
+};
 
 /**
  * Get user profile service
@@ -12,7 +32,7 @@ export const getUserProfileService = async (userId) => {
             throw new ApiError(400, "User ID is required.");
         }
 
-        const user = await User.findById(userId).select("-password -refreshToken -emailVerificationToken").lean();
+        const user = await User.findById(userId).select(PROFILE_FIELDS).lean();
 
         if (!user) {
             throw new ApiError(404, "User not found.");
@@ -20,18 +40,19 @@ export const getUserProfileService = async (userId) => {
 
         return user;
     } catch (error) {
-        if (error instanceof ApiError) {
-            throw error;
-        }
-        throw new ApiError(500, error?.message || "Failed to fetch user profile.");
+        throw toApiError(error, "Fetch profile", "Failed to fetch user profile.");
     }
 };
 
 /**
  * Update user profile service
- * Updates name and email with validation
+ * The name changes right away. A new email does NOT: it is stored as pendingEmail and only replaces the
+ * current email once the link sent to the new inbox is opened (auth.service confirmEmailChangeService).
+ * Changing the email needs the current password when the account has one. Sending the current email
+ * again cancels a pending change.
+ * Returns { user, emailChange } where emailChange is { pendingEmail, expiresAt } or null.
  */
-export const updateUserProfileService = async (userId, name, email) => {
+export const updateUserProfileService = async (userId, name, email, currentPassword) => {
     try {
         if (!userId) {
             throw new ApiError(400, "User ID is required.");
@@ -43,61 +64,66 @@ export const updateUserProfileService = async (userId, name, email) => {
         if (typeof name !== 'string' || typeof email !== 'string') {
             throw new ApiError(400, "Name and email must be text.");
         }
+        if (!name.trim()) {
+            throw new ApiError(400, "Name and email are required.");
+        }
 
-        // Validate email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        const newEmail = normalizeEmail(email);
+        if (newEmail.length > MAX_EMAIL_LENGTH || !EMAIL_FORMAT.test(newEmail)) {
             throw new ApiError(400, "Invalid email format.");
         }
 
-        // Find user
         const user = await User.findById(userId);
 
         if (!user) {
             throw new ApiError(404, "User not found.");
         }
 
-        // Prevent email updates for Google OAuth users
-        if (user.provider === OAUTH_PROVIDERS.GOOGLE && user.email !== email.toLowerCase().trim()) {
-            throw new ApiError(403, "Email cannot be changed for Google accounts. Email is managed by Google.");
-        }
+        const emailChanging = user.email !== newEmail;
+        let emailChange = null;
 
-        // Check if email is being changed
-        if (user.email !== email.toLowerCase().trim()) {
-            // Check if new email already exists (excluding current user)
-            const existingUser = await User.findOne({ 
-                email: email.toLowerCase().trim(),
-                _id: { $ne: userId }
-            });
+        if (emailChanging) {
+            // Prevent email updates for Google OAuth users
+            if (user.provider === OAUTH_PROVIDERS.GOOGLE) {
+                throw new ApiError(403, "Email cannot be changed for Google accounts. Email is managed by Google.");
+            }
 
-            if (existingUser) {
+            if (user.password) {
+                if (typeof currentPassword !== 'string' || !currentPassword) {
+                    throw new ApiError(400, "Enter your current password to change your email.");
+                }
+                if (!(await user.comparePassword(currentPassword))) {
+                    throw new ApiError(401, "Current password is incorrect.");
+                }
+            }
+
+            if (await findOtherUserWithEmail(newEmail, user._id)) {
                 throw new ApiError(409, "An account with this email already exists.");
             }
+
+            emailChange = await startEmailChange(user, newEmail);
+        } else if (user.pendingEmail) {
+            await cancelEmailChange(user._id);
         }
 
-        // Update user fields
         user.name = name.trim();
-        user.email = email.toLowerCase().trim();
-
         await user.save();
 
         // Return user without sensitive data
-        const updatedUser = await User.findById(userId).select("-password -refreshToken -emailVerificationToken").lean();
+        const updatedUser = await User.findById(userId).select(PROFILE_FIELDS).lean();
 
-        return updatedUser;
+        return { user: updatedUser, emailChange };
     } catch (error) {
-        if (error instanceof ApiError) {
-            throw error;
-        }
-        throw new ApiError(500, error?.message || "Failed to update user profile.");
+        throw toApiError(error, "Update profile", "Failed to update user profile.");
     }
 };
 
 /**
  * Update user password service
- * Updates password for local users only
+ * Updates password for local users only. Every other device is signed out (the device presenting
+ * `keepRefreshToken` stays signed in), and any unconfirmed email change or reset link is cancelled.
  */
-export const updateUserPasswordService = async (userId, currentPassword, newPassword, confirmPassword) => {
+export const updateUserPasswordService = async (userId, currentPassword, newPassword, confirmPassword, keepRefreshToken) => {
     try {
         if (!userId) {
             throw new ApiError(400, "User ID is required.");
@@ -107,12 +133,20 @@ export const updateUserPasswordService = async (userId, currentPassword, newPass
             throw new ApiError(400, "Current password, new password, and confirm password are required.");
         }
 
+        if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || typeof confirmPassword !== 'string') {
+            throw new ApiError(400, "Passwords must be text.");
+        }
+
         if (newPassword !== confirmPassword) {
             throw new ApiError(400, "New password and confirm password do not match.");
         }
 
         if (newPassword.length < 8) {
             throw new ApiError(400, "Password must be at least 8 characters long.");
+        }
+
+        if (newPassword.length > PASSWORD_MAX_LENGTH) {
+            throw new ApiError(400, `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`);
         }
 
         // Find user
@@ -139,14 +173,16 @@ export const updateUserPasswordService = async (userId, currentPassword, newPass
 
         // Update password (will be hashed by pre-save hook)
         user.password = newPassword;
+        user.passwordResetTokenHash = null;
+        user.passwordResetExpires = null;
+        Object.assign(user, NO_PENDING_EMAIL_CHANGE);
         await user.save();
+
+        await revokeOtherRefreshSessions(user._id, keepRefreshToken);
 
         return { success: true };
     } catch (error) {
-        if (error instanceof ApiError) {
-            throw error;
-        }
-        throw new ApiError(500, error?.message || "Failed to update password.");
+        throw toApiError(error, "Update password", "Failed to update password.");
     }
 };
 
@@ -170,10 +206,7 @@ export const getNotificationPreferencesService = async (userId) => {
             notifyProductUpdates: user.notifyProductUpdates ?? true
         };
     } catch (error) {
-        if (error instanceof ApiError) {
-            throw error;
-        }
-        throw new ApiError(500, error?.message || "Failed to fetch notification preferences.");
+        throw toApiError(error, "Fetch notification preferences", "Failed to fetch notification preferences.");
     }
 };/**
  * Update notification preferences service
@@ -183,6 +216,10 @@ export const updateNotificationPreferencesService = async (userId, updates) => {
     try {
         if (!userId) {
             throw new ApiError(400, "User ID is required.");
+        }
+
+        if (!updates || typeof updates !== "object") {
+            throw new ApiError(400, "No valid fields to update.");
         }
 
         const allowedFields = ["notifyShortsReady", "notifyExportReady", "notifyProductUpdates"];
@@ -212,9 +249,6 @@ export const updateNotificationPreferencesService = async (userId, updates) => {
 
         return user;
     } catch (error) {
-        if (error instanceof ApiError) {
-            throw error;
-        }
-        throw new ApiError(500, error?.message || "Failed to update notification preferences.");
+        throw toApiError(error, "Update notification preferences", "Failed to update notification preferences.");
     }
 };
