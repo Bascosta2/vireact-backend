@@ -5,6 +5,10 @@ import mongoose from 'mongoose';
  * itself guarantees one document per piece of work (no separate index needed): inserting it, or swapping it on
  * `rev`, is the atomic claim that lets exactly one job submit a paid request. `usage` is an append-only ledger
  * with one entry per claimed run; the spend caps sum it, so a later retry never hides an earlier charge.
+ *
+ * Replaces the state that the unreleased first version of this feature kept on projects (media.matte); that
+ * field is still written for the render but no longer read here. The feature was never on in production, so
+ * there is nothing to migrate.
  */
 const usageSchema = new mongoose.Schema(
     {
@@ -12,6 +16,8 @@ const usageSchema = new mongoose.Schema(
         at: { type: Date, required: true },
         seconds: { type: Number, default: 0 },
         estCostUsd: { type: Number, default: 0 },
+        /** The run passed its last ownership check and called fal: it may be billed, so it is never voided. */
+        sent: { type: Boolean, default: false },
         /** The run stopped before anything was sent to fal, so nothing was billed. */
         voided: { type: Boolean, default: false },
     },

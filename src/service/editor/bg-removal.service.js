@@ -176,7 +176,10 @@ export const plainReason = (err) => {
 // ---- spend guards -------------------------------------------------------------------------------
 
 const FAILED_RETRY_MS = 24 * 60 * 60 * 1000;
-const CLAIM_STALE_MS = 2 * 60 * 1000;
+/** A claim not refreshed for this long belongs to a run that died; well above the worst-case proxy + upload. */
+const CLAIM_STALE_MS = 15 * 60 * 1000;
+/** How often a run refreshes its claim while it makes and uploads the 720p copy. */
+const CLAIM_HEARTBEAT_MS = 30 * 1000;
 const BILLING_LOCK_MS = 60 * 60 * 1000;
 let billingLockedUntil = 0;
 export const resetBillingLockForTests = () => {
@@ -246,8 +249,21 @@ export const matteJobStore = (userId, { Model = MatteJob } = {}) => {
         },
         /** Only the run holding the claim can write the record, so a run that lost it never overwrites the winner. */
         save: (rec) => Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), claimId: rec.claimId ?? null }, { $set: recordFields(rec), $inc: { rev: 1 } }),
-        /** The run stopped before anything was sent to fal: its ledger entry is not billed. */
-        release: (rec) => Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), 'usage.claimId': rec.claimId ?? null }, { $set: { 'usage.$.voided': true } }),
+        /** Heartbeat: keeps the claim fresh. False when another run has taken it over. */
+        async touch(rec, at) {
+            const r = await Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), claimId: rec.claimId ?? null }, { $set: { updatedAt: at } });
+            return r.matchedCount > 0;
+        },
+        /**
+         * Right before the submit: one atomic write that checks this run still holds the claim and marks its ledger
+         * entry as sent (from then on it may be billed and is never voided). False: the claim was lost, do not submit.
+         */
+        async markSending(rec, at) {
+            const r = await Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), claimId: rec.claimId ?? null, 'usage.claimId': rec.claimId ?? null }, { $set: { updatedAt: at, 'usage.$.sent': true } });
+            return r.matchedCount > 0;
+        },
+        /** A run that never got as far as sending to fal: its ledger entry is not billed. A sent entry is never voided. */
+        release: (rec) => Model.updateOne({ _id: idOf(rec.sourceHash, rec.variant), usage: { $elemMatch: { claimId: rec.claimId ?? null, sent: { $ne: true } } } }, { $set: { 'usage.$.voided': true } }),
     };
 };
 
@@ -260,7 +276,7 @@ const publicRecord = (rec) => ({ status: rec.status, reason: rec.reason ?? null,
  * saved right after submit, a re-run resumes polling it, a failed download is retried from fal's response url,
  * and a failed matte is not tried again within 24 hours.
  * @param {object} p { userId, projectId, srcPath, workDir, durationSec }
- * @param {object} [deps] injectable for tests: fetchFn, sleepFn, now, makeProxy, hash, env, track, pollMs, timeoutMs, store (find/claim/save/release, see matteJobStore), planOf, secondsThisMonth, usdToday, report
+ * @param {object} [deps] injectable for tests: fetchFn, sleepFn, now, makeProxy, hash, env, track, pollMs, timeoutMs, store (find/claim/save/touch/markSending/release, see matteJobStore), heartbeatMs, planOf, secondsThisMonth, usdToday, report
  */
 export async function runMatteStep({ userId, projectId, srcPath, workDir, durationSec }, deps = {}) {
     const env = deps.env ?? process.env;
@@ -307,11 +323,26 @@ export async function runMatteStep({ userId, projectId, srcPath, workDir, durati
             if (!(await store.claim(existing, claim, { claimId, at: new Date(t), seconds, estCostUsd }))) return { status: 'skipped', reason: 'in_progress' };
             rec = claim;
             claimed = true;
+            // Taking over a dead run's claim: that run never sent anything (no request id), so it is not billed.
+            if (existing?.claimId && !existing.requestId) await store.release(existing).catch(() => {});
             const proxyPath = path.join(workDir, 'matte-input.mp4');
-            await (deps.makeProxy ?? makeMatteProxy)(srcPath, proxyPath);
-            inputKey = `editor/mattes/${userId}/${sourceHash}/input-720p.mp4`;
-            await storage.uploadFile(proxyPath, inputKey, 'video/mp4');
-            const videoUrl = await storage.presignDownload(inputKey, { expiresIn: 60 * 60 });
+            // Per-claim key: a run that lost its claim deletes only its own copy, never the one the winner sent.
+            inputKey = `editor/mattes/${userId}/${sourceHash}/input-720p-${claimId}.mp4`;
+            const beat = setInterval(() => { store.touch(rec, new Date(nowMs())).catch(() => {}); }, deps.heartbeatMs ?? CLAIM_HEARTBEAT_MS);
+            beat.unref?.();
+            let videoUrl;
+            try {
+                await (deps.makeProxy ?? makeMatteProxy)(srcPath, proxyPath);
+                await storage.uploadFile(proxyPath, inputKey, 'video/mp4');
+                videoUrl = await storage.presignDownload(inputKey, { expiresIn: 60 * 60 });
+            } finally {
+                clearInterval(beat);
+            }
+            if (!(await store.markSending(rec, new Date(nowMs())))) {
+                // Another run took the claim over while this one was slow: it submits, this one must not.
+                await store.release(rec).catch(() => {});
+                return { status: 'skipped', reason: 'in_progress' };
+            }
             sent = true; // from here fal may bill this run, so its ledger entry stays
             const sub = await submitFal({ endpoint: MODELS[model].endpoint, input: buildFalInput(model, videoUrl, { refine }), apiKey, fetchFn: deps.fetchFn });
             rec = { ...rec, ...sub };

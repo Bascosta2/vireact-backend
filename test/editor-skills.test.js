@@ -251,7 +251,13 @@ const memStore = (seed = []) => {
             return true;
         },
         save: async (r) => { rows.push({ ...r }); },
-        release: async (r) => { ledger.filter((u) => u.claimId === r.claimId).forEach((u) => { u.voided = true; }); },
+        touch: async (r) => latest(r.sourceHash, r.variant)?.claimId === r.claimId,
+        markSending: async (r) => {
+            if (latest(r.sourceHash, r.variant)?.claimId !== r.claimId) return false;
+            ledger.filter((u) => u.claimId === r.claimId).forEach((u) => { u.sent = true; });
+            return true;
+        },
+        release: async (r) => { ledger.filter((u) => u.claimId === r.claimId && !u.sent).forEach((u) => { u.voided = true; }); },
     };
 };
 /** In-memory stand-in for the MatteJob model: unique _id on insert, rev/claimId-conditioned updates. */
@@ -276,15 +282,18 @@ const fakeMatteModel = (seed = []) => {
             return copy(d);
         },
         updateOne: async (f, u) => {
+            await null;
             const d = docs.get(f._id);
             if (!d) return { matchedCount: 0 };
-            if (f['usage.claimId'] !== undefined) {
-                const entry = d.usage.find((x) => x.claimId === f['usage.claimId']);
-                if (entry) entry.voided = u.$set['usage.$.voided'];
-                return { matchedCount: entry ? 1 : 0 };
+            if ('claimId' in f && (d.claimId ?? null) !== f.claimId) return { matchedCount: 0 };
+            const em = f.usage?.$elemMatch;
+            const i = f['usage.claimId'] !== undefined ? d.usage.findIndex((x) => x.claimId === f['usage.claimId'])
+                : em ? d.usage.findIndex((x) => x.claimId === em.claimId && x.sent !== true) : null;
+            if (i === -1) return { matchedCount: 0 };
+            for (const [k, v] of Object.entries(u.$set ?? {})) {
+                if (k.startsWith('usage.$.')) d.usage[i][k.slice('usage.$.'.length)] = v;
+                else d[k] = copy(v);
             }
-            if ((d.claimId ?? null) !== f.claimId) return { matchedCount: 0 };
-            Object.assign(d, copy(u.$set));
             d.rev += u.$inc?.rev ?? 0;
             return { matchedCount: 1 };
         },
@@ -337,7 +346,7 @@ test('matte step: stores the result, then a cache hit makes no fal call', async 
     assert.equal(first.status, 'ok');
     assert.equal(first.key, 'editor/mattes/u1/abc/veed-refine.webm');
     assert.ok(log.some(([k, key]) => k === 'buffer' && key === first.key));
-    assert.equal(JSON.parse(fake.calls[0].body).video_url, 'https://s3/editor/mattes/u1/abc/input-720p.mp4?sig');
+    assert.match(JSON.parse(fake.calls[0].body).video_url, /^https:\/\/s3\/editor\/mattes\/u1\/abc\/input-720p-[0-9a-f-]{36}\.mp4\?sig$/, 'per-claim copy');
     assert.equal(deps.store.rows[1].requestId, 'r1', 'request id saved right after submit');
     assert.deepEqual(deps.store.ledger.map((u) => [u.seconds, u.estCostUsd, Boolean(u.voided)]), [[60, 1.35, false]], 'the run is in the usage ledger');
     const again = falFake([{ status: 'COMPLETED' }]);
@@ -537,5 +546,48 @@ test('usage ledger: a run that never reached fal is not billed; caps sum every b
     assert.equal(await ledgerTotal({ userId: 'u1' }, since, 'seconds', { Model: Model3 }), 105);
     assert.deepEqual(query, { userId: 'u1', 'usage.at': { $gte: since } });
     assert.equal(Math.round((await ledgerTotal({}, since, 'estCostUsd', { Model: Model3 })) * 100) / 100, 2.35);
+    setStorageForTests(null);
+});
+
+test('a slow run keeps its claim with a heartbeat; a stalled run that lost it never submits', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    let clock = Date.parse('2026-11-24T10:00:00Z');
+    const now = () => clock;
+    const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+
+    // Heartbeat: while the first run makes its copy for 20 minutes of clock time, a second run sees a fresh claim.
+    const Model = fakeMatteModel();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const slow = gate();
+    const first = runMatteStep(matteJob, matteDeps(fake, { now, heartbeatMs: 5, store: matteJobStore('u1', { Model }), makeProxy: () => slow.p }));
+    await new Promise((r) => setTimeout(r, 20));
+    clock += 20 * 60 * 1000;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(new Date(Model.docs.get('u1:abc:veed-refine').updatedAt).getTime(), clock, 'heartbeat refreshed the claim');
+    const second = await runMatteStep(matteJob, matteDeps(fake, { now, store: matteJobStore('u1', { Model }) }));
+    assert.equal(second.reason, 'in_progress');
+    slow.open();
+    assert.equal((await first).status, 'ok');
+    assert.equal(fake.calls.filter((c) => c.method === 'POST').length, 1);
+
+    // A run that stalls with no heartbeat (paused process) loses the claim after 15 minutes: the new run submits, and
+    // the stalled one checks ownership right before submitting and stops. One submit, one billed ledger entry.
+    memStorage();
+    const Model2 = fakeMatteModel();
+    const fake2 = falFake([{ status: 'COMPLETED' }]);
+    const stalled = gate();
+    const a = runMatteStep(matteJob, matteDeps(fake2, { now, heartbeatMs: 60 * 60 * 1000, store: matteJobStore('u1', { Model: Model2 }), makeProxy: () => stalled.p }));
+    await new Promise((r) => setTimeout(r, 10));
+    clock += 16 * 60 * 1000;
+    const b = await runMatteStep(matteJob, matteDeps(fake2, { now, store: matteJobStore('u1', { Model: Model2 }) }));
+    assert.equal(b.status, 'ok', 'stale claim taken over');
+    stalled.open();
+    assert.deepEqual(await a, { status: 'skipped', reason: 'in_progress' });
+    assert.equal(fake2.calls.filter((c) => c.method === 'POST').length, 1, 'exactly one submit');
+    const doc = Model2.docs.get('u1:abc:veed-refine');
+    assert.deepEqual(doc.usage.map((u) => [Boolean(u.sent), Boolean(u.voided)]), [[false, true], [true, false]], 'the stalled run is voided, the winner is billed');
+    assert.equal(sumLedger([doc], new Date(0), 'seconds'), 60);
+    assert.equal(doc.status, 'ok', 'the stalled run did not overwrite the winner');
     setStorageForTests(null);
 });
