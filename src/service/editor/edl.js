@@ -88,7 +88,9 @@ const BANNED = /\b(guarantee[ds]?|will go viral|go viral for sure|100% viral|vir
 const MIN_SEGMENT_SEC = 0.4;
 const MIN_OUTPUT_SEC = 3;
 const EDGE_TOLERANCE = 0.25;
-export const LIMITS = Object.freeze({ graphics: 40, sfx: 80, effects: 30, zooms: 40, listItems: 6 });
+export const LIMITS = Object.freeze({ graphics: 40, sfx: 80, effects: 30, zooms: 40, listItems: 6, screens: 6 });
+/** Screen recording shots (EDITOR_FEATURES_V2 + an attached recording): on-screen length and zoom limits, in seconds / scale. */
+export const SCREEN_LIMITS = Object.freeze({ minSec: 1.5, maxSec: 15, minZoom: 1, maxZoom: 2.5 });
 
 const str = { type: 'string' };
 const num = { type: 'number' };
@@ -108,7 +110,7 @@ const enumOf = (values) => ({ type: 'string', description: `One of: ${values.joi
 const obj = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const arr = (items) => ({ type: 'array', items });
 
-const edlSchema = (v2) => obj({
+const edlSchema = (v2, screen = false) => obj({
     summary: str,
     hookStrategy: str,
     segments: arr(obj({ id: str, start: num, end: num, role: enumOf(SEGMENT_ROLES), reason: str })),
@@ -139,6 +141,9 @@ const edlSchema = (v2) => obj({
     // split (EDITOR_FEATURES_V2): speaker on top, a zoomed detail of the same take below, centered on detailX/detailY.
     framing: v2 ? obj({ mode: enumOf(['fill', 'fit_blur', 'split']), focusX: num, detailX: num, detailY: num }) : obj({ mode: enumOf(['fill', 'fit_blur']), focusX: num }),
     music: obj({ trackId: str, volume: num, reason: str }),
+    // Screen recording shots (only when the creator attached one): talking-head time to show it, where in the
+    // recording to start, and the focus point (x, y 0 to 1 of the recording, zoom 1 to 2.5) it moves from and to.
+    ...(screen ? { screens: arr(obj({ start: num, end: num, recStart: num, fromX: num, fromY: num, fromZoom: num, toX: num, toY: num, toZoom: num })) } : {}),
     // Timed beats: a sound effect type or a visual effect (shake, flash).
     beats: arr(obj({ type: { type: 'string', description: 'a sound name, or shake, or flash' }, at: num })),
     changes: arr(obj({ kind: enumOf(CHANGE_KINDS), label: str, why: str, evidence: enumOf(EVIDENCE) })),
@@ -147,7 +152,42 @@ const edlSchema = (v2) => obj({
 
 /** The schema Claude plans against; EDITOR_FEATURES_V2 adds the split-screen framing. EDL_SCHEMA is the standard one. */
 export const EDL_SCHEMA = edlSchema(false);
-export const edlSchemaFor = (v2) => (v2 ? edlSchema(true) : EDL_SCHEMA);
+export const edlSchemaFor = (v2, screen = false) => (v2 ? edlSchema(true, screen) : EDL_SCHEMA);
+
+/**
+ * A focus point on the recording, clamped so the zoomed view never leaves the picture: at zoom z the
+ * visible window is 1/z wide, so the center stays within [0.5/z, 1 - 0.5/z].
+ */
+export function clampFocus(x, y, zoom) {
+    const z = Math.min(SCREEN_LIMITS.maxZoom, Math.max(SCREEN_LIMITS.minZoom, Number(zoom) || 1));
+    const half = 0.5 / z;
+    const c = (v) => Math.min(1 - half, Math.max(half, Number.isFinite(Number(v)) ? Number(v) : 0.5));
+    return { x: Math.round(c(x) * 1000) / 1000, y: Math.round(c(y) * 1000) / 1000, zoom: Math.round(z * 100) / 100 };
+}
+
+/**
+ * Screen recording shots from the plan: each starts inside a kept segment, fits the recording, is clamped
+ * to the on-screen limits, and never overlaps another. Empty without a recording (durationSec 0).
+ */
+export function validateScreens(screens, segments, recordingSec) {
+    if (!Array.isArray(screens) || !(recordingSec > 0)) return [];
+    const out = [];
+    const ordered = screens.filter((x) => x && Number.isFinite(Number(x.start)) && Number.isFinite(Number(x.end))).sort((a, b) => a.start - b.start);
+    for (const x of ordered) {
+        if (out.length >= LIMITS.screens) break;
+        const start = r3(Math.max(0, Number(x.start)));
+        if (!inSegments(start, segments)) continue;
+        const recStart = r3(clamp(x.recStart, 0, Math.max(0, recordingSec - SCREEN_LIMITS.minSec)));
+        // Never longer than the recording that is left after recStart, nor the on-screen maximum.
+        const len = Math.min(Number(x.end) - start, SCREEN_LIMITS.maxSec, recordingSec - recStart);
+        if (!(len >= SCREEN_LIMITS.minSec)) continue;
+        if (out.length && start < out[out.length - 1].end) continue;
+        const from = clampFocus(x.fromX, x.fromY, x.fromZoom);
+        const to = clampFocus(x.toX, x.toY, x.toZoom);
+        out.push({ start, end: r3(start + len), recStart, fromX: from.x, fromY: from.y, fromZoom: from.zoom, toX: to.x, toY: to.y, toZoom: to.zoom });
+    }
+    return out;
+}
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
 const r3 = (n) => Math.round(Number(n) * 1000) / 1000;
@@ -286,6 +326,8 @@ export function validateEdl(edl, ctx) {
         // Legacy field; new plans put text in `graphics`.
         textOverlays: [],
         framing: { mode: edl.framing?.mode === 'fit_blur' || (edl.framing?.mode === 'split' && isEditorFeaturesV2()) ? edl.framing.mode : 'fill', focusX: r3(clamp(edl.framing?.focusX ?? 0.5, 0, 1)), detailX: r3(clamp(edl.framing?.detailX ?? 0.5, 0, 1)), detailY: r3(clamp(edl.framing?.detailY ?? 0.62, 0, 1)) },
+        // Only with the flag on and a recording attached (ctx.screenDurationSec); otherwise always empty.
+        screens: isEditorFeaturesV2() ? validateScreens(edl.screens, kept, Number(ctx.screenDurationSec) || 0) : [],
         music: { trackId: musicId || null, volume: r3(clamp(edl.music?.volume ?? 0.15, 0, 0.6)), reason: clip(edl.music?.reason, 200) },
         sfx: sfxIn.filter((s) => SFX_TYPES.includes(s.type) && inSegments(s.at, kept)).slice(0, LIMITS.sfx).map((s) => ({ type: s.type, at: r3(s.at) })),
         changes: (edl.changes ?? []).slice(0, 24).map((c) => ({ kind: pick(c.kind, CHANGE_KINDS, 'cut'), label: clip(c.label, 120), why: clip(c.why, 300), evidence: pick(c.evidence, EVIDENCE, 'footage') })),
@@ -314,6 +356,7 @@ export function toSchemaShape(plan) {
         graphics: graphics.map(({ visual, ...g }) => ({ ...g, items: g.type === 'visual' ? visual ?? '' : (g.items ?? []).join(' | ') })),
         style: { transition: transitions.style, jumpCutZoom: transitions.jumpCutZoom, ...look },
         framing: plan.framing,
+        ...(plan.screens?.length ? { screens: plan.screens } : {}),
         music: { ...plan.music, trackId: plan.music?.trackId ?? '' },
         beats: [...(plan.sfx ?? []), ...(plan.effects ?? [])].sort((a, b) => a.at - b.at),
         changes: plan.changes,

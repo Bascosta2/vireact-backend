@@ -18,6 +18,9 @@ import {
     getEditRender,
     scoreEditRender,
     deleteEditProject,
+    attachScreenRecording,
+    confirmScreenRecording,
+    detachScreenRecording,
 } from '../controller/editor.controller.js';
 
 /** Editor tab: AI edits of the creator's own footage. The QStash job webhook is mounted in app.js. */
@@ -47,6 +50,9 @@ editorRoutes.post('/projects/:id/uploaded', confirmEditUpload);
 editorRoutes.patch('/projects/:id/edits', updateEdits);
 editorRoutes.post('/projects/:id/regenerate', regenerateEdit);
 editorRoutes.post('/projects/:id/storyboard/swap', swapRateLimit, swapStoryboardBeat);
+editorRoutes.post('/projects/:id/screen-recording', attachScreenRecording);
+editorRoutes.post('/projects/:id/screen-recording/uploaded', confirmScreenRecording);
+editorRoutes.delete('/projects/:id/screen-recording', detachScreenRecording);
 editorRoutes.post('/projects/:id/render', startEditRender);
 editorRoutes.get('/projects/:id/render/:renderId', getEditRender);
 editorRoutes.post('/projects/:id/score', scoreEditRender);

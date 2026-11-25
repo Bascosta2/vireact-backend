@@ -64,6 +64,21 @@ const editProjectSchema = new mongoose.Schema({
         thumbnailKey: String,
     },
 
+    /** Optional second upload (EDITOR_FEATURES_V2): a screen recording the planner may cut to over the talking head. */
+    screenRecording: {
+        key: String,
+        contentType: String,
+        sizeBytes: Number,
+        originalName: String,
+        durationSec: Number,
+        width: Number,
+        height: Number,
+        /** Set once prepared; absent while the upload is waiting to be prepared. */
+        proxyKey: String,
+        masterKey: String,
+        sheetKey: String,
+    },
+
     media: {
         words: { type: [wordSchema], default: undefined },
         silences: { type: [rangeSchema], default: undefined },
@@ -86,7 +101,7 @@ const editProjectSchema = new mongoose.Schema({
         createdAt: { type: Date, default: Date.now },
     }],
     /** Set while a regeneration is queued, so the job (and a sweeper retry) knows to replan with the note. */
-    pendingRevision: { type: new mongoose.Schema({ note: String, previousPlan: mongoose.Schema.Types.Mixed, keepEdits: mongoose.Schema.Types.Mixed }, { _id: false }), default: null },
+    pendingRevision: { type: new mongoose.Schema({ note: String, previousPlan: mongoose.Schema.Types.Mixed, keepEdits: mongoose.Schema.Types.Mixed, screenAttach: Boolean }, { _id: false }), default: null },
     renders: { type: [renderSchema], default: [] },
 
     billing: {
