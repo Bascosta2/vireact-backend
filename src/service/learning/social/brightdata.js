@@ -16,6 +16,8 @@
  * the cover image and top comments. The fast search/profile datasets return none of these (checked
  * 2026-11-19). So re-checks and the deep analyzer, which both use the stats dataset, get them as
  * `extras`; links are session-bound, so downloads send the record's tt_chain_token cookie.
+ *
+ * The job runner (createJobRunner) is shared with the Instagram Reels adapter (instagram-reels.js).
  */
 import { registerProvider } from './providers.js';
 import { parseCaptions } from '../deep-features.js';
@@ -102,7 +104,12 @@ export const toExtras = (r) => ({
 const CAPTION_CONCURRENCY = 8;
 const CAPTION_TIMEOUT_MS = 15_000;
 
-export const createBrightDataAdapter = ({
+/**
+ * Bright Data job runner shared by the TikTok adapter (here) and the Instagram Reels adapter
+ * (instagram-reels.js): trigger, poll until ready, download the records.
+ * `query` adds dataset-specific parameters to the trigger (e.g. type=discover_new, discover_by=url).
+ */
+export const createJobRunner = ({
     apiKey,
     fetchImpl = globalThis.fetch,
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -128,8 +135,8 @@ export const createBrightDataAdapter = ({
     const errorText = async (res) => String(await res.text().catch(() => '')).slice(0, 200);
 
     /** Runs one job and returns its records (error records included; callers filter). */
-    const runJob = async (datasetId, input, { limitPerInput } = {}) => {
-        const qs = new URLSearchParams({ dataset_id: datasetId, format: 'json', include_errors: 'true' });
+    const runJob = async (datasetId, input, { limitPerInput, query } = {}) => {
+        const qs = new URLSearchParams({ dataset_id: datasetId, ...(query ?? {}), format: 'json', include_errors: 'true' });
         const body = { input, ...(limitPerInput ? { limit_per_input: limitPerInput } : {}) };
         const trig = await request(`${BASE}/trigger?${qs}`, { method: 'POST', body: JSON.stringify(body) });
         if (!trig.ok) throw new Error(`Bright Data trigger ${trig.status}: ${await errorText(trig)}`);
@@ -164,6 +171,12 @@ export const createBrightDataAdapter = ({
     };
 
     const billable = (records) => records.filter((r) => r && !r.error).length;
+
+    return { runJob, billable };
+};
+
+export const createBrightDataAdapter = ({ apiKey, fetchImpl = globalThis.fetch, ...runnerOptions } = {}) => {
+    const { runJob, billable } = createJobRunner({ apiKey, fetchImpl, ...runnerOptions });
 
     /** Caption text for each extra that has a captions link (several at once). Failures leave captions null. */
     const fetchCaptions = async (extras) => {
