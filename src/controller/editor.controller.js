@@ -84,6 +84,7 @@ const brandFor = (user) => (isEditorFeaturesV2() ? user?.editorBrand ?? null : n
 
 const mediaFor = (p, brand = null) => ({
     brand,
+    v2: isEditorFeaturesV2(),
     words: p.media?.words ?? [],
     silences: p.media?.silences ?? [],
     cutCandidates: p.media?.cutCandidates ?? [],
