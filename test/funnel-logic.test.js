@@ -266,7 +266,9 @@ test('payment failed (new invoice shape) is recorded', async (t) => {
 });
 
 test('subscription updated: statuses are mirrored; a new paid period resets usage, past_due does not', async (t) => {
-    t.after(() => mock.restoreAll());
+    // Stripe unreachable: the handler falls back to the event's copy.
+    setStripeForTests({ subscriptions: { retrieve: async () => { throw new Error('unreachable'); } } });
+    t.after(() => { mock.restoreAll(); setStripeForTests(null); });
     const doc = fakeSub();
     mockWebhookStore(doc);
     const periodEvent = (status, start, end = new Date(start.getTime() + 30 * DAY_MS)) => stripeEvent('customer.subscription.updated', {
@@ -411,4 +413,59 @@ test('promo cap holds under parallel redemptions (atomic counter)', async (t) =>
     const results = await Promise.all(Array.from({ length: 20 }, () => claimPromoSlot('unit-cap', 5)));
     assert.equal(results.filter(Boolean).length, 4, '5 total, 1 already used');
     assert.equal(counters.get('unit-cap'), 5);
+});
+
+test('out-of-order events: the live Stripe subscription wins, and a paying row never drops to incomplete', async (t) => {
+    let live = null;
+    setStripeForTests({ subscriptions: { retrieve: async () => { if (!live) throw new Error('unreachable'); return live; } } });
+    t.after(() => { mock.restoreAll(); setStripeForTests(null); });
+    const doc = fakeSub();
+    mockWebhookStore(doc);
+    const stale = { id: 'sub_live_1', status: 'incomplete', items: { data: [{ id: 'si_1' }] } };
+
+    // created(incomplete) retried after the invoice was paid: Stripe says active now.
+    live = { ...stale, status: 'active' };
+    await handleStripeWebhook(stripeEvent('customer.subscription.created', stale));
+    assert.equal(doc.status, 'active');
+
+    // Live status is used even when the event is stale in the other direction.
+    live = { ...stale, status: 'past_due' };
+    await handleStripeWebhook(stripeEvent('customer.subscription.updated', { ...stale, status: 'active' }));
+    assert.equal(doc.status, 'past_due');
+
+    // Stripe unreachable and the event copy says incomplete: a started subscription is kept as it is.
+    doc.status = 'active';
+    live = null;
+    await handleStripeWebhook(stripeEvent('customer.subscription.created', stale));
+    assert.equal(doc.status, 'active');
+    assert.equal(effectivePlan(doc), 'pro');
+
+    // A row that never started can still be incomplete.
+    doc.status = 'incomplete';
+    live = { ...stale, status: 'incomplete_expired' };
+    await handleStripeWebhook(stripeEvent('customer.subscription.updated', stale));
+    assert.equal(doc.status, 'incomplete_expired');
+});
+
+test('checkout completed: a paid session is stored active (or trial) even if the subscription snapshot says incomplete', async (t) => {
+    const stripeSub = { id: 'sub_live_1', status: 'incomplete', trial_end: null, items: { data: [{ id: 'si_1', price: { id: 'price_unit_pro' }, current_period_end: unixOf(new Date(Date.now() + 30 * DAY_MS)) }] } };
+    setStripeForTests({ subscriptions: { retrieve: async () => stripeSub } });
+    t.after(() => { mock.restoreAll(); setStripeForTests(null); });
+    const session = (payment_status) => ({ metadata: { userId: '64b7f0a1c2d3e4f5a6b7c8d9', plan: 'pro' }, subscription: 'sub_live_1', customer: 'cus_1', payment_status });
+
+    for (const paid of ['paid', 'no_payment_required']) {
+        const doc = fakeSub({ plan: 'free', status: 'active', stripeSubscriptionId: null });
+        mockWebhookStore(doc);
+        await handleStripeWebhook(stripeEvent('checkout.session.completed', session(paid)));
+        assert.equal(doc.status, 'active', paid);
+        assert.equal(doc.plan, 'pro');
+        mock.restoreAll();
+    }
+
+    // Payment still pending (e.g. a delayed method): no paid access until Stripe reports it active.
+    const doc = fakeSub({ plan: 'free', status: 'active', stripeSubscriptionId: null });
+    mockWebhookStore(doc);
+    await handleStripeWebhook(stripeEvent('checkout.session.completed', session('unpaid')));
+    assert.equal(doc.status, 'incomplete');
+    assert.equal(effectivePlan(doc), 'free');
 });

@@ -668,8 +668,11 @@ async function handleCheckoutCompleted(session) {
     const [, periodEnd] = extractSubscriptionPeriod(stripeSubscription);
     const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
     const trialing = stripeSubscription.status === 'trialing';
-    // An unpaid start (e.g. incomplete) gets no paid access until Stripe reports it active.
-    const status = mapStripeStatus(stripeSubscription.status) ?? SUBSCRIPTION_STATUS.ACTIVE;
+    // A paid (or free-to-start trial) session is a started plan, whatever an early subscription snapshot says.
+    // Otherwise (e.g. an async payment still pending) no paid access until Stripe reports it active.
+    const sessionPaid = ['paid', 'no_payment_required'].includes(session.payment_status);
+    const startedStatus = trialing ? SUBSCRIPTION_STATUS.TRIAL : SUBSCRIPTION_STATUS.ACTIVE;
+    const status = sessionPaid ? startedStatus : (mapStripeStatus(stripeSubscription.status) ?? SUBSCRIPTION_STATUS.ACTIVE);
     const trialEndsAt = trialing && stripeSubscription.trial_end ? new Date(stripeSubscription.trial_end * 1000) : null;
 
     if (!subscription) {
@@ -720,19 +723,37 @@ async function handleCheckoutCompleted(session) {
     console.log(`[Stripe Webhook] Upgraded user ${userId} to ${plan} plan${trialing ? ' (free trial)' : ''}`);
 }
 
+/** Statuses a subscription can only reach after it started; it never goes from these back to incomplete. */
+const PAID_START_STATUSES = [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIAL, SUBSCRIPTION_STATUS.PAST_DUE, SUBSCRIPTION_STATUS.UNPAID, SUBSCRIPTION_STATUS.PAUSED];
+
+/** The subscription as Stripe has it now; the event's own copy only when Stripe can't be reached. */
+async function liveStripeSubscription(eventSubscription) {
+    try {
+        const live = stripe ? await stripe.subscriptions.retrieve(eventSubscription.id) : null;
+        if (live?.id) return live;
+    } catch (err) {
+        console.warn(`[Stripe Webhook] Could not fetch subscription ${eventSubscription.id}, using the event copy: ${err?.message}`);
+    }
+    return eventSubscription;
+}
+
 // Handle subscription updated.
 // Also handles Stripe Customer Portal tier changes: if the line item's price id
 // maps to a different local plan, update the plan and reset usage counters so
 // a downgrade does not leave the user over-quota against the new lower limit.
-async function handleSubscriptionUpdated(stripeSubscription) {
+async function handleSubscriptionUpdated(eventSubscription) {
     const subscription = await Subscription.findOne({
-        stripeSubscriptionId: stripeSubscription.id
+        stripeSubscriptionId: eventSubscription.id
     });
 
     if (!subscription) {
-        console.error(`[Stripe Webhook] Subscription not found for Stripe subscription ${stripeSubscription.id}`);
+        console.error(`[Stripe Webhook] Subscription not found for Stripe subscription ${eventSubscription.id}`);
         return;
     }
+
+    // Stripe events can arrive late, out of order or retried (e.g. created/incomplete after the invoice
+    // was paid), so act on the subscription as it is now, not on the event's snapshot.
+    const stripeSubscription = await liveStripeSubscription(eventSubscription);
 
     // Update period dates. Stripe API 2025-03-31+ moved current_period_* onto items[].
     // Helper reads item-level first, falls back to top-level; null guards prevent
@@ -744,7 +765,12 @@ async function handleSubscriptionUpdated(stripeSubscription) {
     if (periodEnd) subscription.currentPeriodEnd = periodEnd;
 
     // Mirror Stripe's status; unrecognized statuses leave the local status unchanged.
-    const status = mapStripeStatus(stripeSubscription.status);
+    let status = mapStripeStatus(stripeSubscription.status);
+    if (status === SUBSCRIPTION_STATUS.INCOMPLETE && PAID_START_STATUSES.includes(subscription.status)) {
+        // Stripe never moves a started subscription back to incomplete: this is a stale snapshot.
+        console.warn(`[Stripe Webhook] Ignored stale incomplete status for user ${subscription.userId}`);
+        status = null;
+    }
     const resetUsage = () => {
         subscription.usage.videosUsed = 0;
         subscription.usage.chatMessagesUsed = 0;

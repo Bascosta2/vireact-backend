@@ -1,7 +1,7 @@
 import { PromoRedemption, PromoCodeCounter } from '../model/promo-redemption.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { SUBSCRIPTION_PLANS, SUBSCRIPTION_STATUS } from '../constants.js';
-import { getPromoCode, normalizePromoCode } from '../config/promo-codes.js';
+import { getPromoCode, normalizePromoCode, promoCodeRef } from '../config/promo-codes.js';
 import { getOrCreateSubscription } from './subscription.service.js';
 import { promoInfo, promoIsActive } from './promo-state.js';
 
@@ -100,6 +100,6 @@ export async function redeemPromoCode(userId, rawCode, now = new Date()) {
     subscription.paymentFailedAt = null;
     await subscription.save();
 
-    console.log(`[Promo] user ${userId} redeemed ${code}: ${promo.plan}${endsAt ? ` until ${endsAt.toISOString()}` : ' for life'}`);
-    return { label: promo.label, plan: promo.plan, promo: promoInfo(subscription, now) };
+    console.log(`[Promo] user ${userId} redeemed code ${promoCodeRef(code)} (${promo.label}): ${promo.plan}${endsAt ? ` until ${endsAt.toISOString()}` : ' for life'}`);
+    return { label: promo.label, plan: promo.plan, codeRef: promoCodeRef(code), promo: promoInfo(subscription, now) };
 }

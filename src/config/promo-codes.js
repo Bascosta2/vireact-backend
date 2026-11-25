@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { SUBSCRIPTION_PLANS } from '../constants.js';
 
 /**
@@ -23,6 +24,9 @@ const envList = (name) =>
         .split(',')
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
+
+/** Short, non-reversible reference to a code for logs and analytics (never log or send the code itself). */
+export const promoCodeRef = (code) => createHash('sha256').update(String(code ?? '')).digest('hex').slice(0, 10);
 
 /** What the person typed, as a lookup key: trimmed, lower case, inner spaces removed. */
 export const normalizePromoCode = (raw) => String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '');

@@ -126,6 +126,7 @@ test('trial lifecycle: trialing with trial caps, then active with the full plan,
     });
 
     // First payment: Stripe flips the subscription to active. Usage restarts on the full plan.
+    stripeSubs.set(stripeSub.id, { ...stripeSub, status: 'active' }); // the handler reads the live subscription
     await handleStripeWebhook(event('customer.subscription.updated', { ...stripeSub, status: 'active' }));
     sub = await Subscription.findOne({ userId: user._id });
     assert.equal(sub.status, SUBSCRIPTION_STATUS.ACTIVE);
