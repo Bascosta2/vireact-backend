@@ -1,5 +1,4 @@
-import jwt from 'jsonwebtoken';
-import { ACCESS_TOKEN_SECRET } from '../config/index.js';
+import { verifyAccessToken } from '../utils/jwt.js';
 import { captureError } from '../service/ops-monitoring.service.js';
 
 const str = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
@@ -10,7 +9,7 @@ const userIdFromRequest = (req) => {
         const header = req.headers.authorization || '';
         const token = header.startsWith('Bearer ') ? header.slice(7) : req.cookies?.accessToken;
         if (!token) return null;
-        const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
+        const decoded = verifyAccessToken(token);
         return decoded?._id ? String(decoded._id) : null;
     } catch {
         return null;

@@ -21,6 +21,9 @@ export const COOKIE_OPTIONS = {
 };
 
 // DATSBASE
+/** bcrypt cost for new password hashes. Hashes made at the old cost (10) still verify: the cost is stored in each hash. */
+export const BCRYPT_COST = 12;
+
 export const MAX_RETRIES = 3;
 export const RETRY_DELAY = 1000; // Reduced for serverless cold starts
 export const CONNECTION_TIMEOUT = 3000; // Reduced timeout for serverless
