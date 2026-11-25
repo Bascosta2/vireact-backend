@@ -13,6 +13,7 @@ import {
     resendEmailVerificationService,
     forgotPasswordService,
     resetPasswordService,
+    verifyEmailService,
     MAX_REFRESH_SESSIONS,
     VERIFICATION_EMAIL,
 } from '../src/service/auth.service.js';
@@ -132,12 +133,20 @@ test('signup: duplicate verified email is 409 (not 500); unverified email restar
     const stuck = await makeUser({ isEmailVerified: false, emailVerificationToken: 'lost' });
     sent.length = 0;
     const again = await customSignupUserService('New Name', stuck.email, 'new-pass-1', 'local');
-    assert.equal(again.user.name, 'New Name');
+    assert.equal(again.pendingSignup, true);
     assert.equal(again.verificationEmail, VERIFICATION_EMAIL.SENT);
     assert.equal(sent.length, 1);
+    // Nothing changes at re-signup; opening the link verifies the inbox and asks for a new password.
+    const before = await User.findById(stuck._id);
+    assert.ok(await before.comparePassword('pw-123456'));
+    assert.equal(before.isEmailVerified, false);
+    const token = sent[0].text.match(/token=([a-f0-9]{64})/)[1];
+    const opened = await verifyEmailService(token);
+    assert.equal(opened.status, 'verified_set_password');
+    await resetPasswordService(opened.resetToken, 'new-pass-1');
     const reloaded = await User.findById(stuck._id);
     assert.ok(await reloaded.comparePassword('new-pass-1'));
-    assert.notEqual(reloaded.emailVerificationToken, 'lost');
+    assert.equal(reloaded.isEmailVerified, true);
 });
 
 test('resend verification answers the same for unknown, verified and unverified emails', async () => {

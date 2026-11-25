@@ -69,10 +69,25 @@ const userSchema = new mongoose.Schema({
         default: ROLES.USER,
         required: true
     },
+    /**
+     * The token in verification emails. Reused by every resend and kept after verification, so earlier
+     * links keep working and a second click answers "already verified" (see auth.service verifyEmailService).
+     */
     emailVerificationToken: {
         type: String,
         default: null
     },
+    /** When the verification link stops working (7 days after it was issued). Null on older tokens until their next email. */
+    emailVerificationTokenExpiresAt: {
+        type: Date,
+        default: null,
+        select: false
+    },
+    /**
+     * Set when someone signs up again on this address before it was verified. Two people may have chosen
+     * passwords, so verifying then keeps neither: the inbox owner sets a new one (auth.service verifyEmailService).
+     */
+    competingSignupAt: { type: Date, default: null, select: false },
     isEmailVerified: {
         type: Boolean,
         default: false
@@ -176,6 +191,8 @@ userSchema.set("toJSON", {
         delete ret.password;
         delete ret.refreshToken;
         delete ret.emailVerificationToken;
+        delete ret.emailVerificationTokenExpiresAt;
+        delete ret.competingSignupAt;
         delete ret.refreshSessions;
         delete ret.passwordResetTokenHash;
         delete ret.passwordResetExpires;

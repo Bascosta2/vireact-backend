@@ -1,7 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import { hashRefreshToken, refreshTokenMatches, isHashedRefreshToken } from '../src/utils/refresh-token-hash.js';
-import { verifyEmailService, resetPasswordService, loginAdminService, isEmailLinkToken } from '../src/service/auth.service.js';
+import {
+    verifyEmailService,
+    resetPasswordService,
+    loginAdminService,
+    loginUserService,
+    isEmailLinkToken,
+    verificationTokenFor,
+    resendEmailVerificationService,
+    customSignupUserService,
+    buildVerificationEmail,
+    buildPasswordResetEmail,
+    escapeHtml,
+    formatFromAddress,
+    replyToAddress,
+    EMAIL_VERIFICATION_STATUS,
+    EMAIL_VERIFICATION_TTL_MS,
+    EMAIL_RESEND_COOLDOWN_MS,
+    VERIFICATION_EMAIL,
+} from '../src/service/auth.service.js';
+import resend from '../src/lib/resend.js';
+import { AUTH_RATE_LIMITS } from '../src/constants.js';
 import { User } from '../src/model/user.model.js';
 import { Admin } from '../src/model/admin.model.js';
 
@@ -111,4 +133,321 @@ test('admin login rejects a non-string email or password with 400 before any que
     } finally {
         spy.restore();
     }
+});
+
+// Verification links keep working (reused token, idempotent verify), re-signup cannot take over an
+// unverified account, and auth emails are safe and clear.
+// A one-document in-memory stand-in for the User model: no database needed.
+
+/** Swap User.findOne/updateOne for an in-memory document; equality-only filters, $set/$unset updates. */
+const withFakeUser = async (doc, fn) => {
+    const original = { findOne: User.findOne, updateOne: User.updateOne };
+    const matches = (filter) => Object.entries(filter).every(([key, value]) => (value === null ? doc[key] == null : String(doc[key]) === String(value)));
+    const updates = [];
+    User.findOne = (filter) => {
+        const found = matches(filter) ? doc : null;
+        const query = Promise.resolve(found);
+        query.select = () => Promise.resolve(found);
+        return query;
+    };
+    User.updateOne = async (filter, update) => {
+        updates.push({ filter, update });
+        if (!matches(filter)) return { modifiedCount: 0 };
+        Object.assign(doc, update.$set);
+        for (const key of Object.keys(update.$unset || {})) delete doc[key];
+        return { modifiedCount: 1 };
+    };
+    try {
+        return await fn(updates);
+    } finally {
+        Object.assign(User, original);
+    }
+};
+
+/** Record outgoing email instead of sending it. */
+const withSentEmails = async (fn) => {
+    const original = resend.emails.send;
+    const sent = [];
+    resend.emails.send = async (message) => { sent.push(message); return { data: { id: 'test' }, error: null }; };
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+        return await fn(sent);
+    } finally {
+        resend.emails.send = original;
+        console.error = quiet;
+    }
+};
+
+const HEX = (c) => c.repeat(64);
+const DAY = 24 * 60 * 60 * 1000;
+const tokenIn = (message) => message.text.match(/token=([a-f0-9]{64})/)?.[1];
+const passwordWorks = async (doc, password) => Boolean(doc.password) && bcrypt.compare(password, doc.password);
+
+/** An unverified account created by a first signup with password "original-pw". */
+const unverifiedAccount = async (overrides = {}) => ({
+    _id: 'u1', name: 'First', email: 'pat@example.invalid', password: await bcrypt.hash('original-pw', 10),
+    isEmailVerified: false, emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(Date.now() + 7 * DAY),
+    verificationEmailSentAt: new Date(Date.now() - EMAIL_RESEND_COOLDOWN_MS - 1), refreshToken: 'h0:x', refreshSessions: [{ hash: 'h0:x' }],
+    ...overrides,
+});
+
+test('verificationTokenFor reuses a live link without extending it; a new 7-day link only when none, malformed, expired or under a day left', () => {
+    const now = Date.now();
+    const live = new Date(now + 3 * DAY);
+    assert.deepEqual(verificationTokenFor({ emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: live }, now), { token: HEX('a'), expiresAt: live });
+
+    const legacy = verificationTokenFor({ emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: null }, now);
+    assert.equal(legacy.token, HEX('a'), 'link sent before expiries existed keeps working');
+    assert.equal(legacy.expiresAt.getTime(), now + EMAIL_VERIFICATION_TTL_MS, 'and gets 7 days from its first resend');
+
+    for (const user of [
+        {},
+        { emailVerificationToken: null },
+        { emailVerificationToken: 'old' },
+        { emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(now - 1) },
+        { emailVerificationToken: HEX('a'), emailVerificationTokenExpiresAt: new Date(now + DAY - 1) },
+    ]) {
+        const { token, expiresAt } = verificationTokenFor(user, now);
+        assert.ok(isEmailLinkToken(token));
+        assert.notEqual(token, HEX('a'));
+        assert.equal(expiresAt.getTime(), now + 7 * DAY);
+    }
+    assert.equal(EMAIL_VERIFICATION_TTL_MS, 7 * DAY);
+});
+
+test('verify-email is idempotent: first use verifies, a second use says already_verified', async () => {
+    const doc = await unverifiedAccount();
+    await withFakeUser(doc, async (updates) => {
+        assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+        assert.equal(doc.isEmailVerified, true);
+        assert.equal(doc.emailVerificationToken, HEX('a'), 'token kept so a second click is recognised');
+        assert.deepEqual(updates[0].filter, { _id: 'u1', emailVerificationToken: HEX('a'), isEmailVerified: false, competingSignupAt: null });
+
+        const again = await verifyEmailService(HEX('a'));
+        assert.equal(again.status, EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED);
+        assert.equal(updates.length, 1, 'second use changes nothing');
+
+        await assert.rejects(verifyEmailService(HEX('c')), (e) => e.statusCode === 400, 'unknown token');
+    });
+});
+
+test('verify-email: an expired link is a 400 and does not verify; a link without expiry (sent before this change) still works', async () => {
+    const expired = await unverifiedAccount({ emailVerificationTokenExpiresAt: new Date(Date.now() - 1) });
+    await withFakeUser(expired, async (updates) => {
+        await assert.rejects(verifyEmailService(HEX('a')), (e) => e.statusCode === 400 && /expired/.test(e.message));
+        assert.equal(expired.isEmailVerified, false);
+        assert.equal(updates.length, 0);
+    });
+    const legacy = await unverifiedAccount({ emailVerificationTokenExpiresAt: null });
+    await withFakeUser(legacy, async () => {
+        assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+        assert.equal(legacy.isEmailVerified, true);
+    });
+});
+
+test('resend keeps the same link without extending it, and sends a text part from "Vireact <...>"', async () => {
+    const expiresAt = new Date(Date.now() + 3 * DAY);
+    const doc = await unverifiedAccount({ emailVerificationTokenExpiresAt: expiresAt, verificationEmailSentAt: null });
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async () => {
+            await resendEmailVerificationService(doc.email);
+            doc.verificationEmailSentAt = new Date(Date.now() - EMAIL_RESEND_COOLDOWN_MS - 1);
+            await resendEmailVerificationService(doc.email);
+        });
+        assert.equal(sent.length, 2);
+        for (const message of sent) {
+            assert.ok(message.html.includes(`token=${HEX('a')}`));
+            assert.equal(tokenIn(message), HEX('a'), 'plain-text part carries the same link');
+            assert.equal(message.from, formatFromAddress());
+            assert.match(message.from, /<.+@.+>/, 'from has a display name');
+            assert.equal(message.replyTo, replyToAddress());
+        }
+        assert.equal(doc.emailVerificationToken, HEX('a'));
+        assert.equal(doc.emailVerificationTokenExpiresAt.getTime(), expiresAt.getTime(), 'resending does not extend the link');
+    });
+});
+
+/** Run one competing-signups scenario: the first signup exists; `second` signs up again; then a link is opened. */
+const resetTokenWorks = (doc, resetToken) =>
+    doc.passwordResetTokenHash === crypto.createHash('sha256').update(resetToken).digest('hex') && doc.passwordResetExpires > new Date();
+
+const assertSetPasswordOutcome = async (doc, result, sent) => {
+    assert.equal(result.status, EMAIL_VERIFICATION_STATUS.VERIFIED_SET_PASSWORD);
+    assert.ok(isEmailLinkToken(result.resetToken));
+    assert.ok(resetTokenWorks(doc, result.resetToken), 'reset token stored hashed, valid for an hour');
+    assert.ok(doc.passwordResetExpires.getTime() <= Date.now() + 60 * 60 * 1000);
+    assert.equal(doc.isEmailVerified, true);
+    assert.equal(doc.password, undefined, 'no password from either signup survives');
+    assert.ok(!(await passwordWorks(doc, 'original-pw')));
+    assert.ok(!(await passwordWorks(doc, 'second-pw')));
+    assert.deepEqual(doc.refreshSessions, [], 'every device signed out');
+    assert.equal(doc.refreshToken, undefined);
+    assert.equal(doc.name, 'pat', 'neutral name, not one a stranger typed');
+    const resetEmail = sent.at(-1);
+    assert.equal(resetEmail.subject, 'Set a password for Vireact');
+    assert.ok(resetEmail.text.includes(`reset-password?token=${result.resetToken}`), 'reset link emailed as a fallback');
+    assert.ok(!JSON.stringify(sent).includes('second-pw'), 'passwords never emailed');
+
+    const again = await verifyEmailService(HEX('a'));
+    assert.equal(again.status, EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED, 'second click is fine');
+    assert.equal(again.resetToken, undefined, 'reset token is handed out once');
+    assert.match(again.message, /Set a password/);
+};
+
+test('takeover blocked (a): stranger re-signs up, owner opens the newest email: verified, no password kept, owner gets a reset token', async () => {
+    const doc = await unverifiedAccount(); // the owner's own first signup
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async () => {
+            const attempt = await customSignupUserService('Attacker', doc.email, 'second-pw', 'local');
+            assert.equal(attempt.pendingSignup, true);
+            assert.equal(attempt.verificationEmail, VERIFICATION_EMAIL.SENT);
+            assert.ok(doc.competingSignupAt instanceof Date);
+            assert.ok(await passwordWorks(doc, 'original-pw'), 'nothing on the account changes at re-signup');
+            assert.equal(doc.name, 'First');
+            assert.equal(tokenIn(sent[0]), HEX('a'), 'the newest email carries the same link');
+
+            const result = await verifyEmailService(tokenIn(sent[0]));
+            await assertSetPasswordOutcome(doc, result, sent);
+        });
+    });
+});
+
+test('takeover blocked (b): stranger signs up first, owner re-signs up, owner opens the stranger\'s original email: no password kept, owner gets a reset token', async () => {
+    const doc = await unverifiedAccount(); // the stranger's signup ("original-pw" is the stranger's)
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async () => {
+            await customSignupUserService('Owner', doc.email, 'second-pw', 'local');
+            const result = await verifyEmailService(HEX('a')); // link from the first email
+            await assertSetPasswordOutcome(doc, result, sent);
+            await assert.rejects(customSignupUserService('Attacker', doc.email, 'x-pw-123', 'local'), (e) => e.statusCode === 409);
+        });
+    });
+});
+
+test('owner forgot their password before verifying: re-signup, open the link, set a new password with the reset token', async () => {
+    const doc = await unverifiedAccount();
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async () => {
+            await customSignupUserService('Pat', doc.email, 'second-pw', 'local');
+            const result = await verifyEmailService(tokenIn(sent[0]));
+            assert.equal(result.status, EMAIL_VERIFICATION_STATUS.VERIFIED_SET_PASSWORD);
+
+            // POST /auth/reset-password with the token (save() stands in for the database write).
+            doc.save = async function () { if (this.password && !this.password.startsWith('$2')) this.password = await bcrypt.hash(this.password, 10); return this; };
+            const original = User.findOne;
+            User.findOne = (filter) => ({
+                select: async () => (filter.passwordResetTokenHash === doc.passwordResetTokenHash && doc.passwordResetExpires > new Date() ? doc : null),
+            });
+            try {
+                await resetPasswordService(result.resetToken, 'chosen-pw-1');
+            } finally {
+                User.findOne = original;
+            }
+            assert.ok(await passwordWorks(doc, 'chosen-pw-1'));
+            assert.equal(doc.isEmailVerified, true);
+        });
+    });
+});
+
+test('a single signup is unchanged: verified with its own password, no reset token', async () => {
+    const doc = await unverifiedAccount();
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async () => {
+            const result = await verifyEmailService(HEX('a'));
+            assert.deepEqual(Object.keys(result).sort(), ['message', 'status']);
+            assert.equal(result.status, EMAIL_VERIFICATION_STATUS.VERIFIED);
+            assert.ok(await passwordWorks(doc, 'original-pw'));
+            assert.equal(doc.name, 'First');
+            assert.equal(sent.length, 0);
+        });
+    });
+});
+
+test('a re-signup landing between the read and the write of a normal verify still takes the competing-signup path', async () => {
+    const doc = await unverifiedAccount();
+    await withSentEmails(async () => {
+        await withFakeUser(doc, async () => {
+            const realUpdate = User.updateOne;
+            let raced = false;
+            User.updateOne = async (filter, update) => {
+                if (!raced && update.$set?.isEmailVerified) { raced = true; doc.competingSignupAt = new Date(); }
+                return realUpdate(filter, update);
+            };
+            const result = await verifyEmailService(HEX('a'));
+            assert.equal(result.status, EMAIL_VERIFICATION_STATUS.VERIFIED_SET_PASSWORD);
+            assert.equal(doc.password, undefined, 'no password survives');
+        });
+    });
+});
+
+test('email down: an account marked as signed up more than once is never let in unverified', async () => {
+    const original = resend.emails.send;
+    const quiet = { error: console.error, warn: console.warn };
+    resend.emails.send = async () => ({ data: null, error: { name: 'validation_error', message: 'The vireact.io domain is not verified.' } });
+    console.error = () => {};
+    console.warn = () => {};
+    try {
+        const marked = await unverifiedAccount({ competingSignupAt: new Date() });
+        marked.comparePassword = (pw) => passwordWorks(marked, pw);
+        await withFakeUser(marked, async () => {
+            await assert.rejects(loginUserService(marked.email, 'original-pw'), (e) => e.statusCode === 403 && e.data?.code === 'EMAIL_NOT_VERIFIED');
+        });
+        const plain = await unverifiedAccount();
+        plain.comparePassword = (pw) => passwordWorks(plain, pw);
+        await withFakeUser(plain, async () => {
+            assert.equal((await loginUserService(plain.email, 'original-pw'))._id, 'u1', 'single signup still let in while email is down');
+        });
+    } finally {
+        resend.emails.send = original;
+        Object.assign(console, quiet);
+    }
+});
+
+test('re-signup inside the 60 s cooldown is a 429 and changes nothing', async () => {
+    const doc = await unverifiedAccount({ verificationEmailSentAt: new Date() });
+    await withSentEmails(async (sent) => {
+        await withFakeUser(doc, async (updates) => {
+            await assert.rejects(customSignupUserService('X', doc.email, 'second-pw', 'local'), (e) => e.statusCode === 429);
+            assert.equal(updates.length, 0);
+            assert.equal(sent.length, 0);
+            assert.equal(doc.competingSignupAt, undefined);
+        });
+    });
+});
+
+test('auth emails never carry HTML a stranger typed; reset greeting is escaped, verification drops the name', () => {
+    const verification = buildVerificationEmail(`https://vireact.io/verify-email?token=${HEX('2')}`);
+    assert.ok(verification.text.includes(`token=${HEX('2')}`));
+    assert.doesNotMatch(verification.text, /</);
+
+    const evil = '<a href="https://evil.example">Claim prize</a>';
+    const reset = buildPasswordResetEmail({ name: evil, resetUrl: 'https://vireact.io/reset-password?token=x', hasPassword: true });
+    assert.ok(!reset.html.includes('evil.example">'), 'no injected link');
+    assert.ok(reset.html.includes('&lt;a href=&quot;https://evil.example&quot;&gt;'));
+    assert.equal(reset.subject, 'Reset your Vireact password');
+    assert.ok(reset.text.includes('https://vireact.io/reset-password?token=x'));
+    assert.equal(buildPasswordResetEmail({ name: '', resetUrl: 'u', hasPassword: false }).subject, 'Set a password for Vireact');
+    assert.equal(escapeHtml(`<>&"'`), '&lt;&gt;&amp;&quot;&#39;');
+});
+
+test('from gets a "Vireact" display name unless it has one; reply-to defaults to the bare address', () => {
+    assert.equal(formatFromAddress('support@vireact.io'), 'Vireact <support@vireact.io>');
+    assert.equal(formatFromAddress('Team <hi@vireact.io>'), 'Team <hi@vireact.io>');
+    assert.equal(replyToAddress('support@vireact.io', undefined), 'support@vireact.io');
+    assert.equal(replyToAddress('Team <hi@vireact.io>', ''), 'hi@vireact.io');
+    assert.equal(replyToAddress('support@vireact.io', 'help@vireact.io'), 'help@vireact.io');
+});
+
+test('login, signup, verify and resend each have their own per-IP limit', () => {
+    const paths = ['login', 'signup', 'verify-email', 'resend-verification', 'forgot-password', 'reset-password'];
+    for (const path of paths) {
+        const limit = AUTH_RATE_LIMITS[`/api/v1/auth/${path}`];
+        assert.ok(limit, path);
+        assert.equal(limit.windowMs, 15 * 60 * 1000);
+    }
+    assert.equal(AUTH_RATE_LIMITS['/api/v1/auth/login'].max, 20);
+    assert.equal(AUTH_RATE_LIMITS['/api/v1/auth/verify-email'].max, 60);
+    assert.ok(AUTH_RATE_LIMITS['/api/v1/auth/signup'].max <= 20);
+    assert.ok(AUTH_RATE_LIMITS['/api/v1/auth/resend-verification'].max <= 20);
 });

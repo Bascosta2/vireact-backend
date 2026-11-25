@@ -88,6 +88,8 @@ const priceIdList = (value) => String(value || '').split(',').map((id) => id.tri
 export const STRIPE_LEGACY_PRICE_IDS_PREMIUM = priceIdList(process.env.STRIPE_LEGACY_PRICE_IDS_PREMIUM);
 export const STRIPE_LEGACY_PRICE_IDS_PRO = priceIdList(process.env.STRIPE_LEGACY_PRICE_IDS_PRO);
 export const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'support@vireact.io';
+/** Optional: where replies to auth emails go. Defaults to the RESEND_FROM_EMAIL address. */
+export const RESEND_REPLY_TO = process.env.RESEND_REPLY_TO;
 /** Dev-only: when set and NODE_ENV !== 'production', all outgoing email goes here instead (see lib/resend.js). */
 export const EMAIL_DEV_OVERRIDE_TO = process.env.EMAIL_DEV_OVERRIDE_TO;
 
