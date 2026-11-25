@@ -100,9 +100,9 @@ test('hook variant is an edit the creator can change; the planner gets the skill
     assert.ok(!plain.some((c) => c.type === 'text' && /EDITING SKILL/.test(c.text)));
 });
 
-const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d'];
+const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d', 'watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime'];
 
-test('the ten animation styles are skills with planner rules, render rules and built-in sounds only', async () => {
+test('the twenty animation and painted styles are skills with planner rules, render rules and built-in sounds only', async () => {
     const { ANIMATION_STYLE_IDS, isAnimationStyle } = await import('../src/service/editor/skills.js');
     const { SFX_TYPES } = await import('../src/service/editor/edl.js');
     assert.deepEqual([...ANIMATION_STYLE_IDS], STYLE_IDS, 'ids match the composition (vireact-frontend/src/remotion/styles/ids.ts)');
@@ -116,7 +116,7 @@ test('the ten animation styles are skills with planner rules, render rules and b
         for (const type of sounds) assert.ok(SFX_TYPES.includes(type), `${id}: ${type} is a built-in sound`);
     }
     assert.equal(isAnimationStyle('remotion-reel'), false);
-    assert.ok(!/lego|ps2|playstation/i.test(STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked names');
+    assert.ok(!/lego|ps2|playstation|ghibli/i.test(STYLE_IDS.map((id) => `${SKILLS[id].name} ${SKILLS[id].plannerRules}`).join(' ')), 'no trademarked names');
 });
 
 test('an animation style sets the palette, its sounds and captions, and keeps the plan\'s structure', () => {
@@ -156,4 +156,30 @@ test('an animation-style edit can switch to another style; other edits cannot', 
     const project = { source: { durationSec: 6, width: 1080, height: 1920 }, media: { words, cutCandidates }, skill: 'pixel-art', edits: { animationStyle: 'chalkboard' } };
     const content = buildPlannerContent({ project, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
     assert.ok(content.some((c) => c.type === 'text' && /EDITING SKILL: CHALKBOARD ANIMATION STYLE/.test(c.text)));
+});
+
+test('styles are grouped by what they are for; storytelling styles paint a scene the creator can turn off', async () => {
+    const { styleCategory } = await import('../src/service/editor/skills.js');
+    assert.equal(styleCategory('chalkboard'), 'talking-head');
+    assert.equal(styleCategory('pixel-art'), 'any-footage');
+    assert.equal(styleCategory('watercolour'), 'storytelling');
+    assert.equal(SKILLS['sumi-e'].category, 'storytelling');
+    assert.match(SKILLS['sumi-e'].plannerRules, /ANIMATED STORYTELLING/);
+    assert.doesNotMatch(SKILLS['pixel-art'].plannerRules, /ANIMATED STORYTELLING/);
+
+    const withCallout = () => {
+        const p = plan();
+        p.graphics.push({ type: 'callout', start: 3.3, end: 4.3, text: 'Look', subtext: '', items: [], focusX: 0.5, focusY: 0.4 });
+        return p;
+    };
+    const story = buildRenderProps(withCallout(), {}, media('watercolour'), { density: null });
+    assert.equal(story.skill.layout, 'scene');
+    assert.ok(!story.graphics.some((g) => g.type === 'callout'), 'no callouts over a painted scene');
+    const footage = buildRenderProps(withCallout(), sanitizeEdits({ sceneOff: true }), media('watercolour'), { density: null });
+    assert.equal(footage.skill.layout, 'footage');
+    assert.ok(footage.graphics.some((g) => g.type === 'callout'));
+    assert.equal(buildRenderProps(plan(), {}, media('pixel-art')).skill.layout, 'footage');
+    assert.equal(buildRenderProps(plan(), {}, media('remotion-reel')).skill.layout, undefined);
+    // Switching a story to a non-story style shows the footage.
+    assert.equal(buildRenderProps(plan(), { animationStyle: 'comic-art' }, media('watercolour')).skill.layout, 'footage');
 });

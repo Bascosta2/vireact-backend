@@ -2,9 +2,11 @@ import { call, httpFailure, permanent, reconnect, transient } from './index.js';
 
 /**
  * TikTok Content Posting API (https://developers.tiktok.com/doc/content-posting-api-get-started).
- * mode 'publish': Direct Post (scope video.publish): creator_info/query, then /post/publish/video/init/.
- *   Until TikTok audits the app, only SELF_ONLY posts to private accounts work; TIKTOK_DIRECT_POST_AUDITED=true
- *   (after the audit) posts publicly when the creator allows it.
+ * mode 'publish': Direct Post (scope video.publish): creator_info/query, then /post/publish/video/init/ with the
+ *   creator's own choices stored on the target (`target.tiktok`: privacy, comments/duet/stitch, commercial
+ *   disclosure), per the content sharing guidelines (https://developers.tiktok.com/doc/content-sharing-guidelines).
+ *   We never pick or change the privacy level: a choice TikTok no longer offers fails the target in plain English.
+ *   Until TikTok audits the app only SELF_ONLY works; TIKTOK_DIRECT_POST_AUDITED=true (after the audit) allows the rest.
  * mode 'draft': upload to the creator's TikTok inbox (scope video.upload): /post/publish/inbox/video/init/;
  *   the creator finishes the post in the TikTok app. "published" here means "delivered to TikTok as a draft".
  * Bytes go up with FILE_UPLOAD (chunked PUTs read from our bucket by range), so no domain verification is needed.
@@ -72,28 +74,84 @@ const failed = (res) => !res.ok || (res.body?.error?.code && res.body.error.code
 
 const authed = (access) => ({ Authorization: `Bearer ${access}` });
 
-/** Body of the init call (exported for tests). Privacy: audited apps post publicly when allowed, else SELF_ONLY. */
-export const buildTikTokInit = ({ mode, caption, sizeBytes, creator = {}, env = process.env }) => {
+/** Privacy levels TikTok can offer (creator_info returns the ones this creator may use), with their app labels. */
+export const TIKTOK_PRIVACY_LABELS = Object.freeze({
+    PUBLIC_TO_EVERYONE: 'Everyone',
+    MUTUAL_FOLLOW_FRIENDS: 'Friends',
+    FOLLOWER_OF_CREATOR: 'Followers',
+    SELF_ONLY: 'Only me',
+});
+export const privacyLabel = (level) => TIKTOK_PRIVACY_LABELS[level] ?? String(level);
+
+/** True once TikTok has audited the app for Direct Post (only SELF_ONLY works before that). */
+export const isDirectPostAudited = (env = process.env) => String(env.TIKTOK_DIRECT_POST_AUDITED ?? '').trim().toLowerCase() === 'true';
+
+/**
+ * creator_info/query: the creator's posting options right now. Throws a PublishError in plain English when
+ * the creator cannot post (daily cap, posting ban, app cap) or the sign-in is no longer valid.
+ */
+export const queryCreatorInfo = async ({ access, fetchImpl }) => {
+    const info = await call(`${API}/post/publish/creator_info/query/`, { method: 'POST', headers: authed(access), json: {}, fetchImpl, name: NAME });
+    if (failed(info)) throw failure(info);
+    return info.body?.data ?? {};
+};
+
+/** creator_info as GET /api/v1/posts/tiktok/creator-info returns it (pure; exported for tests). */
+export const creatorInfoView = (data = {}) => {
+    const privacyLevelOptions = (Array.isArray(data.privacy_level_options) ? data.privacy_level_options : []).filter((o) => typeof o === 'string' && o);
+    const max = Number(data.max_video_post_duration_sec);
+    const view = {
+        nickname: data.creator_nickname ?? null,
+        avatarUrl: data.creator_avatar_url ?? null,
+        privacyLevelOptions,
+        commentDisabled: Boolean(data.comment_disabled),
+        duetDisabled: Boolean(data.duet_disabled),
+        stitchDisabled: Boolean(data.stitch_disabled),
+        maxVideoPostDurationSec: max > 0 ? max : null,
+        canPost: privacyLevelOptions.length > 0,
+    };
+    if (!view.canPost) view.reason = 'TikTok did not offer any privacy options for your account right now. Try again later.';
+    return view;
+};
+
+/**
+ * post_info for Direct Post from the creator's stored choices and a fresh creator_info (pure; exported for tests).
+ * Throws a permanent PublishError when the choices can no longer be honoured; it never substitutes others.
+ */
+export const tiktokPostInfo = ({ caption, settings, creator = {}, env = process.env }) => {
+    const again = 'Edit the post, choose again, and schedule it again.';
+    if (!settings?.privacyLevel) throw permanent(`This TikTok post has no privacy choice, so it was not sent. ${again}`);
+    const level = settings.privacyLevel;
+    const options = creator.privacy_level_options ?? [];
+    if (!options.includes(level)) {
+        throw permanent(`Your TikTok account no longer offers the privacy setting you chose ("${privacyLabel(level)}"), so we did not post it. We never change your privacy setting for you. ${again}`);
+    }
+    if (level !== 'SELF_ONLY' && !isDirectPostAudited(env)) {
+        throw permanent(`Vireact can only post to TikTok as "Only me" until TikTok approves it for public posts, so this post was not sent. ${again}`);
+    }
+    const commercial = settings.commercial ?? {};
+    const brandedContent = Boolean(commercial.enabled && commercial.brandedContent);
+    if (brandedContent && level === 'SELF_ONLY') throw permanent(`Branded content cannot be posted as "Only me", so this post was not sent. ${again}`);
+    return {
+        title: String(caption ?? '').slice(0, 2200),
+        privacy_level: level,
+        // The creator's own app settings always win (TikTok enforces them too).
+        disable_comment: !settings.allowComment || Boolean(creator.comment_disabled),
+        disable_duet: !settings.allowDuet || Boolean(creator.duet_disabled),
+        disable_stitch: !settings.allowStitch || Boolean(creator.stitch_disabled),
+        brand_content_toggle: brandedContent,
+        brand_organic_toggle: Boolean(commercial.enabled && commercial.yourBrand),
+    };
+};
+
+/** Body of the init call (exported for tests). Direct Post uses the creator's settings (`target.tiktok`). */
+export const buildTikTokInit = ({ mode, caption, sizeBytes, creator = {}, settings = null, env = process.env }) => {
     const plan = tiktokChunkPlan(sizeBytes);
     const source_info = { source: 'FILE_UPLOAD', video_size: sizeBytes, chunk_size: plan.chunkSize, total_chunk_count: plan.totalChunkCount };
     if (mode === 'draft') return { url: `${API}/post/publish/inbox/video/init/`, body: { source_info }, plan };
-    const options = creator.privacy_level_options ?? [];
-    const audited = String(env.TIKTOK_DIRECT_POST_AUDITED ?? '').trim().toLowerCase() === 'true';
-    const privacy_level = audited && options.includes('PUBLIC_TO_EVERYONE') ? 'PUBLIC_TO_EVERYONE' : 'SELF_ONLY';
     return {
         url: `${API}/post/publish/video/init/`,
-        body: {
-            post_info: {
-                title: String(caption ?? '').slice(0, 2200),
-                privacy_level,
-                disable_comment: Boolean(creator.comment_disabled),
-                disable_duet: Boolean(creator.duet_disabled),
-                disable_stitch: Boolean(creator.stitch_disabled),
-                brand_content_toggle: false,
-                brand_organic_toggle: false,
-            },
-            source_info,
-        },
+        body: { post_info: tiktokPostInfo({ caption, settings, creator, env }), source_info },
         plan,
     };
 };
@@ -123,13 +181,13 @@ export const tiktokPublisher = {
         if (!state.publishId || !state.uploaded) {
             let creator = {};
             if (post.mode !== 'draft') {
-                const info = await call(`${API}/post/publish/creator_info/query/`, { method: 'POST', headers: authed(access), json: {}, fetchImpl, name: NAME });
-                if (failed(info)) throw failure(info);
-                creator = info.body?.data ?? {};
+                if (!target.tiktok?.privacyLevel) throw permanent('This TikTok post has no privacy choice, so it was not sent. Edit the post, choose your TikTok settings, and schedule it again.');
+                // Fresh creator_info right before posting (the post may have been scheduled hours ago).
+                creator = await queryCreatorInfo({ access, fetchImpl });
                 const max = Number(creator.max_video_post_duration_sec);
                 if (max > 0 && media.durationSec && media.durationSec > max) throw permanent(`Your TikTok account accepts videos up to ${max} seconds.`);
             }
-            const init = buildTikTokInit({ mode: post.mode, caption: post.caption, sizeBytes: media.sizeBytes, creator, env });
+            const init = buildTikTokInit({ mode: post.mode, caption: post.caption, sizeBytes: media.sizeBytes, creator, settings: target.tiktok ?? null, env });
             const res = await call(init.url, { method: 'POST', headers: authed(access), json: init.body, fetchImpl, name: NAME });
             if (failed(res)) throw failure(res);
             const { publish_id: publishId, upload_url: uploadUrl } = res.body?.data ?? {};

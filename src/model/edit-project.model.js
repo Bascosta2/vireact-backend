@@ -27,6 +27,8 @@ const renderSchema = new mongoose.Schema({
     bucketName: String,
     key: String,
     sizeBytes: Number,
+    /** Length of the export (from the composition), so posting can check a platform's length limit. */
+    durationSec: Number,
     error: String,
     createdAt: { type: Date, default: Date.now },
     finishedAt: Date,
