@@ -8,6 +8,7 @@ import {
     refreshTokenService,
     forgotPasswordService,
     resetPasswordService,
+    confirmEmailChangeService,
     revokeRefreshSession,
     VERIFICATION_EMAIL
 } from "../service/auth.service.js";
@@ -587,6 +588,18 @@ export const forgotPassword = async (req, res, next) => {
 export const resetPassword = async (req, res, next) => {
     try {
         const result = await resetPasswordService(req.body?.token, req.body?.password);
+        res.clearCookie("accessToken", COOKIE_OPTIONS);
+        res.clearCookie("refreshToken", COOKIE_OPTIONS);
+        res.status(200).json(ApiResponse.success(200, result.message, { email: result.email }));
+    } catch (error) {
+        next(error);
+    }
+};
+
+/** Open the link sent to a new email address: the change applies and every device is signed out. */
+export const confirmEmailChange = async (req, res, next) => {
+    try {
+        const result = await confirmEmailChangeService(req.body?.token);
         res.clearCookie("accessToken", COOKIE_OPTIONS);
         res.clearCookie("refreshToken", COOKIE_OPTIONS);
         res.status(200).json(ApiResponse.success(200, result.message, { email: result.email }));

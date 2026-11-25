@@ -20,6 +20,11 @@ export const EMAIL_RESEND_COOLDOWN_MS = 60 * 1000;
 export const EMAIL_VERIFICATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** A resend reuses the current link only if it still has this long left; otherwise a new link is issued. */
 export const EMAIL_VERIFICATION_MIN_REMAINING_MS = 24 * 60 * 60 * 1000;
+/** Links that confirm a new email address work for 24 hours. */
+export const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60 * 1000;
+/** Clears an email change that has not been confirmed (a new password cancels it too). */
+export const NO_PENDING_EMAIL_CHANGE = Object.freeze({ pendingEmail: null, emailChangeTokenHash: null, emailChangeExpires: null });
+
 /** Same minimum as change-password (profile.service.js). Applies to signup and password reset. */
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
@@ -162,6 +167,59 @@ export const buildPasswordResetEmail = ({ name, resetUrl, hasPassword }) => {
             '',
             'The Vireact Team',
         ].join('\n'),
+    };
+};
+
+/** "jane.doe@gmail.com" -> "j***@g***.com": enough for the owner to recognise, not enough to learn the address. */
+export const maskEmail = (email) => {
+    const [local = '', domain = ''] = String(email || '').split('@');
+    const dot = domain.lastIndexOf('.');
+    const host = dot > 0 ? domain.slice(0, dot) : domain;
+    const tld = dot > 0 ? domain.slice(dot) : '';
+    return `${local.slice(0, 1)}***@${host.slice(0, 1)}***${tld}`;
+};
+
+/**
+ * Sent to the NEW address. Like the verification email it carries no text the requester typed (no name),
+ * because the address may belong to someone else.
+ */
+export const buildEmailChangeConfirmEmail = (confirmUrl) => ({
+    subject: 'Confirm your new Vireact email',
+    html: `<div>
+                <p>Hi there,</p>
+                <p>Someone asked to use this address for their Vireact account. <a href="${escapeHtml(confirmUrl)}">Confirm this email</a> to make the change. The link works for 24 hours.</p>
+                <p>If you didn't ask for this, ignore this email. Nothing changes.</p>
+                <p>The Vireact Team</p>
+               </div>`,
+    text: [
+        'Hi there,',
+        '',
+        'Someone asked to use this address for their Vireact account. Open this link to confirm the change (it works for 24 hours):',
+        confirmUrl,
+        '',
+        "If you didn't ask for this, ignore this email. Nothing changes.",
+        '',
+        'The Vireact Team',
+    ].join('\n'),
+});
+
+/** Sent to the OLD address when a change is requested and again when it completes. Shows the new address masked. */
+export const buildEmailChangeNoticeEmail = ({ maskedNewEmail, completed }) => {
+    const what = completed
+        ? `The email on your Vireact account was changed to ${maskedNewEmail}, and every device was signed out.`
+        : `Someone asked to change the email on your Vireact account to ${maskedNewEmail}. It only changes once that inbox confirms it.`;
+    const ifNotYou = completed
+        ? "If this wasn't you, reply to this email right away so we can secure your account."
+        : "If this wasn't you, change your password now (or use Forgot password) to cancel the request.";
+    return {
+        subject: completed ? 'Your Vireact email was changed' : 'A change to your Vireact email was requested',
+        html: `<div>
+                    <p>Hi there,</p>
+                    <p>${escapeHtml(what)}</p>
+                    <p>${escapeHtml(ifNotYou)}</p>
+                    <p>The Vireact Team</p>
+                   </div>`,
+        text: ['Hi there,', '', what, '', ifNotYou, '', 'The Vireact Team'].join('\n'),
     };
 };
 
@@ -679,9 +737,120 @@ export const resetPasswordService = async (token, password) => {
     user.passwordResetExpires = null;
     user.refreshSessions = [];
     user.refreshToken = undefined;
+    Object.assign(user, NO_PENDING_EMAIL_CHANGE);
     await user.save();
 
     return { success: true, message: "Password updated. You can log in now.", email: user.email };
+};
+
+
+/**
+ * Another account already using this address, or null. Case-insensitive because the schema stores every
+ * email lowercased (lowercase: true) and we compare the lowercased value, which uses the unique email index.
+ */
+export const findOtherUserWithEmail = (email, userId) =>
+    User.findOne({ email: normalizeEmail(email), _id: { $ne: userId } }).select('_id').lean();
+
+const EMAIL_CHANGE_LINK_INVALID = "This confirmation link has expired or was already used. Change your email again from your profile.";
+
+/**
+ * Start an email change: store the new address as pending with a hashed 24-hour token, email the
+ * confirmation link to the NEW address and a heads-up (new address masked) to the CURRENT one.
+ * `email` is untouched until the link is opened. If the confirmation cannot be sent, nothing is kept.
+ * The caller checks the password, the provider and that the address is free.
+ */
+export const startEmailChange = async (user, newEmail, now = Date.now()) => {
+    const pendingEmail = normalizeEmail(newEmail);
+    const token = newEmailLinkToken();
+    const expiresAt = new Date(now + EMAIL_CHANGE_TTL_MS);
+    await User.updateOne(
+        { _id: user._id },
+        { $set: { pendingEmail, emailChangeTokenHash: sha256(token), emailChangeExpires: expiresAt } }
+    );
+
+    const confirmUrl = `${FRONTEND_URL}/confirm-email-change?token=${token}`;
+    const { ok, recipientRejected } = await sendEmail({ to: pendingEmail, ...buildEmailChangeConfirmEmail(confirmUrl) });
+    if (!ok) {
+        await User.updateOne({ _id: user._id }, { $set: { ...NO_PENDING_EMAIL_CHANGE } });
+        if (recipientRejected) {
+            throw new ApiError(400, "We couldn't send an email to that address. Check it and try again.");
+        }
+        throw new ApiError(503, "We couldn't send the confirmation email right now. Your email was not changed. Try again later.");
+    }
+
+    await sendEmail({
+        to: user.email,
+        ...buildEmailChangeNoticeEmail({ maskedNewEmail: maskEmail(pendingEmail), completed: false }),
+    });
+    return { pendingEmail, expiresAt };
+};
+
+/** Drop an unconfirmed email change (the user set their email back to the current one). */
+export const cancelEmailChange = (userId) =>
+    User.updateOne({ _id: userId }, { $set: { ...NO_PENDING_EMAIL_CHANGE } });
+
+/**
+ * Apply an email change from the link sent to the new address. Single use (the update is conditional on
+ * the token hash). Re-checks that no other account took the address meanwhile, marks the new address
+ * verified (opening the link proves the inbox), signs out every device and tells the old address.
+ */
+export const confirmEmailChangeService = async (token) => {
+    if (!isEmailLinkToken(token)) {
+        throw new ApiError(400, "This confirmation link is invalid. Change your email again from your profile.");
+    }
+    const tokenHash = sha256(token);
+    const user = await User.findOne({
+        emailChangeTokenHash: tokenHash,
+        emailChangeExpires: { $gt: new Date() },
+    }).select('+emailChangeTokenHash +emailChangeExpires');
+
+    if (!user || !user.pendingEmail) {
+        throw new ApiError(400, EMAIL_CHANGE_LINK_INVALID);
+    }
+
+    const oldEmail = user.email;
+    const newEmail = normalizeEmail(user.pendingEmail);
+    const taken = await findOtherUserWithEmail(newEmail, user._id);
+    if (taken) {
+        await cancelEmailChange(user._id);
+        throw new ApiError(409, "An account with this email already exists. Your email was not changed.");
+    }
+
+    let result;
+    try {
+        result = await User.updateOne(
+            { _id: user._id, emailChangeTokenHash: tokenHash },
+            {
+                $set: {
+                    email: newEmail,
+                    isEmailVerified: true,
+                    emailVerificationToken: null,
+                    emailVerificationTokenExpiresAt: null,
+                    passwordResetTokenHash: null,
+                    passwordResetExpires: null,
+                    refreshSessions: [],
+                    ...NO_PENDING_EMAIL_CHANGE,
+                },
+                $unset: { refreshToken: 1 },
+            }
+        );
+    } catch (error) {
+        // Unique index on email: another account claimed the address between the check and the update.
+        if (error?.code === 11000) {
+            await cancelEmailChange(user._id);
+            throw new ApiError(409, "An account with this email already exists. Your email was not changed.");
+        }
+        throw error;
+    }
+    if (result.modifiedCount !== 1) {
+        throw new ApiError(400, EMAIL_CHANGE_LINK_INVALID);
+    }
+
+    await sendEmail({
+        to: oldEmail,
+        ...buildEmailChangeNoticeEmail({ maskedNewEmail: maskEmail(newEmail), completed: true }),
+    });
+    return { success: true, message: "Email changed. Log in with your new email.", email: newEmail };
 };
 
 
@@ -756,4 +925,18 @@ export const revokeRefreshSession = async (userId, refreshToken) => {
     const candidates = sessionHashCandidates(refreshToken);
     await User.updateOne({ _id: userId }, { $pull: { refreshSessions: { hash: { $in: candidates } } } });
     await User.updateOne({ _id: userId, refreshToken: { $in: candidates } }, { $unset: { refreshToken: 1 } });
+};
+
+/**
+ * Sign out every device except the one presenting this refresh token (after a password change).
+ * Without a token (or a non-string one), signs out everywhere.
+ */
+export const revokeOtherRefreshSessions = async (userId, keepRefreshToken) => {
+    if (typeof keepRefreshToken !== 'string' || !keepRefreshToken) {
+        await revokeRefreshSession(userId);
+        return;
+    }
+    const keep = sessionHashCandidates(keepRefreshToken);
+    await User.updateOne({ _id: userId }, { $pull: { refreshSessions: { hash: { $nin: keep } } } });
+    await User.updateOne({ _id: userId, refreshToken: { $nin: keep } }, { $unset: { refreshToken: 1 } });
 };

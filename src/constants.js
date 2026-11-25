@@ -107,7 +107,13 @@ export const SUBSCRIPTION_STATUS = {
   ACTIVE: 'active',
   CANCELLED: 'cancelled',
   EXPIRED: 'expired',
-  TRIAL: 'trial'
+  TRIAL: 'trial',
+  // Mirrors of Stripe subscription statuses (see mapStripeStatus in subscription.service).
+  PAST_DUE: 'past_due',
+  UNPAID: 'unpaid',
+  PAUSED: 'paused',
+  INCOMPLETE: 'incomplete',
+  INCOMPLETE_EXPIRED: 'incomplete_expired'
 };
 
 // SUBSCRIPTION PLANS
@@ -259,4 +265,5 @@ export const AUTH_RATE_LIMITS = Object.freeze({
     '/api/v1/auth/resend-verification': { windowMs: AUTH_RATE_WINDOW_MS, max: 10 },
     '/api/v1/auth/forgot-password': { windowMs: AUTH_RATE_WINDOW_MS, max: 10 },
     '/api/v1/auth/reset-password': { windowMs: AUTH_RATE_WINDOW_MS, max: 20 },
+    '/api/v1/auth/confirm-email-change': { windowMs: AUTH_RATE_WINDOW_MS, max: 20 },
 });

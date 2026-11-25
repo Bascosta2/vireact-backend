@@ -20,6 +20,7 @@ const events = [
     'customer.subscription.deleted',
     'customer.subscription.trial_will_end',
     'invoice.payment_succeeded',
+    'invoice.paid',
     'invoice.payment_failed',
 ].join(',');
 

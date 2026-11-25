@@ -19,7 +19,10 @@ let seq = 0;
 const fakeStripe = {
     customers: { create: async () => ({ id: `cus_test_${++seq}` }) },
     checkout: { sessions: { create: async (params) => { sessions.push(params); return { id: `cs_test_${++seq}`, url: 'https://checkout.test/session' }; } } },
-    subscriptions: { retrieve: async (id) => stripeSubs.get(id) },
+    subscriptions: {
+        retrieve: async (id) => stripeSubs.get(id),
+        list: async () => ({ data: [] }),
+    },
 };
 
 const newUser = async () => User.create({ name: 'Trial', email: `trial-${Date.now()}-${++seq}@example.invalid`, password: 'pw-123456', isEmailVerified: true });
@@ -123,6 +126,7 @@ test('trial lifecycle: trialing with trial caps, then active with the full plan,
     });
 
     // First payment: Stripe flips the subscription to active. Usage restarts on the full plan.
+    stripeSubs.set(stripeSub.id, { ...stripeSub, status: 'active' }); // the handler reads the live subscription
     await handleStripeWebhook(event('customer.subscription.updated', { ...stripeSub, status: 'active' }));
     sub = await Subscription.findOne({ userId: user._id });
     assert.equal(sub.status, SUBSCRIPTION_STATUS.ACTIVE);

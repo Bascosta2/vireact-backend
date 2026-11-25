@@ -69,6 +69,11 @@ const subscriptionSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
+    /** Last Stripe invoice whose payment was applied; stops invoice.paid + invoice.payment_succeeded double-processing. */
+    lastPaidInvoiceId: {
+        type: String,
+        default: null
+    },
     /** Set once the account has started a free trial or a paid plan; a free trial is offered only while null. */
     trialUsedAt: {
         type: Date,

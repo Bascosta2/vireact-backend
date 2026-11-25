@@ -1,6 +1,7 @@
 import { EditProject } from '../../model/edit-project.model.js';
 import { EDITOR_LIMITS, SUBSCRIPTION_PLANS } from '../../constants.js';
 import { getOrCreateSubscription } from '../subscription.service.js';
+import { effectivePlan } from '../access.service.js';
 
 /**
  * Editor access: each plan has a cap of AI edits per period (EDITOR_LIMITS). Free accounts get theirs
@@ -13,7 +14,7 @@ const startOfNextMonth = (now) => new Date(Date.UTC(now.getUTCFullYear(), now.ge
 
 export async function editorUsage(userId, { now = new Date() } = {}) {
     const subscription = await getOrCreateSubscription(userId);
-    const plan = subscription?.plan ?? SUBSCRIPTION_PLANS.FREE;
+    const plan = effectivePlan(subscription);
     const limit = EDITOR_LIMITS[plan] ?? 0;
     const paid = plan !== SUBSCRIPTION_PLANS.FREE;
     const periodStart = paid && subscription.currentPeriodStart ? subscription.currentPeriodStart : startOfMonth(now);
