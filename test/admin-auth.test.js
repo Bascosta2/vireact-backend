@@ -406,18 +406,30 @@ test('PATCH /profile with a new email keeps the old email, needs the current pas
     });
 });
 
-test('PATCH /profile: Google accounts cannot change email; another account using it is 409; the current email cancels a pending change', async () => {
+test('PATCH /profile: Google and password-less accounts cannot change email; a used address is 409; only cancelEmailChange cancels', async () => {
     const google = localUser({ _id: 'g1', provider: 'google', password: undefined });
+    const linked = localUser({ _id: 'l1', email: 'l1@example.invalid', password: undefined, googleId: 'google-9' });
     const taken = localUser({ _id: 'other', email: 'taken@example.invalid' });
     const pending = localUser({ _id: 'p1', email: 'p1@example.invalid', pendingEmail: 'next@example.invalid', emailChangeTokenHash: 'x', emailChangeExpires: new Date(Date.now() + 1000) });
     await withSentEmails(async (sent) => {
-        await withFakeUsers([google, taken, pending, localUser()], async () => {
+        await withFakeUsers([google, linked, taken, pending, localUser()], async () => {
             assert.equal((await callUpdateProfile({ name: 'G', email: 'new@example.invalid' }, 'g1')).err?.statusCode, 403);
+
+            const noPassword = await callUpdateProfile({ name: 'L', email: 'new@example.invalid' }, 'l1');
+            assert.equal(noPassword.err?.statusCode, 403);
+            assert.equal(noPassword.err?.data?.code, 'SET_PASSWORD_FIRST');
+            assert.equal(linked.pendingEmail, null);
+
             assert.equal((await callUpdateProfile({ name: 'V', email: 'taken@example.invalid', currentPassword: 'right-password' })).err?.statusCode, 409);
 
-            const { err, res } = await callUpdateProfile({ name: 'P', email: 'P1@example.invalid' }, 'p1');
+            const nameOnly = await callUpdateProfile({ name: 'P2', email: 'P1@example.invalid' }, 'p1');
+            assert.ifError(nameOnly.err);
+            assert.equal(nameOnly.res.body.data.emailChange, null);
+            assert.equal(pending.name, 'P2');
+            assert.equal(pending.pendingEmail, 'next@example.invalid', 'a name-only save keeps the pending change');
+
+            const { err } = await callUpdateProfile({ name: 'P2', email: 'p1@example.invalid', cancelEmailChange: true }, 'p1');
             assert.ifError(err);
-            assert.equal(res.body.data.emailChange, null);
             assert.equal(pending.pendingEmail, null);
             assert.equal(pending.emailChangeTokenHash, null);
             assert.equal(sent.length, 0);

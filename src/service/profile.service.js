@@ -48,11 +48,11 @@ export const getUserProfileService = async (userId) => {
  * Update user profile service
  * The name changes right away. A new email does NOT: it is stored as pendingEmail and only replaces the
  * current email once the link sent to the new inbox is opened (auth.service confirmEmailChangeService).
- * Changing the email needs the current password when the account has one. Sending the current email
- * again cancels a pending change.
+ * Changing the email needs the current password; accounts without one must set it first (403
+ * SET_PASSWORD_FIRST). A pending change is only cancelled when the request says cancelEmailChange: true.
  * Returns { user, emailChange } where emailChange is { pendingEmail, expiresAt } or null.
  */
-export const updateUserProfileService = async (userId, name, email, currentPassword) => {
+export const updateUserProfileService = async (userId, name, email, currentPassword, cancelPendingEmailChange = false) => {
     try {
         if (!userId) {
             throw new ApiError(400, "User ID is required.");
@@ -88,13 +88,15 @@ export const updateUserProfileService = async (userId, name, email, currentPassw
                 throw new ApiError(403, "Email cannot be changed for Google accounts. Email is managed by Google.");
             }
 
-            if (user.password) {
-                if (typeof currentPassword !== 'string' || !currentPassword) {
-                    throw new ApiError(400, "Enter your current password to change your email.");
-                }
-                if (!(await user.comparePassword(currentPassword))) {
-                    throw new ApiError(401, "Current password is incorrect.");
-                }
+            // A signed-in session alone is not enough to move the account to another inbox.
+            if (!user.password) {
+                throw new ApiError(403, "Set a password with Forgot password before changing your email.", { code: "SET_PASSWORD_FIRST" });
+            }
+            if (typeof currentPassword !== 'string' || !currentPassword) {
+                throw new ApiError(400, "Enter your current password to change your email.");
+            }
+            if (!(await user.comparePassword(currentPassword))) {
+                throw new ApiError(401, "Current password is incorrect.");
             }
 
             if (await findOtherUserWithEmail(newEmail, user._id)) {
@@ -102,7 +104,7 @@ export const updateUserProfileService = async (userId, name, email, currentPassw
             }
 
             emailChange = await startEmailChange(user, newEmail);
-        } else if (user.pendingEmail) {
+        } else if (cancelPendingEmailChange === true && user.pendingEmail) {
             await cancelEmailChange(user._id);
         }
 

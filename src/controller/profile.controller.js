@@ -42,7 +42,7 @@ export const updateProfile = async (req, res, next) => {
             throw new ApiError(401, "Authentication required.");
         }
 
-        const { name, email, currentPassword } = req.body ?? {};
+        const { name, email, currentPassword, cancelEmailChange } = req.body ?? {};
 
         if (!name || !email) {
             throw new ApiError(400, "Name and email are required.");
@@ -52,7 +52,8 @@ export const updateProfile = async (req, res, next) => {
             req.user._id,
             name,
             email,
-            currentPassword
+            currentPassword,
+            cancelEmailChange
         );
 
         // A new email is not applied yet: the frontend shows "confirm your new email" while emailChange is set.

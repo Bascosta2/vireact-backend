@@ -706,12 +706,12 @@ export const resetPasswordService = async (token, password) => {
 };
 
 
-/** Email comparisons ignore case, even for any address stored before emails were lowercased. */
-const CASE_INSENSITIVE = Object.freeze({ locale: 'en', strength: 2 });
-
-/** Another account already using this address (case-insensitive), or null. */
+/**
+ * Another account already using this address, or null. Case-insensitive because the schema stores every
+ * email lowercased (lowercase: true) and we compare the lowercased value, which uses the unique email index.
+ */
 export const findOtherUserWithEmail = (email, userId) =>
-    User.findOne({ email: normalizeEmail(email), _id: { $ne: userId } }).collation(CASE_INSENSITIVE).select('_id').lean();
+    User.findOne({ email: normalizeEmail(email), _id: { $ne: userId } }).select('_id').lean();
 
 const EMAIL_CHANGE_LINK_INVALID = "This confirmation link has expired or was already used. Change your email again from your profile.";
 
