@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 process.env.NODE_ENV = 'test';
 
 const { createAnalysisAsset, TWELVE_LABS_DIRECT_MAX_BYTES } = await import('../src/service/video.service.js');
-const { MAX_UPLOAD_BYTES } = await import('../src/middleware/fileUpload.js');
+const { MAX_UPLOAD_BYTES, detectAllowedVideoMime } = await import('../src/middleware/fileUpload.js');
+const fs = await import('node:fs');
+const os = await import('node:os');
+const path = await import('node:path');
 
 const fakeVideo = () => ({ saved: 0, analysisSourceKey: null, async save() { this.saved += 1; } });
 
@@ -44,4 +47,31 @@ test('a large file goes to storage and Twelve Labs fetches it by a signed link',
     assert.deepEqual(calls.map((c) => c[0]), ['upload', 'sign', 'link']);
     assert.equal(calls[1][2], 6 * 60 * 60, 'the link lives long enough for Twelve Labs to fetch it');
     assert.equal(calls[2][1], 'https://signed/editor/analysis/u1/v9/source.mov');
+});
+
+test('the magic-byte check (file-type 22) accepts MP4, MOV, WebM and MKV and rejects non-video files', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'upload-type-'));
+    const pad = Buffer.alloc(4096);
+    const ftyp = (brand) => Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from(`ftyp${brand}`), Buffer.from([0, 0, 0, 0]), Buffer.from(brand)]);
+    const ebml = (docType) => {
+        const body = Buffer.concat([Buffer.from([0x42, 0x82, 0x80 | docType.length]), Buffer.from(docType)]);
+        return Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80 | body.length]), body]);
+    };
+    const cases = [
+        ['mp4', ftyp('isom'), 'video/mp4'],
+        ['mov', ftyp('qt  '), 'video/quicktime'],
+        ['webm', ebml('webm'), 'video/webm'],
+        ['mkv', ebml('matroska'), 'video/matroska'],
+        ['png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), null],
+        ['txt', Buffer.from('not a video at all'), null],
+    ];
+    try {
+        for (const [ext, header, expected] of cases) {
+            const file = path.join(dir, `sample.${ext}`);
+            fs.writeFileSync(file, Buffer.concat([header, pad]));
+            assert.equal(await detectAllowedVideoMime(file), expected, ext);
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });
