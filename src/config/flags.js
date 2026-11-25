@@ -53,6 +53,14 @@ export const hasPublishingAccess = (user) => {
 };
 
 /**
+ * Meta data-deletion and deauthorize callbacks (POST /api/v1/meta/data-deletion, /api/v1/meta/deauthorize).
+ * Off (default): both answer 404, as before. Turn on with FACEBOOK_APP_SECRET and/or INSTAGRAM_APP_SECRET set.
+ * Deliberately not gated: GET /api/v1/meta/data-deletion/:code and the daily finisher of pending deletions,
+ * so requests already accepted still complete and stay checkable if the flag is turned off again.
+ */
+export const isMetaDataDeletionEnabled = () => isOn('META_DATA_DELETION_ENABLED');
+
+/**
  * 7-day free trial of a paid plan through Stripe Checkout (card required, $0 today). On unless
  * TRIAL_BILLING_ENABLED is exactly 'false'. One trial per account (Subscription.trialUsedAt).
  */

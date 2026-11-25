@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { authenticateToken } from '../middleware/auth.js';
 import {
     requireAccountsAccess, getAccounts, connectAccount, connectCallback, syncAccountNow, disconnectAccount, getPosts, setPostLink,
+    metaDataDeletion, metaDataDeletionStatus, metaDeauthorize,
 } from '../controller/accounts.controller.js';
 
 /** Accounts tab: the user's connected TikTok / YouTube / Instagram accounts and their posts' real numbers. */
@@ -23,3 +24,14 @@ accountsRoutes.post('/:id/sync', syncAccountNow);
 accountsRoutes.delete('/:id', disconnectAccount);
 
 export default accountsRoutes;
+
+/**
+ * Meta's user-data callbacks, mounted at /api/v1/meta (no Vireact session: Meta's servers call the POSTs with a
+ * signed_request, the public /data-deletion page calls the GET). See service/accounts/meta-data-deletion.js.
+ */
+export const metaRoutes = Router();
+const metaCallbackLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+const metaStatusLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false });
+metaRoutes.post('/data-deletion', metaCallbackLimit, metaDataDeletion);
+metaRoutes.get('/data-deletion/:code', metaStatusLimit, metaDataDeletionStatus);
+metaRoutes.post('/deauthorize', metaCallbackLimit, metaDeauthorize);

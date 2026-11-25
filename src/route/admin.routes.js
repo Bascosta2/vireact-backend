@@ -8,6 +8,7 @@ import { analysisQueueStats } from '../controller/video.controller.js';
 import { Video } from '../model/video.model.js';
 import { ANALYSIS_STATUS } from '../constants.js';
 import { RECOVERY } from '../service/analysis-recovery.service.js';
+import { countStalledMetaDeletions } from '../service/accounts/meta-data-deletion.js';
 import { uploadAdminVideo, uploadAdminCreatorVideo, uploadAdminKnowledge, uploadAdminExample, uploadAdminSound } from '../middleware/adminUpload.js';
 import { listExamples, createExample, reprofileExample, updateExample, deleteExample, listSounds, createSound, updateSound } from '../controller/admin-editor.controller.js';
 import { postPairedVideo, postCreatorVideoUpload, postKnowledge } from '../controller/admin.controller.js';
@@ -86,10 +87,11 @@ adminRoutes.get('/health-report', async (req, res, next) => {
     try {
         const since = sinceHours(req);
         const staleHeartbeat = new Date(Date.now() - RECOVERY.staleHeartbeatMs);
-        const [analysis, errors, stuckNow] = await Promise.all([
+        const [analysis, errors, stuckNow, stalledMetaDeletions] = await Promise.all([
             getAnalysisStats({ since }),
             getErrorReport({ since, limit: 10 }),
             Video.countDocuments({ analysisStatus: ANALYSIS_STATUS.PROCESSING, analysisHeartbeatAt: { $lt: staleHeartbeat } }),
+            countStalledMetaDeletions(),
         ]);
         const mem = process.memoryUsage();
         const mb = (n) => Math.round(n / 1024 / 1024);
@@ -98,6 +100,7 @@ adminRoutes.get('/health-report', async (req, res, next) => {
         if (stuckNow > 0) warnings.push(`${stuckNow} analyses look stuck (the sweeper retries them every 5 minutes)`);
         if (mb(mem.rss) > 900) warnings.push(`High memory use: ${mb(mem.rss)} MB`);
         if ((errors.bySource.server || 0) + (errors.bySource.process || 0) > 50) warnings.push('Many server errors');
+        if (stalledMetaDeletions > 0) warnings.push(`${stalledMetaDeletions} Meta data-deletion requests still pending after 7 days`);
         res.status(200).json({
             ok: true,
             status: warnings.length ? 'attention' : 'healthy',
@@ -109,6 +112,7 @@ adminRoutes.get('/health-report', async (req, res, next) => {
                 analysisJobs: { running: runningJobIds().length, ...analysisQueueStats() },
             },
             analysis,
+            metaDeletions: { pendingOver7Days: stalledMetaDeletions },
             errors: { total: errors.total, bySource: errors.bySource, top: errors.top.map(({ stack, ...e }) => e) },
         });
     } catch (error) {

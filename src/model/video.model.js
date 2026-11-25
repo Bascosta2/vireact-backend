@@ -103,9 +103,25 @@ const videoSchema = new mongoose.Schema({
             comments: { type: Number, default: null, min: 0 },
             shares: { type: Number, default: null, min: 0 },
             saves: { type: Number, default: null, min: 0 },
-            source: { type: String, enum: ['manual', 'tiktok', 'instagram', 'youtube'], default: 'manual' }
+            source: { type: String, enum: ['manual', 'tiktok', 'instagram', 'youtube'], default: 'manual' },
+            /** The connected account that sent this reading (unset for typed entries and older copies). */
+            accountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ConnectedAccount' }
         }],
         default: []
+    },
+    /**
+     * Which of postUrl / postedAt / creatorPlatform / creatorFollowers a connected account filled in
+     * (recordConnectedReadings), so deleting that account's data clears exactly those. A field the user
+     * edits afterwards is dropped from here (it is theirs then).
+     */
+    connectedCopies: {
+        type: [{
+            _id: false,
+            accountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ConnectedAccount', required: true },
+            platform: { type: String, default: null },
+            fields: { type: [String], default: [] }
+        }],
+        default: undefined
     },
     /** Cached AI tags used by the content strategy (filled lazily, see content-strategy.service.js). */
     contentProfile: {
