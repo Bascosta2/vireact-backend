@@ -123,6 +123,7 @@ const withFakeUserModel = async (doc, fn) => {
     User.updateOne = async (filter, update) => {
         if (!matches(filter)) return { modifiedCount: 0 };
         Object.assign(doc, update.$set);
+        for (const key of Object.keys(update.$unset || {})) delete doc[key];
         return { modifiedCount: 1 };
     };
     try {
@@ -205,6 +206,7 @@ test('signup reports the email outcome: verificationEmail (detail) next to verif
             assert.equal(res.body.data.verificationEmailSent, true);
             assert.equal(res.body.data.accessToken, undefined, 'not signed in');
             assert.deepEqual(res.body.data.user, { name: 'Second', email: 'pat@example.invalid', isEmailVerified: false });
+            assert.equal(res.body.data.resignup, true);
         });
     } finally {
         resend.emails.send = sentBefore.send;
@@ -214,6 +216,7 @@ test('signup reports the email outcome: verificationEmail (detail) next to verif
         const res = fakeRes();
         await signup({ body }, res, assert.ifError);
         assert.equal(res.body.data.verificationEmail, 'unavailable');
+        assert.equal(res.body.data.resignup, true);
         assert.equal(res.body.data.accessToken, undefined);
         assert.deepEqual(res.cookies, {});
     }));
@@ -230,6 +233,7 @@ test('signup reports the email outcome: verificationEmail (detail) next to verif
             assert.equal(res.body.data.verificationEmailSent, false);
             assert.equal(res.body.data.user.isEmailVerified, false);
             assert.equal(res.body.data.accessToken, 'access');
+            assert.equal(res.body.data.resignup, false);
         }));
     } finally {
         User.prototype.save = save;
@@ -241,5 +245,26 @@ test('signup rejects non-text fields with 400', async () => {
         let err;
         await signup({ body: { role: 'user', ...body } }, fakeRes(), (e) => { err = e; });
         assert.equal(err?.statusCode, 400);
+    }
+});
+
+test('POST /auth/verify-email after competing signups answers verified_set_password with a resetToken, once', async () => {
+    const doc = unverifiedDoc({ competingSignupAt: new Date(), passwordResetTokenHash: null });
+    const sentBefore = resend.emails.send;
+    resend.emails.send = async () => ({ data: { id: 'test' }, error: null });
+    try {
+        await withFakeUserModel(doc, async () => {
+            const res = fakeRes();
+            await verifyEmail({ query: { token: HEX('a') }, body: {} }, res, assert.ifError);
+            assert.equal(res.body.data.status, 'verified_set_password');
+            assert.match(res.body.data.resetToken, /^[a-f0-9]{64}$/);
+            assert.equal(doc.password, undefined);
+
+            const again = fakeRes();
+            await verifyEmail({ query: { token: HEX('a') }, body: {} }, again, assert.ifError);
+            assert.deepEqual(again.body.data, { status: 'already_verified' });
+        });
+    } finally {
+        resend.emails.send = sentBefore;
     }
 });

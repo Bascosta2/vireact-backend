@@ -136,15 +136,16 @@ test('signup: duplicate verified email is 409 (not 500); unverified email restar
     assert.equal(again.pendingSignup, true);
     assert.equal(again.verificationEmail, VERIFICATION_EMAIL.SENT);
     assert.equal(sent.length, 1);
-    // Nothing changes until the inbox owner opens the new link; then the new name and password apply.
+    // Nothing changes at re-signup; opening the link verifies the inbox and asks for a new password.
     const before = await User.findById(stuck._id);
     assert.ok(await before.comparePassword('pw-123456'));
     assert.equal(before.isEmailVerified, false);
-    const pendingToken = sent[0].text.match(/token=([a-f0-9]{64})/)[1];
-    assert.equal((await verifyEmailService(pendingToken)).status, 'verified');
+    const token = sent[0].text.match(/token=([a-f0-9]{64})/)[1];
+    const opened = await verifyEmailService(token);
+    assert.equal(opened.status, 'verified_set_password');
+    await resetPasswordService(opened.resetToken, 'new-pass-1');
     const reloaded = await User.findById(stuck._id);
     assert.ok(await reloaded.comparePassword('new-pass-1'));
-    assert.equal(reloaded.name, 'New Name');
     assert.equal(reloaded.isEmailVerified, true);
 });
 
