@@ -12,6 +12,8 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DATA = 'https://www.googleapis.com/youtube/v3';
 const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
 export const YOUTUBE_SCOPES = ['https://www.googleapis.com/auth/youtube.readonly', 'https://www.googleapis.com/auth/yt-analytics.readonly'];
+/** Opt-in only (startConnect with scopes 'publish'; scheduled posting): videos.insert. */
+export const YOUTUBE_PUBLISH_SCOPES = ['https://www.googleapis.com/auth/youtube.upload'];
 /** Retention curves are one Analytics call per video: only for this many of the newest videos per sync. */
 const RETENTION_PER_SYNC = 10;
 

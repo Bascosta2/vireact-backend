@@ -1,6 +1,6 @@
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
-import { hasAccountsAccess } from '../config/flags.js';
+import { hasAccountsAccess, hasPublishingAccess } from '../config/flags.js';
 import { captureServerEvent } from '../lib/analytics.js';
 import {
     disconnect, finishConnect, linkPost, listAccounts, listPosts, returnUrl, startConnect, syncNow,
@@ -24,7 +24,10 @@ export const getAccounts = async (req, res) => {
 };
 
 export const connectAccount = async (req, res) => {
-    const data = await startConnect(req.user._id, String(req.params.platform));
+    // Opt-in posting permission (scheduled posting): ?scopes=publish or { scopes: 'publish' }. Default read-only.
+    const scopes = (req.query?.scopes ?? req.body?.scopes) === 'publish' ? 'publish' : 'read';
+    if (scopes === 'publish' && !hasPublishingAccess(req.user)) throw new ApiError(404, 'Not found');
+    const data = await startConnect(req.user._id, String(req.params.platform), { scopes });
     track(req, 'account_connect_started', { platform: req.params.platform });
     return ok(res, 'OK', data);
 };

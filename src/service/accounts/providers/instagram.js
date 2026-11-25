@@ -12,6 +12,8 @@ const AUTH_URL = 'https://www.instagram.com/oauth/authorize';
 const TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 const GRAPH = 'https://graph.instagram.com';
 export const INSTAGRAM_SCOPES = ['instagram_business_basic', 'instagram_business_manage_insights'];
+/** Opt-in only (startConnect with scopes 'publish'; scheduled posting): Reels container + media_publish. */
+export const INSTAGRAM_PUBLISH_SCOPES = ['instagram_business_content_publish'];
 const version = (e) => env('INSTAGRAM_GRAPH_VERSION', e) || 'v25.0';
 const REEL_METRICS = 'views,reach,saved,shares,ig_reels_avg_watch_time';
 const POST_METRICS = 'views,reach,saved,shares';
