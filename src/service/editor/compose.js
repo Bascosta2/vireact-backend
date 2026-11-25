@@ -155,6 +155,8 @@ export function sanitizeEdits(input = {}, { wordCount = 0, trackIds = new Set() 
     if (HOOK_VARIANTS.includes(input.hookVariant)) out.hookVariant = input.hookVariant;
     // Another animation style for an edit made with one (compose ignores it for every other edit).
     if (isAnimationStyle(input.animationStyle)) out.animationStyle = input.animationStyle;
+    // Storytelling styles: show the creator's footage instead of the painted scene.
+    if ('sceneOff' in input) out.sceneOff = bool(input.sceneOff);
     return out;
 }
 
@@ -230,11 +232,14 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     const sr = skill?.render ?? null;
     /** The style's sound palette (animation styles), or null for the standard sounds. */
     const ss = sr?.sfx ?? null;
+    /** Animated storytelling: the style's painted scene fills the frame (the footage only gives its sound). */
+    const sceneOn = sr?.layout === 'scene' && !edits.sceneOff;
     const base = withDefaults(rawPlan);
     // An editing skill narrows the plan to its style before anything is placed.
     const plan = sr ? {
         ...base,
-        graphics: base.graphics.filter((g) => !(sr.dropGraphicTypes ?? []).includes(g.type)),
+        // A callout points at something in the footage: nothing to point at when a scene is shown.
+        graphics: base.graphics.filter((g) => !(sr.dropGraphicTypes ?? []).includes(g.type) && !(sceneOn && g.type === 'callout')),
         transitions: sr.transitionStyles && !sr.transitionStyles.includes(base.transitions.style) ? { ...base.transitions, style: sr.transitionStyles[0] } : base.transitions,
     } : base;
     // Older edits stored raw transcript timings: repair squashed words here too (no-op on repaired ones).
@@ -449,6 +454,6 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         sfx,
         music,
         framing: { mode: edits.framingMode ?? plan.framing.mode, focusX: plan.framing.focusX },
-        ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [] } } : {}),
+        ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [], ...(sr?.layout ? { layout: sceneOn ? 'scene' : 'footage' } : {}) } } : {}),
     };
 }
