@@ -8,7 +8,8 @@ import { decryptToken, encryptToken, isTokenKeyConfigured } from './token-crypto
 import { tiktok } from './providers/tiktok.js';
 import { youtube } from './providers/youtube.js';
 import { instagram } from './providers/instagram.js';
-import { recordConnectedReadings } from '../performance.service.js';
+import { recordConnectedReadings, removeConnectedReadings } from '../performance.service.js';
+import { captureError } from '../ops-monitoring.service.js';
 
 /**
  * Connected accounts (Accounts tab). A user signs in with TikTok, YouTube or Instagram; we store the
@@ -75,6 +76,9 @@ export const startConnect = async (userId, platform, { env = process.env } = {})
     return { url: p.authUrl({ state, redirectUri: callbackUrl(platform, env), codeChallenge, env }) };
 };
 
+/** Meta's app-scoped ids for the account (Instagram), kept so Meta's deauthorize / data-deletion callbacks find it. */
+const scopedIdsOf = (...sources) => [...new Set(sources.map((x) => x?.scopedUserId).filter(Boolean).map(String))];
+
 const sealTokens = (t) => ({
     access: encryptToken(t.access), refresh: encryptToken(t.refresh), accessExpiresAt: t.accessExpiresAt ?? null,
     refreshExpiresAt: t.refreshExpiresAt ?? null, scopes: t.scopes ?? [],
@@ -84,6 +88,8 @@ const sealTokens = (t) => ({
  * The platform sent the user back. Verifies the state, exchanges the code, stores the account and starts a
  * first sync in the background. Returns the URL to send the browser to (the Accounts tab, with the outcome).
  */
+export const STILL_DELETING_MESSAGE = "We're still removing your previous data. Try again in a few minutes.";
+
 export const finishConnect = async (platform, { code, state, error, errorDescription } = {}, { env = process.env, fetchImpl, syncInBackground = true } = {}) => {
     const p = PROVIDERS[platform];
     if (!p) return returnUrl({ error: 'unknown_platform' }, env);
@@ -95,15 +101,27 @@ export const finishConnect = async (platform, { code, state, error, errorDescrip
         const tokens = await p.exchangeCode({ code: String(code), redirectUri: callbackUrl(platform, env), codeVerifier: pending.codeVerifier, env, fetchImpl });
         const profile = await p.profile({ access: tokens.access, env, fetchImpl });
         if (!profile?.externalId) throw new Error('the platform returned no account id');
+        const scopedIds = scopedIdsOf(tokens, profile);
+        // A deletion of this same account that stopped partway is finished first; its record is never reused.
+        const interrupted = await ConnectedAccount.findOne({ userId: pending.userId, platform, externalId: String(profile.externalId), deleting: true });
+        if (interrupted) {
+            try {
+                await deleteAccountData(interrupted);
+            } catch (e) {
+                console.warn(`[accounts] ${platform} reconnect waits for an unfinished deletion: ${e.message}`);
+                return returnUrl({ error: 'still_deleting', platform, detail: STILL_DELETING_MESSAGE }, env);
+            }
+        }
         const account = await ConnectedAccount.findOneAndUpdate(
-            { userId: pending.userId, platform, externalId: String(profile.externalId) },
+            { userId: pending.userId, platform, externalId: String(profile.externalId), deleting: { $ne: true } },
             {
                 $set: {
                     handle: profile.handle ?? null, displayName: profile.displayName ?? null, avatarUrl: profile.avatarUrl ?? null,
                     followers: profile.followers ?? null, uploadsPlaylistId: profile.uploadsPlaylistId ?? null, tokens: sealTokens(tokens),
-                    status: ACCOUNT_STATUS.ACTIVE, lastSyncError: null,
+                    status: ACCOUNT_STATUS.ACTIVE, lastSyncError: null, authorizedAt: new Date(),
                 },
                 $setOnInsert: { connectedAt: new Date() },
+                ...(scopedIds.length ? { $addToSet: { scopedUserIds: { $each: scopedIds } } } : {}),
             },
             { upsert: true, new: true },
         );
@@ -187,7 +205,7 @@ const sendMilestones = async (post, account) => {
     const due = dueMilestones(post);
     if (!due.length) return 0;
     await recordConnectedReadings(post.videoId, post.userId, {
-        source: post.platform, postUrl: post.url, postedAt: post.postedAt, followers: account?.followers ?? null,
+        source: post.platform, accountId: post.accountId, postUrl: post.url, postedAt: post.postedAt, followers: account?.followers ?? null,
         readings: due.map((d) => ({ capturedAt: d.reading.at, views: d.reading.views, likes: d.reading.likes, comments: d.reading.comments, shares: d.reading.shares, saves: d.reading.saves })),
     });
     await ConnectedPost.updateOne({ _id: post._id }, { $addToSet: { milestonesSent: { $each: due.map((d) => d.hours) } } });
@@ -202,7 +220,18 @@ const sendMilestones = async (post, account) => {
  */
 export const syncAccount = async (accountId, { env = process.env, fetchImpl, now = Date.now() } = {}) => {
     const account = await ConnectedAccount.findById(accountId);
-    if (!account) throw new ApiError(404, 'Account not found');
+    if (!account || account.deleting) throw new ApiError(404, 'Account not found');
+    // The account's data may be deleted (Meta deletion, disconnect) while the platform answers: check before
+    // every write, and if it is gone or going, stop and take back anything written meanwhile.
+    const stillLive = async () => Boolean(await ConnectedAccount.exists({ _id: account._id, deleting: { $ne: true } }));
+    const discard = async () => {
+        const fresh = await ConnectedAccount.findById(account._id).select('deleting').lean();
+        // Data deletion: run it again (idempotent), which also takes back what this sync wrote.
+        if (fresh?.deleting) await deleteAccountData(account);
+        // Plain disconnect: drop posts written meanwhile; results already copied stay, as disconnect keeps them.
+        else await ConnectedPost.deleteMany({ accountId: account._id });
+        return { ...counts, discarded: true };
+    };
     const p = providerFor(account.platform);
     const counts = { posts: 0, newPosts: 0, autoLinked: 0, milestones: 0 };
     try {
@@ -210,6 +239,9 @@ export const syncAccount = async (accountId, { env = process.env, fetchImpl, now
         const profile = await p.profile({ access, env, fetchImpl }).catch(() => null);
         if (profile) {
             Object.assign(account, { followers: profile.followers ?? account.followers, handle: profile.handle ?? account.handle, avatarUrl: profile.avatarUrl ?? account.avatarUrl, ...(profile.uploadsPlaylistId ? { uploadsPlaylistId: profile.uploadsPlaylistId } : {}) });
+            const known = account.scopedUserIds ?? [];
+            const fresh = scopedIdsOf(profile).filter((id) => !known.includes(id));
+            if (fresh.length) account.scopedUserIds = [...known, ...fresh];
         }
         const posts = await p.listPosts({ access, account, maxPosts: MAX_POSTS, env, now, fetchImpl });
         const uploads = await Video.find({ uploader_id: account.userId, analysisStatus: ANALYSIS_STATUS.COMPLETED })
@@ -217,6 +249,7 @@ export const syncAccount = async (accountId, { env = process.env, fetchImpl, now
         const taken = new Set((await ConnectedPost.find({ userId: account.userId, videoId: { $ne: null } }).select('videoId').lean()).map((x) => String(x.videoId)));
         const at = new Date(now);
         for (const item of posts) {
+            if (!(await stillLive())) return await discard();
             const reading = { at, ageHours: ageHours(item.postedAt, at), ...pickStats(item.stats) };
             const existing = await ConnectedPost.findOne({ accountId: account._id, externalId: item.externalId });
             const doc = existing ?? new ConnectedPost({ accountId: account._id, userId: account.userId, platform: account.platform, externalId: item.externalId });
@@ -244,6 +277,7 @@ export const syncAccount = async (accountId, { env = process.env, fetchImpl, now
             counts.milestones += await sendMilestones(doc, account);
             counts.posts += 1;
         }
+        if (!(await stillLive())) return await discard();
         Object.assign(account, { lastSyncAt: at, lastSyncError: null, lastSyncCounts: counts, status: ACCOUNT_STATUS.ACTIVE });
         await account.save();
         return counts;
@@ -260,8 +294,12 @@ const pickStats = (s = {}) => Object.fromEntries(['views', 'likes', 'comments', 
 /** Daily: every active account, one at a time. Never throws. */
 export const syncAllAccounts = async ({ env = process.env, fetchImpl, now = Date.now(), log = () => {} } = {}) => {
     const out = { accounts: 0, synced: 0, failed: 0, needsReauth: 0, posts: 0, milestones: 0 };
+    // Deletions that stopped partway (any trigger), then Meta requests that failed, are finished first.
+    out.interruptedDeletions = await finishInterruptedDeletions({ log });
+    const { finishPendingMetaDeletions } = await import('./meta-data-deletion.js'); // imported here: it imports this file
+    out.metaDeletions = await finishPendingMetaDeletions({ now, log });
     if (!isTokenKeyConfigured(env)) return { ...out, skipped: 'ACCOUNTS_TOKEN_KEY not set' };
-    const accounts = await ConnectedAccount.find({ status: ACCOUNT_STATUS.ACTIVE }).select('_id').lean();
+    const accounts = await ConnectedAccount.find({ status: ACCOUNT_STATUS.ACTIVE, deleting: { $ne: true } }).select('_id').lean();
     out.accounts = accounts.length;
     for (const a of accounts) {
         try {
@@ -281,7 +319,7 @@ export const syncAllAccounts = async ({ env = process.env, fetchImpl, now = Date
 // ---- the Accounts tab
 
 export const listAccounts = async (userId, { env = process.env } = {}) => {
-    const accounts = await ConnectedAccount.find({ userId }).sort({ connectedAt: 1 }).lean();
+    const accounts = await ConnectedAccount.find({ userId, deleting: { $ne: true } }).sort({ connectedAt: 1 }).lean();
     const counts = await ConnectedPost.aggregate([
         { $match: { userId: new mongoose.Types.ObjectId(String(userId)) } },
         { $group: { _id: '$accountId', posts: { $sum: 1 }, linked: { $sum: { $cond: [{ $ne: ['$videoId', null] }, 1, 0] } } } },
@@ -292,7 +330,7 @@ export const listAccounts = async (userId, { env = process.env } = {}) => {
 
 const ownedAccount = async (userId, id) => {
     if (!mongoose.isValidObjectId(id)) throw new ApiError(404, 'Account not found');
-    const a = await ConnectedAccount.findOne({ _id: id, userId });
+    const a = await ConnectedAccount.findOne({ _id: id, userId, deleting: { $ne: true } });
     if (!a) throw new ApiError(404, 'Account not found');
     return a;
 };
@@ -308,16 +346,95 @@ export const syncNow = async (userId, id, { env = process.env, fetchImpl, now = 
         if (e.reauth) throw new ApiError(409, `${providerFor(a.platform).name} needs you to connect again.`, { code: 'NEEDS_REAUTH' });
         throw new ApiError(502, `Could not reach ${providerFor(a.platform).name} right now. Try again later.`);
     }
-    return toPublicAccount(await ConnectedAccount.findById(a._id).lean());
+    const fresh = await ConnectedAccount.findOne({ _id: a._id, deleting: { $ne: true } }).lean();
+    if (!fresh) throw new ApiError(404, 'Account not found');
+    return toPublicAccount(fresh);
 };
 
-/** Disconnect: revoke at the platform when it allows, then delete the tokens and the post readings. */
-export const disconnect = async (userId, id, { env = process.env, fetchImpl } = {}) => {
+/**
+ * Deletes everything a connected account brought in: the account (tokens, handle, avatar, followers), its
+ * posts with their daily readings, and what it copied onto the user's uploads (removeConnectedReadings):
+ * readings tagged with the account and the fields recorded as copied by it. The uploads themselves, the
+ * user's analyses and anything they typed stay.
+ * Older copies (before readings were tagged) are recognised by source: on uploads linked to this account's
+ * posts, and on all the user's uploads when they have no other account on the same platform (otherwise
+ * that account's older readings could not be told apart, so they stay on unlinked uploads).
+ * Marks the account `deleting` first so a sync running meanwhile stops writing. Idempotent; returns counts.
+ */
+export const deleteAccountData = async (account) => {
+    await ConnectedAccount.updateOne({ _id: account._id }, { $set: { deleting: true } });
+    const posts = await ConnectedPost.find({ accountId: account._id }).select('videoId url postedAt').lean();
+    const linked = new Set(posts.filter((x) => x.videoId).map((x) => String(x.videoId)));
+    const otherSamePlatform = await ConnectedAccount.exists({ userId: account.userId, platform: account.platform, _id: { $ne: account._id }, deleting: { $ne: true } });
+    const videoIds = new Set(linked);
+    const tagged = await Video.find({
+        uploader_id: account.userId, $or: [{ 'performanceSnapshots.accountId': account._id }, { 'connectedCopies.accountId': account._id }],
+    }).select('_id').lean();
+    for (const v of tagged) videoIds.add(String(v._id));
+    if (!otherSamePlatform) {
+        const untagged = await Video.find({ uploader_id: account.userId, performanceSnapshots: { $elemMatch: { source: account.platform, accountId: null } } }).select('_id').lean();
+        for (const v of untagged) videoIds.add(String(v._id));
+    }
+    const postUrls = posts.map((x) => x.url);
+    const postedAts = posts.map((x) => x.postedAt);
+    let readings = 0;
+    for (const videoId of videoIds) {
+        readings += await removeConnectedReadings(videoId, account.userId, {
+            accountId: account._id, source: account.platform, includeUntagged: !otherSamePlatform || linked.has(videoId),
+            postUrls, postedAts, followers: account.followers ?? null,
+        });
+    }
+    const { deletedCount: deletedPosts = 0 } = await ConnectedPost.deleteMany({ accountId: account._id });
+    // Tombstone without any platform data (see the model's `deleting`); removed after a day by its TTL index.
+    await ConnectedAccount.replaceOne({ _id: account._id }, {
+        userId: account.userId, platform: account.platform, externalId: `deleted:${account._id}`, deleting: true, deletedAt: new Date(),
+    });
+    return { posts: deletedPosts, readings, uploads: videoIds.size };
+};
+
+/** A deletion that failed this many times is reported (captureError) once. */
+export const DELETE_ALERT_AFTER = 3;
+
+/**
+ * Daily: finishes every account left `deleting` without a tombstone (a deletion that stopped partway, from
+ * Meta, disconnect with deleteData or a sync), least-tried first. Failures are counted on the account and
+ * reported once at the third (no ids, no error text). Never throws.
+ */
+export const finishInterruptedDeletions = async ({ log = () => {}, report = captureError, remove = deleteAccountData, limit = 100 } = {}) => {
+    const out = { pending: 0, completed: 0, failed: 0 };
+    try {
+        const stuck = await ConnectedAccount.find({ deleting: true, deletedAt: null }).sort({ deleteAttempts: 1, updatedAt: 1 }).limit(limit);
+        out.pending = stuck.length;
+        for (const account of stuck) {
+            try {
+                await remove(account);
+                out.completed += 1;
+            } catch (error) {
+                out.failed += 1;
+                const attempts = (account.deleteAttempts ?? 0) + 1;
+                await ConnectedAccount.updateOne({ _id: account._id }, { $set: { deleteAttempts: attempts } }).catch(() => {});
+                log(`accounts: an interrupted ${account.platform} deletion failed again: ${error.message}`);
+                if (attempts === DELETE_ALERT_AFTER) report(new Error(`Connected account deletion (${account.platform}) has failed ${attempts} times; last error: ${error?.name ?? 'Error'}`), { route: 'account deletion' });
+            }
+        }
+    } catch (error) {
+        log(`accounts: interrupted deletions: ${error.message}`);
+    }
+    return out;
+};
+
+/**
+ * Disconnect: revoke at the platform when it allows, then delete the tokens and the posts with their readings.
+ * Readings already copied onto the user's uploads stay (they are the user's results), unless deleteData is
+ * set: then deleteAccountData also takes those back (DELETE /api/v1/accounts/:id?deleteData=true).
+ */
+export const disconnect = async (userId, id, { env = process.env, fetchImpl, deleteData = false } = {}) => {
     const a = await ownedAccount(userId, id);
     const p = providerFor(a.platform);
     if (p.revoke) {
         try { await p.revoke({ access: decryptToken(a.tokens?.access), env, fetchImpl }); } catch { /* best effort */ }
     }
+    if (deleteData) return { ok: true, deleted: await deleteAccountData(a) };
     await ConnectedPost.deleteMany({ accountId: a._id });
     await ConnectedAccount.deleteOne({ _id: a._id });
     return { ok: true };

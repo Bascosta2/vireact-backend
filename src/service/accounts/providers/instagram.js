@@ -40,7 +40,9 @@ export const instagram = {
         const long = await requestJson(`${GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(env('INSTAGRAM_APP_SECRET', e))}&access_token=${encodeURIComponent(shortToken)}`, { fetchImpl });
         const scopes = String(short?.permissions ?? short?.data?.[0]?.permissions ?? '').split(/[,\s]+/).filter(Boolean);
         // The long-lived token is its own refresh credential (ig_refresh_token).
-        return { access: long.access_token, refresh: null, accessExpiresAt: inSeconds(long.expires_in), refreshExpiresAt: null, scopes };
+        // user_id here is the Instagram app-scoped id, the one Meta's deauthorize / data-deletion callbacks carry.
+        const scopedId = short?.user_id ?? short?.data?.[0]?.user_id;
+        return { access: long.access_token, refresh: null, accessExpiresAt: inSeconds(long.expires_in), refreshExpiresAt: null, scopes, scopedUserId: scopedId != null ? String(scopedId) : null };
     },
 
     /** Instagram refreshes the long-lived token itself (it must be at least 24 hours old and not expired). */
@@ -51,8 +53,12 @@ export const instagram = {
     refreshesWithAccessToken: true,
 
     async profile({ access, env: e = process.env, fetchImpl }) {
-        const body = await requestJson(`${GRAPH}/${version(e)}/me?fields=user_id,username,name,profile_picture_url,followers_count&access_token=${encodeURIComponent(access)}`, { fetchImpl });
-        return { externalId: String(body.user_id ?? body.id), handle: body.username ?? null, displayName: body.name ?? null, avatarUrl: body.profile_picture_url ?? null, followers: num(body.followers_count) };
+        const body = await requestJson(`${GRAPH}/${version(e)}/me?fields=id,user_id,username,name,profile_picture_url,followers_count&access_token=${encodeURIComponent(access)}`, { fetchImpl });
+        // externalId: the professional account id (used for media calls). id: the app-scoped id (Meta callbacks).
+        return {
+            externalId: String(body.user_id ?? body.id), handle: body.username ?? null, displayName: body.name ?? null, avatarUrl: body.profile_picture_url ?? null,
+            followers: num(body.followers_count), scopedUserId: body.id != null ? String(body.id) : null,
+        };
     },
 
     async listPosts({ access, maxPosts = 60, env: e = process.env, fetchImpl }) {
