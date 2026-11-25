@@ -5,9 +5,9 @@ import { Video } from '../../model/video.model.js';
 import { ANALYSIS_STATUS } from '../../constants.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { decryptToken, encryptToken, isTokenKeyConfigured } from './token-crypto.js';
-import { tiktok } from './providers/tiktok.js';
-import { youtube } from './providers/youtube.js';
-import { instagram } from './providers/instagram.js';
+import { tiktok, TIKTOK_PUBLISH_SCOPES } from './providers/tiktok.js';
+import { youtube, YOUTUBE_PUBLISH_SCOPES } from './providers/youtube.js';
+import { instagram, INSTAGRAM_PUBLISH_SCOPES } from './providers/instagram.js';
 import { facebook } from './providers/facebook.js';
 import { recordConnectedReadings } from '../performance.service.js';
 
@@ -61,19 +61,46 @@ export const toPublicAccount = (a, counts = {}) => ({
     posts: counts.posts ?? 0, linked: counts.linked ?? 0,
 });
 
+/**
+ * Extra scopes asked for only when the user opts in to scheduled posting (startConnect scopes 'publish').
+ * The normal connect flow stays read-only. Facebook's provider lives in providers/facebook.js when present;
+ * its Page posting permission is listed here so publishing does not depend on that file's contents.
+ */
+export const PUBLISH_SCOPES = Object.freeze({
+    tiktok: TIKTOK_PUBLISH_SCOPES,
+    youtube: YOUTUBE_PUBLISH_SCOPES,
+    instagram: INSTAGRAM_PUBLISH_SCOPES,
+    facebook: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+});
+
+/** Adds scopes to a sign-in URL's `scope` parameter, keeping the provider's own list and separator. */
+export const withExtraScopes = (url, extra = []) => {
+    const u = new URL(url);
+    const current = u.searchParams.get('scope') ?? '';
+    const sep = current.includes(' ') || current.includes('/') ? ' ' : ',';
+    const all = [...new Set([...current.split(/[,\s]+/).filter(Boolean), ...extra])];
+    u.searchParams.set('scope', all.join(sep));
+    return u.toString();
+};
+
 // ---- sign-in
 
-/** Starts a sign-in: stores a one-time state (and PKCE verifier) and returns the platform's sign-in URL. */
-export const startConnect = async (userId, platform, { env = process.env } = {}) => {
+/**
+ * Starts a sign-in: stores a one-time state (and PKCE verifier) and returns the platform's sign-in URL.
+ * `scopes: 'publish'` also asks for the platform's posting permission (PUBLISH_SCOPES); the default is read-only.
+ */
+export const startConnect = async (userId, platform, { env = process.env, scopes = 'read' } = {}) => {
     const p = providerFor(platform);
     if (!platformStatus(env).find((s) => s.id === platform)?.configured) {
         throw new ApiError(503, `${p.name} connections are not available yet.`, { code: 'PLATFORM_NOT_CONFIGURED' });
     }
+    if (scopes === 'publish' && !PUBLISH_SCOPES[platform]) throw new ApiError(400, `Posting to ${p.name} is not available yet.`);
     const state = b64url(crypto.randomBytes(24));
     const codeVerifier = p.usesPkce ? b64url(crypto.randomBytes(48)) : null;
     await AccountOAuthState.create({ stateHash: sha256(state), userId, platform, codeVerifier, expiresAt: new Date(Date.now() + STATE_TTL_MS) });
     const codeChallenge = codeVerifier ? b64url(crypto.createHash('sha256').update(codeVerifier).digest()) : undefined;
-    return { url: p.authUrl({ state, redirectUri: callbackUrl(platform, env), codeChallenge, env }) };
+    const url = p.authUrl({ state, redirectUri: callbackUrl(platform, env), codeChallenge, env });
+    return { url: scopes === 'publish' ? withExtraScopes(url, PUBLISH_SCOPES[platform]) : url };
 };
 
 const sealTokens = (t) => ({

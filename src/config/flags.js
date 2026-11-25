@@ -37,6 +37,22 @@ export const hasAccountsAccess = (user) => {
 };
 
 /**
+ * Scheduled posting to the user's connected accounts (src/service/publish/), same pattern again:
+ * off (default) = only PUBLISHING_BETA_EMAILS can schedule; PUBLISHING_ENABLED=true opens it to everyone.
+ * PUBLISHING_DRY_RUN=true simulates every post (nothing reaches a platform) so the flow can be tested
+ * before the platforms approve the app.
+ */
+export const isPublishingEnabled = () => isOn('PUBLISHING_ENABLED');
+export const isPublishingDryRun = () => isOn('PUBLISHING_DRY_RUN');
+
+export const hasPublishingAccess = (user) => {
+    if (isPublishingEnabled()) return true;
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!email) return false;
+    return String(process.env.PUBLISHING_BETA_EMAILS || '').split(',').some((e) => e.trim().toLowerCase() === email);
+};
+
+/**
  * 7-day free trial of a paid plan through Stripe Checkout (card required, $0 today). On unless
  * TRIAL_BILLING_ENABLED is exactly 'false'. One trial per account (Subscription.trialUsedAt).
  */
