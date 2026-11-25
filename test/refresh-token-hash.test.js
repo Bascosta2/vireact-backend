@@ -7,6 +7,7 @@ import {
     verifyEmailService,
     resetPasswordService,
     loginAdminService,
+    loginUserService,
     isEmailLinkToken,
     verificationTokenFor,
     resendEmailVerificationService,
@@ -141,7 +142,7 @@ test('admin login rejects a non-string email or password with 400 before any que
 /** Swap User.findOne/updateOne for an in-memory document; equality-only filters, $set/$unset updates. */
 const withFakeUser = async (doc, fn) => {
     const original = { findOne: User.findOne, updateOne: User.updateOne };
-    const matches = (filter) => Object.entries(filter).every(([key, value]) => String(doc[key]) === String(value));
+    const matches = (filter) => Object.entries(filter).every(([key, value]) => (value === null ? doc[key] == null : String(doc[key]) === String(value)));
     const updates = [];
     User.findOne = (filter) => {
         const found = matches(filter) ? doc : null;
@@ -221,7 +222,7 @@ test('verify-email is idempotent: first use verifies, a second use says already_
         assert.equal((await verifyEmailService(HEX('a'))).status, EMAIL_VERIFICATION_STATUS.VERIFIED);
         assert.equal(doc.isEmailVerified, true);
         assert.equal(doc.emailVerificationToken, HEX('a'), 'token kept so a second click is recognised');
-        assert.deepEqual(updates[0].filter, { _id: 'u1', emailVerificationToken: HEX('a'), isEmailVerified: false });
+        assert.deepEqual(updates[0].filter, { _id: 'u1', emailVerificationToken: HEX('a'), isEmailVerified: false, competingSignupAt: null });
 
         const again = await verifyEmailService(HEX('a'));
         assert.equal(again.status, EMAIL_VERIFICATION_STATUS.ALREADY_VERIFIED);
@@ -361,6 +362,46 @@ test('a single signup is unchanged: verified with its own password, no reset tok
             assert.equal(sent.length, 0);
         });
     });
+});
+
+test('a re-signup landing between the read and the write of a normal verify still takes the competing-signup path', async () => {
+    const doc = await unverifiedAccount();
+    await withSentEmails(async () => {
+        await withFakeUser(doc, async () => {
+            const realUpdate = User.updateOne;
+            let raced = false;
+            User.updateOne = async (filter, update) => {
+                if (!raced && update.$set?.isEmailVerified) { raced = true; doc.competingSignupAt = new Date(); }
+                return realUpdate(filter, update);
+            };
+            const result = await verifyEmailService(HEX('a'));
+            assert.equal(result.status, EMAIL_VERIFICATION_STATUS.VERIFIED_SET_PASSWORD);
+            assert.equal(doc.password, undefined, 'no password survives');
+        });
+    });
+});
+
+test('email down: an account marked as signed up more than once is never let in unverified', async () => {
+    const original = resend.emails.send;
+    const quiet = { error: console.error, warn: console.warn };
+    resend.emails.send = async () => ({ data: null, error: { name: 'validation_error', message: 'The vireact.io domain is not verified.' } });
+    console.error = () => {};
+    console.warn = () => {};
+    try {
+        const marked = await unverifiedAccount({ competingSignupAt: new Date() });
+        marked.comparePassword = (pw) => passwordWorks(marked, pw);
+        await withFakeUser(marked, async () => {
+            await assert.rejects(loginUserService(marked.email, 'original-pw'), (e) => e.statusCode === 403 && e.data?.code === 'EMAIL_NOT_VERIFIED');
+        });
+        const plain = await unverifiedAccount();
+        plain.comparePassword = (pw) => passwordWorks(plain, pw);
+        await withFakeUser(plain, async () => {
+            assert.equal((await loginUserService(plain.email, 'original-pw'))._id, 'u1', 'single signup still let in while email is down');
+        });
+    } finally {
+        resend.emails.send = original;
+        Object.assign(console, quiet);
+    }
 });
 
 test('re-signup inside the 60 s cooldown is a 429 and changes nothing', async () => {

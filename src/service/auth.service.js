@@ -466,13 +466,16 @@ export const verifyEmailService = async (token) => {
             return await resolveCompetingSignup(user, token);
         }
 
-        // Matching on the token too means a link that was replaced in the meantime cannot verify.
+        // Matching on the token too means a link that was replaced in the meantime cannot verify; matching on
+        // competingSignupAt means a re-signup that lands between the read and this write cannot be skipped.
         const done = await User.updateOne(
-            { _id: user._id, emailVerificationToken: token, isEmailVerified: false },
+            { _id: user._id, emailVerificationToken: token, isEmailVerified: false, competingSignupAt: null },
             { $set: { isEmailVerified: true } }
         );
-        if (done.modifiedCount !== 1) return await afterLostRace(user, token);
-        return VERIFIED_RESULT;
+        if (done.modifiedCount === 1) return VERIFIED_RESULT;
+        const fresh = await User.findOne({ _id: user._id, emailVerificationToken: token, isEmailVerified: false }).select(VERIFICATION_FIELDS);
+        if (fresh?.competingSignupAt) return await resolveCompetingSignup(fresh, token);
+        return await afterLostRace(user, token);
     } catch (error) {
         if (error instanceof ApiError) throw error;
         throw new ApiError(500, error?.message || "Failed to verify email.");
@@ -541,6 +544,14 @@ export const loginUserService = async (email, password) => {
     // is safe to say so, and a fresh link goes out (at most once a minute).
     if (!user.isEmailVerified) {
         const outcome = await resendVerificationIfDue(user);
+        if (outcome === VERIFICATION_EMAIL.UNAVAILABLE && user.competingSignupAt) {
+            // Signed up more than once: this password may not be the inbox owner's. Never let it in unverified.
+            throw new ApiError(
+                403,
+                `Verify your email to log in. We couldn't send a new link to ${user.email} right now. Try again in a few minutes.`,
+                { code: 'EMAIL_NOT_VERIFIED', email: user.email }
+            );
+        }
         if (outcome === VERIFICATION_EMAIL.UNAVAILABLE) {
             // Email is down for everyone, so no link can reach this user. Let them in rather than lock
             // them out; the account stays unverified and is asked to verify again once email works.

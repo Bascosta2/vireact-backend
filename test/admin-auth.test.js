@@ -112,7 +112,7 @@ const HEX = (c) => c.repeat(64);
 /** Swap the User statics these controllers use for one in-memory document. */
 const withFakeUserModel = async (doc, fn) => {
     const original = { findOne: User.findOne, findById: User.findById, updateOne: User.updateOne };
-    const matches = (filter) => Object.entries(filter).every(([key, value]) => String(doc[key]) === String(value));
+    const matches = (filter) => Object.entries(filter).every(([key, value]) => (value === null ? doc[key] == null : String(doc[key]) === String(value)));
     const query = (found) => Object.assign(Promise.resolve(found), {
         select: () => Object.assign(Promise.resolve(found), {
             lean: async () => (found ? { _id: found._id, email: found.email, isEmailVerified: found.isEmailVerified } : null),
