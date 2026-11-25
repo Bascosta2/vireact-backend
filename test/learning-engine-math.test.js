@@ -198,3 +198,111 @@ test('runEngine: end to end, and skips politely with too little data', () => {
     assert.ok(out.neural && typeof out.neural.beatsRidge === 'boolean');
     assert.match(E.runEngine(synth({ creators: 2, per: 2 })).skipped, /too little/);
 });
+
+// ---------------------------------------------------------------- shadow mode (promotion + serving)
+
+const S = await import('../src/service/learning/model/shadow.js');
+
+test('engine: out-of-fold predictions for chosen rows, a residual spread, and serving matches the fit', () => {
+    const rows = synth({ creators: 40, per: 6 });
+    const out = E.runEngine(rows, { mlp: false, evalRows: [0, 1, 2, 7] });
+    assert.deepEqual(out.evaluation.map((e) => e.row), [0, 1, 2, 7]);
+    assert.ok(out.evaluation.every((e) => Number.isFinite(e.pred)));
+    assert.ok(out.spread.low <= 0 && out.spread.high >= 0 && out.spread.n === out.n);
+    assert.equal(E.runEngine(rows, { mlp: false }).evaluation, null, 'no evaluation unless asked');
+    // A faster cut predicts more views than a slower one for the same creator centre.
+    const model = { spec: out.spec, beta: out.ridge.beta };
+    const centre = E.creatorCentre(out.spec, rows.slice(0, 6).map((r) => r.features));
+    const fast = E.predictLogDeviation(model, { ...rows[0].features, fastCut: 3 }, { centre });
+    const slow = E.predictLogDeviation(model, { ...rows[0].features, fastCut: 0.5 }, { centre });
+    assert.ok(fast > slow);
+    assert.equal(E.predictLogDeviation({ spec: out.spec, beta: [1] }, {}), null, 'mismatched model cannot score');
+});
+
+test('shadow: band inverts the label, flag defaults off', () => {
+    assert.deepEqual(S.shadowBand({ baselineViews: 999, logDeviation: 0, spread: { low: -Math.LN2, high: Math.LN2 } }), { low: 499, expected: 999, high: 1999 });
+    assert.equal(S.shadowBand({ baselineViews: null, logDeviation: 0 }), null);
+    assert.equal(S.shadowEnabled({}), false);
+    assert.equal(S.shadowEnabled({ LEARNING_SHADOW_PREDICTIONS: 'true' }), true);
+});
+
+const fakeModelStore = () => {
+    const calls = [];
+    return {
+        calls,
+        updateOne: async (filter, update) => { calls.push(['updateOne', filter, update]); },
+        updateMany: async (filter, update) => { calls.push(['updateMany', filter, update]); },
+    };
+};
+
+test('promotion: uses evaluate.js promotionDecision on the same videos; a failing model stays candidate', async () => {
+    const model = { spec: { columns: [{ type: 'num', key: 'viralityScore', impute: 60, mean: 60, sd: 10 }] }, beta: [0.3], spread: { low: -0.9, high: 0.9 } };
+    // Too few results: never promoted, whatever the errors.
+    const few = Array.from({ length: 10 }, (_, i) => ({ actual: 1000 + i, baseline: 1000, pred: 0, champion: { low: 10, expected: 100, high: 300 } }));
+    const check = S.promotionCheck({ testRows: few, model });
+    assert.equal(check.promote, false);
+    assert.match(check.reasons.join(' '), /needs at least 50 test results/);
+    assert.equal(check.champion.n, check.challenger.n, 'scored on the same rows');
+    assert.equal(check.ownerCases.length, 2);
+    const store = fakeModelStore();
+    const applied = await S.applyPromotion({ id: 'm2', check, model: store });
+    assert.equal(applied.status, 'candidate');
+    assert.equal(store.calls.length, 1, 'no other model touched: the previous shadow model keeps running');
+    assert.equal(store.calls[0][2].$set.status, undefined);
+});
+
+test('promotion: a passing model becomes shadow and the previous shadow model is retired', async () => {
+    const store = fakeModelStore();
+    const check = { promote: true, reasons: [], champion: { n: 60 }, challenger: { n: 60 }, ownerCases: [] };
+    const applied = await S.applyPromotion({ id: 'm3', check, model: store, now: Date.UTC(2026, 10, 23) });
+    assert.equal(applied.status, 'shadow');
+    assert.deepEqual(store.calls.map((c) => c[0]), ['updateOne', 'updateMany'], 'promote first, then retire the others');
+    assert.equal(store.calls[0][2].$set.status, 'shadow');
+    assert.deepEqual(store.calls[1][1], { kind: 'matrix_engine', status: 'shadow', _id: { $ne: 'm3' } });
+    assert.equal(store.calls[1][2].$set.status, 'retired');
+});
+
+test('promotion after training: evaluation rows joined to the live bands users saw', async () => {
+    const rows = synth({ creators: 40, per: 6 }).map((r, i) => (i % 3 ? r : { ...r, meta: { subjectId: `v${i}`, actual: 500, baseline: 400 } }));
+    const evalRows = rows.flatMap((r, i) => (r.meta ? [i] : []));
+    const result = E.runEngine(rows.map(({ y, w, group, features }) => ({ y, w, group, features })), { mlp: false, evalRows });
+    const store = fakeModelStore();
+    let asked = null;
+    const out = await S.promoteAfterTraining({
+        id: 'm4', result, rows,
+        deps: { model: store, liveBands: async (ids) => { asked = ids; return new Map(ids.map((id) => [id, { low: 100, expected: 400, high: 1200 }])); } },
+    });
+    assert.equal(asked.length, evalRows.length);
+    assert.equal(out.champion.n, evalRows.length);
+    assert.equal(out.challenger.n, evalRows.length);
+    assert.equal(typeof out.promote, 'boolean');
+});
+
+test('shadow hook: off by default, never throws, never touches the video', async () => {
+    const video = { _id: 'v1', predictedViewsLow: 100, predictedViewsExpected: 400, predictedViewsHigh: 1200, creatorPlatform: 'tiktok' };
+    const before = JSON.stringify(video);
+    let touched = false;
+    const off = await S.recordShadowPrediction(video, { env: {}, deps: { loadModel: async () => { touched = true; } } });
+    assert.match(off.skipped, /off/);
+    assert.equal(touched, false);
+    const on = { LEARNING_SHADOW_PREDICTIONS: 'true' };
+    const reported = [];
+    const failed = await S.recordShadowPrediction(video, { env: on, deps: { loadModel: async () => { throw new Error('db down'); }, report: (e) => reported.push(e.message) } });
+    assert.equal(failed.error, 'db down');
+    assert.deepEqual(reported, ['db down']);
+    assert.match((await S.recordShadowPrediction(video, { env: on, deps: { loadModel: async () => null } })).skipped, /no promoted model/);
+    const model = { id: 'm5', version: 5, spec: { columns: [{ type: 'num', key: 'viralityScore', impute: 60, mean: 60, sd: 10 }] }, beta: [0.5], spread: { low: -1, high: 1 } };
+    let saved = null;
+    const ok = await S.recordShadowPrediction(video, {
+        env: on,
+        deps: {
+            loadModel: async () => model,
+            loadInputs: async () => ({ features: { viralityScore: 70 }, baseline: { views: 999, method: 'followers', n: 0 }, centreFeatures: [] }),
+            save: async (id, record) => { saved = record; },
+        },
+    });
+    assert.equal(ok.recorded.expected, Math.round(1000 * Math.exp(0.5) - 1));
+    assert.equal(saved.modelVersion, 5);
+    assert.deepEqual(saved.formula, { low: 100, expected: 400, high: 1200 });
+    assert.equal(JSON.stringify(video), before, 'what the user sees is unchanged');
+});
