@@ -75,9 +75,9 @@ test('token encryption round-trips, rejects tampering, and needs a 32-byte key',
 });
 
 test('platforms are only offered when their keys, the token key and the callback base exist; beta gate', () => {
-    assert.deepEqual(A.platformStatus(ENV).map((p) => p.configured), [true, true, true]);
-    assert.deepEqual(A.platformStatus({ ...ENV, ACCOUNTS_TOKEN_KEY: '' }).map((p) => p.configured), [false, false, false]);
-    assert.deepEqual(A.platformStatus({ ...ENV, YOUTUBE_CLIENT_SECRET: '' }).map((p) => p.configured), [true, false, true]);
+    assert.deepEqual(A.platformStatus(ENV).map((p) => p.configured), [true, true, true, false]);
+    assert.deepEqual(A.platformStatus({ ...ENV, ACCOUNTS_TOKEN_KEY: '' }).map((p) => p.configured), [false, false, false, false]);
+    assert.deepEqual(A.platformStatus({ ...ENV, YOUTUBE_CLIENT_SECRET: '' }).map((p) => p.configured), [true, false, true, false]);
     const saved = { e: process.env.ACCOUNTS_ENABLED, b: process.env.ACCOUNTS_BETA_EMAILS };
     process.env.ACCOUNTS_ENABLED = '';
     process.env.ACCOUNTS_BETA_EMAILS = 'Owner@Example.com';
