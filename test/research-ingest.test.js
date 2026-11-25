@@ -4,7 +4,7 @@
  *
  * Runs against an in-memory MongoDB (mongodb-memory-server-core). GitHub, embeddings and vector search are stubbed.
  */
-import { test, before, after, beforeEach } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
@@ -18,7 +18,7 @@ const { checkCandidate, sanitizeText, findInjection, remainingShare, researchCon
 const { evaluateSnapshots, EVAL_QUERIES, isCoreDoc } = await import('../src/service/research-ingest/retrieval-eval.js');
 const { applyResearchCap, researchRetrievalCap } = await import('../src/service/analyzer/retrieve-knowledge.js');
 const { runResearchIngest, removeResearch } = await import('../src/service/research-ingest/ingest.service.js');
-const { parseJsonl } = await import('../src/service/research-ingest/github.js');
+const { parseJsonl, createGithubReader } = await import('../src/service/research-ingest/github.js');
 const { KnowledgeBase } = await import('../src/model/knowledge-base.model.js');
 const { ResearchCandidate } = await import('../src/model/research-candidate.model.js');
 const { ResearchEvalRun } = await import('../src/model/research-eval-run.model.js');
@@ -129,17 +129,25 @@ const seedKb = async ({ core = 1, filler = 10, topic = 'general' } = {}) => {
 // ---------------------------------------------------------------------------------------------
 
 let mongod;
-before(async () => {
-    mongod = await MongoMemoryServer.create();
-    await mongoose.connect(mongod.getUri(), { dbName: 'research_ingest_test', autoIndex: false });
-    await ResearchCandidate.createIndexes();
-});
+let connecting = null;
+/** Starts the in-memory MongoDB on first use, so the pure gate tests run even where it can't start. */
+const connectDb = () =>
+    (connecting ||= (async () => {
+        mongod = await MongoMemoryServer.create();
+        await mongoose.connect(mongod.getUri(), { dbName: 'research_ingest_test', autoIndex: false });
+        await ResearchCandidate.createIndexes();
+    })());
+/** A test that needs the database: connects once, then starts from empty collections. */
+const dbTest = (name, fn) =>
+    test(name, async (t) => {
+        await connectDb();
+        await Promise.all([KnowledgeBase.deleteMany({}), ResearchCandidate.deleteMany({}), ResearchEvalRun.deleteMany({})]);
+        return fn(t);
+    });
 after(async () => {
+    if (!connecting) return;
     await mongoose.disconnect();
     await mongod?.stop();
-});
-beforeEach(async () => {
-    await Promise.all([KnowledgeBase.deleteMany({}), ResearchCandidate.deleteMany({}), ResearchEvalRun.deleteMany({})]);
 });
 
 const run = (repo, over = {}, depOver = {}) =>
@@ -205,8 +213,36 @@ test('tier-1 host matching: subdomains and path prefixes, not look-alikes', () =
     assert.ok(!isTier1Url('https://arxiv.org.evil.example/abs/1'));
 });
 
-test('confidence must be at least 0.7', () => {
-    assert.match(gate(candidate({ confidence: 0.69 })).reason, /confidence/);
+test('confidence must reach RESEARCH_MIN_CONFIDENCE (default 0.6)', () => {
+    assert.equal(config.minConfidence, 0.6);
+    assert.match(gate(candidate({ confidence: 0.59 })).reason, /confidence 0\.59 < 0\.6/);
+    assert.equal(gate(candidate({ confidence: 0.6 })).ok, true);
+    assert.equal(gate(candidate({ confidence: 0.65 })).ok, true);
+
+    const strict = researchConfig({ ...ENV, RESEARCH_MIN_CONFIDENCE: '0.7' });
+    assert.equal(strict.minConfidence, 0.7);
+    assert.match(checkCandidate(candidate({ confidence: 0.65 }), { now: NOW, config: strict }).reason, /confidence 0\.65 < 0\.7/);
+});
+
+test('RESEARCH_MIN_CONFIDENCE parsing: unset, blank or junk falls back to 0.6, and the floor can never drop below 0.5', () => {
+    assert.equal(researchConfig({}).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: 'abc' }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '' }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '   ' }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: null }).minConfidence, 0.6);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '0' }).minConfidence, 0.5);
+    assert.equal(researchConfig({ RESEARCH_MIN_CONFIDENCE: '2' }).minConfidence, 1);
+    const loose = researchConfig({ ...ENV, RESEARCH_MIN_CONFIDENCE: '0.1' });
+    assert.match(checkCandidate(candidate({ confidence: 0.4 }), { now: NOW, config: loose }).reason, /confidence 0\.4 < 0\.5/);
+});
+
+test('lowering the confidence floor keeps every other gate: low score, tier 2 single publisher, old metrics still fail', () => {
+    assert.match(gate(candidate({ confidence: 0.6, review: { verdict: 'approve', score: 74 } })).reason, /score 74 < 75/);
+    const single = [{ url: 'https://later.com/a', publisher: 'Later' }, { url: 'https://later.com/b', publisher: 'Later' }];
+    assert.match(gate(candidate({ confidence: 0.6, source_tier: 2, evidence: single })).reason, /2\+ distinct publishers/);
+    const metrics = [{ name: '3s hold', value: 71, unit: '%' }];
+    const old = [{ url: 'https://newsroom.tiktok.com/a', publisher: 'TikTok', published_date: '2023-01-10' }];
+    assert.match(gate(candidate({ confidence: 0.6, metrics, evidence: old })).reason, /older than 24 months/);
 });
 
 test('metrics must come from a source dated within 24 months unless evergreen', () => {
@@ -269,6 +305,21 @@ test('parseJsonl reports bad lines and skips blanks', () => {
     assert.equal(out.length, 2);
     assert.deepEqual(out[0], { line: 1, value: { a: 1 } });
     assert.match(out[1].error, /invalid JSON/);
+});
+
+test('github reader: a missing retire/ folder (404) means no retire files, not an error', async () => {
+    const calls = [];
+    const fetchImpl = async (url) => {
+        calls.push(url);
+        if (url.includes('/contents/retire?')) return { status: 404, ok: false };
+        return { status: 200, ok: true, json: async () => [{ type: 'file', name: '2026-11-15.jsonl', path: 'retire/2026-11-15.jsonl' }, { type: 'file', name: 'README.md', path: 'retire/README.md' }] };
+    };
+    const missing = createGithubReader({ repo: 'Bascosta2/vireact-research', token: 'test-token', fetchImpl });
+    assert.deepEqual(await missing.listRetireFiles(), []);
+    assert.ok(calls[0].includes('/contents/retire?ref=main'));
+
+    const present = createGithubReader({ repo: 'Bascosta2/vireact-research', token: 'test-token', fetchImpl: async () => fetchImpl('/contents/other') });
+    assert.deepEqual(await present.listRetireFiles(), [{ date: '2026-11-15', path: 'retire/2026-11-15.jsonl' }], 'README.md and other names are ignored');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -336,7 +387,7 @@ test('health check: fails when the vector index errors or stops returning result
 // Pipeline (in-memory Mongo)
 // ---------------------------------------------------------------------------------------------
 
-test('kill switch: --apply refuses to write unless RESEARCH_INGEST_ENABLED=true', async () => {
+dbTest('kill switch: --apply refuses to write unless RESEARCH_INGEST_ENABLED=true', async () => {
     const repo = { approved: { '2026-11-08': { 'hooks.jsonl': [candidate()] } }, retire: {} };
     const r = await run(repo, { env: { ...ENV, RESEARCH_INGEST_ENABLED: 'false' } });
     assert.equal(r.skipped, 'disabled');
@@ -355,7 +406,7 @@ test('kill switch: the webhook answers 503 when disabled', () => {
     if (prev !== undefined) process.env.RESEARCH_INGEST_ENABLED = prev;
 });
 
-test('dry run writes nothing and reports what it would ingest', async () => {
+dbTest('dry run writes nothing and reports what it would ingest', async () => {
     await seedKb();
     const repo = { approved: { '2026-11-08': { 'hooks.jsonl': [candidate(), candidate({ confidence: 0.2 })] } }, retire: {} };
     const r = await run(repo, { apply: false, env: { ...ENV, RESEARCH_INGEST_ENABLED: 'false' } });
@@ -367,7 +418,7 @@ test('dry run writes nothing and reports what it would ingest', async () => {
     assert.equal(await ResearchEvalRun.countDocuments(), 0);
 });
 
-test('apply: ingests passing items as origin "research", records every other outcome, and is idempotent', async () => {
+dbTest('apply: ingests passing items as origin "research", records every other outcome, and is idempotent', async () => {
     await seedKb();
     const good = [candidate(), candidate()];
     const repo = {
@@ -406,7 +457,7 @@ test('apply: ingests passing items as origin "research", records every other out
     assert.equal(await ResearchCandidate.countDocuments(), 6);
 });
 
-test('dedupe: same id, same URL + title, near-identical embedding, and existing knowledge-base match', async () => {
+dbTest('dedupe: same id, same URL + title, near-identical embedding, and existing knowledge-base match', async () => {
     await seedKb();
     const a = candidate();
     const sameUrlTitle = candidate({ title: a.title, url: a.evidence[0].url, insight: 'Different words, same source and title, so it is a duplicate.' });
@@ -434,7 +485,7 @@ test('dedupe: same id, same URL + title, near-identical embedding, and existing 
     assert.match(dup.duplicateOf, /^kb:.+@0\.940$/);
 });
 
-test('daily cap: highest review scores first; the rest wait and are ingested on a later day', async () => {
+dbTest('daily cap: highest review scores first; the rest wait and are ingested on a later day', async () => {
     await seedKb({ filler: 40 });
     const items = [76, 99, 85, 92].map((score) => candidate({ review: { verdict: 'approve', score } }));
     const repo = { approved: { '2026-11-08': { 'a.jsonl': items } }, retire: {} };
@@ -456,7 +507,7 @@ test('daily cap: highest review scores first; the rest wait and are ingested on 
     assert.equal(await ResearchCandidate.countDocuments({ status: 'ingested' }), 4);
 });
 
-test('max share: research never exceeds RESEARCH_MAX_SHARE of all knowledge-base docs', async () => {
+dbTest('max share: research never exceeds RESEARCH_MAX_SHARE of all knowledge-base docs', async () => {
     await seedKb({ core: 0, filler: 10 });
     const repo = { approved: { '2026-11-08': { 'a.jsonl': [candidate(), candidate(), candidate(), candidate()] } }, retire: {} };
     const r = await run(repo, { env: { ...ENV, RESEARCH_MAX_SHARE: '0.2' } });
@@ -473,7 +524,7 @@ const rollbackCase = async (afterMode, { seed = {}, items = 3, topics = ['genera
     return r;
 };
 
-test('rollback: research crowding more than 5 of the top 10 undoes the whole batch', async () => {
+dbTest('rollback: research crowding more than 5 of the top 10 undoes the whole batch', async () => {
     const r = await rollbackCase('research_first', { items: 6, seed: { core: 2, filler: 10 } });
     assert.equal(r.summary.rolledBack, 6);
     assert.equal(r.summary.ingested, 0);
@@ -484,14 +535,14 @@ test('rollback: research crowding more than 5 of the top 10 undoes the whole bat
     assert.equal((await ResearchEvalRun.findOne({ runId: r.runId }).lean()).status, 'rolled_back');
 });
 
-test('rollback: core content dropping out for more than 3 queries undoes the batch', async () => {
+dbTest('rollback: core content dropping out for more than 3 queries undoes the batch', async () => {
     const r = await rollbackCase('filler_first', { items: 2, seed: { core: 1, filler: 10 } });
     assert.equal(r.summary.rolledBack, 2);
     assert.match(r.summary.evalResult.reasons.join(), /core content/);
     assert.equal(await KnowledgeBase.countDocuments({ 'metadata.origin': 'research' }), 0);
 });
 
-test('rollback: vector index errors or empty results after ingest undo the batch', async () => {
+dbTest('rollback: vector index errors or empty results after ingest undo the batch', async () => {
     const thrown = await rollbackCase('throw');
     assert.equal(thrown.summary.rolledBack, 3);
     assert.match(thrown.summary.evalResult.reasons.join(), /vector search failed/);
@@ -502,7 +553,7 @@ test('rollback: vector index errors or empty results after ingest undo the batch
     assert.equal(await KnowledgeBase.countDocuments({ 'metadata.origin': 'research' }), 0);
 });
 
-test('unhealthy retrieval before ingest: nothing is ingested and items wait', async () => {
+dbTest('unhealthy retrieval before ingest: nothing is ingested and items wait', async () => {
     await seedKb();
     const repo = { approved: { '2026-11-08': { 'a.jsonl': [candidate()] } }, retire: {} };
     const r = await run(repo, {}, { vectorSearch: async () => { throw new Error('down'); } });
@@ -511,7 +562,7 @@ test('unhealthy retrieval before ingest: nothing is ingested and items wait', as
     assert.equal((await ResearchCandidate.findOne({}).lean()).status, 'imported');
 });
 
-test('retire: removes the research doc only (origin "research"), marks it retired', async () => {
+dbTest('retire: removes the research doc only (origin "research"), marks it retired', async () => {
     await seedKb();
     const a = candidate();
     const repo = { approved: { '2026-11-08': { 'a.jsonl': [a, candidate()] } }, retire: {} };
@@ -530,7 +581,7 @@ test('retire: removes the research doc only (origin "research"), marks it retire
     assert.equal(retired.retireReason, 'superseded by official update');
 });
 
-test('remove-batch: dry run counts, apply removes research docs only, never anything else', async () => {
+dbTest('remove-batch: dry run counts, apply removes research docs only, never anything else', async () => {
     await seedKb();
     await run({ approved: { '2026-11-08': { 'a.jsonl': [candidate(), candidate()] } }, retire: {} });
     await run({ approved: { '2026-11-08': {}, '2026-11-09': { 'b.jsonl': [candidate()] } }, retire: {} }, { now: new Date('2026-11-09T12:00:00Z') });
@@ -548,7 +599,7 @@ test('remove-batch: dry run counts, apply removes research docs only, never anyt
     await assert.rejects(removeResearch({ batch: 'everything', apply: true }), /--batch YYYY-MM-DD/);
 });
 
-test('later runs re-read the last batch (new lines are picked up) and skip older batches', async () => {
+dbTest('later runs re-read the last batch (new lines are picked up) and skip older batches', async () => {
     await seedKb();
     const repo = { approved: { '2026-11-07': { 'a.jsonl': [candidate()] }, '2026-11-08': { 'a.jsonl': [candidate()] } }, retire: {} };
     const first = await run(repo);
