@@ -141,7 +141,7 @@ export const loginUser = async (req, res, next) => {
     }
     
     try {
-        if (!email || !password) {
+        if (typeof email !== 'string' || !email || typeof password !== 'string' || !password) {
             throw new ApiError(400, "Email and Password are required fields.")
         }
 

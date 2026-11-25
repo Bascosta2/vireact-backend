@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isValidAdminKey, adminAuth, ADMIN_RATE_LIMIT } from '../src/middleware/adminAuth.js';
-import { signup } from '../src/controller/auth.controller.js';
+import { signup, verifyEmail, login } from '../src/controller/auth.controller.js';
+import { User } from '../src/model/user.model.js';
 import { fakeRes } from './helpers/test-db.js';
 
 const KEY = 'k'.repeat(48);
@@ -59,4 +60,46 @@ test('POST /auth/signup with role=admin returns 404, even with a valid admin key
 test('admin routes are rate limited to 30 requests per minute per IP', () => {
     assert.equal(ADMIN_RATE_LIMIT.windowMs, 60 * 1000);
     assert.equal(ADMIN_RATE_LIMIT.max, 30);
+});
+
+/** Replace User.findOne for one test and record every filter it receives (no database needed). */
+const spyUserFindOne = () => {
+    const calls = [];
+    const original = User.findOne;
+    User.findOne = (filter) => { calls.push(filter); throw new Error('findOne must not be reached'); };
+    return { calls, restore: () => { User.findOne = original; } };
+};
+
+test('POST /auth/verify-email rejects an operator object or malformed token (body or query) with 400 before any query', async () => {
+    const spy = spyUserFindOne();
+    try {
+        for (const token of [{ $ne: null }, { $gt: '' }, ['a'.repeat(64)], 'a'.repeat(63), 'A'.repeat(64)]) {
+            for (const req of [{ body: { token }, query: {} }, { body: {}, query: { token } }]) {
+                let err;
+                const res = fakeRes();
+                await verifyEmail(req, res, (e) => { err = e; });
+                assert.equal(err?.statusCode, 400, `token ${JSON.stringify(token)}`);
+                assert.equal(res.body, undefined);
+            }
+        }
+        assert.deepEqual(spy.calls, []);
+    } finally {
+        spy.restore();
+    }
+});
+
+test('user login rejects a non-string email or password with 400 before any query', async () => {
+    const spy = spyUserFindOne();
+    try {
+        for (const [email, password] of [[{ $ne: null }, 'pw-123456'], ['a@example.invalid', { $ne: null }]]) {
+            let err;
+            const res = fakeRes();
+            await login({ body: { role: 'user', email, password } }, res, (e) => { err = e; });
+            assert.equal(err?.statusCode, 400);
+            assert.equal(res.body, undefined);
+        }
+        assert.deepEqual(spy.calls, []);
+    } finally {
+        spy.restore();
+    }
 });
