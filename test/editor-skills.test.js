@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { edlSchemaFor, validateEdl } from '../src/service/editor/edl.js';
-import { SPLIT_ZOOM, buildRenderProps, framingFor, sanitizeEdits } from '../src/service/editor/compose.js';
+import { SPLIT_ZOOM, buildRenderProps, framingFor, needsBackgroundMatte, sanitizeEdits } from '../src/service/editor/compose.js';
+import { MODELS, assertFalUrl, buildFalInput, estimateCostUsd, extractVideoUrl, matteKey, resetBillingLockForTests, runFalQueue, runMatteStep, spendGuard } from '../src/service/editor/bg-removal.service.js';
+import { setStorageForTests } from '../src/lib/storage.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
 import { applyBeatSwaps, buildStoryboard, carryStoryboard, cleanSwap, storyboardBlocksExport, storyboardNote, swapBeat } from '../src/service/editor/storyboard.js';
@@ -300,4 +302,219 @@ test('storyboard: swap cleaning, carry rules and export gate', () => {
     assert.equal(storyboardBlocksExport({ storyboardApproved: false }, true), true);
     assert.equal(storyboardBlocksExport({ storyboardApproved: true }, true), false);
     assert.equal(storyboardBlocksExport({ storyboardApproved: false }, false), false);
+});
+
+// ---- background removal (fal.ai) ----
+const jsonRes = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body), arrayBuffer: async () => new TextEncoder().encode('matte').buffer });
+const falFake = (statuses, { result = { video: [{ url: 'https://v3.fal.media/o.webm' }] } } = {}) => {
+    const calls = [];
+    let i = 0;
+    const fetchFn = async (url, init = {}) => {
+        calls.push({ url, method: init.method ?? 'GET', headers: init.headers, body: init.body });
+        if (init.method === 'POST') return jsonRes({ request_id: 'r1', status_url: 'https://queue.fal.run/veed/requests/r1/status', response_url: 'https://queue.fal.run/veed/requests/r1', cancel_url: 'https://queue.fal.run/veed/requests/r1/cancel' });
+        if (url.endsWith('/status')) return jsonRes(statuses[Math.min(i++, statuses.length - 1)]);
+        if (url.endsWith('/cancel')) return jsonRes({});
+        if (url.includes('fal.media')) return jsonRes({});
+        return jsonRes(result);
+    };
+    return { fetchFn, calls };
+};
+const memStorage = (existing = []) => {
+    const keys = new Set(existing);
+    const log = [];
+    setStorageForTests({
+        head: async (k) => (keys.has(k) ? { sizeBytes: 1 } : null),
+        uploadFile: async (_p, k) => { keys.add(k); log.push(['file', k]); },
+        uploadBuffer: async (_b, k) => { keys.add(k); log.push(['buffer', k]); },
+        presignDownload: async (k) => `https://s3/${k}?sig`,
+        deleteObject: async (k) => { log.push(['del', k]); },
+    });
+    return log;
+};
+const memStore = (seed = []) => {
+    const rows = [...seed];
+    return { rows, find: async (h, v) => rows.filter((r) => r.sourceHash === h && r.variant === v).pop() ?? null, save: async (r) => { rows.push({ ...r }); } };
+};
+const matteDeps = (fake, extra = {}) => ({ env: { FAL_KEY: 'k', BG_REMOVAL_MODEL: 'veed' }, hash: async () => 'abc', makeProxy: async () => {}, fetchFn: fake.fetchFn, sleepFn: async () => {}, track: () => {}, report: () => {}, store: memStore(), planOf: async () => 'pro', secondsThisMonth: async () => 0, usdToday: async () => 0, ...extra });
+const matteJob = { userId: 'u1', projectId: 'p1', srcPath: '/x.mp4', workDir: '/tmp', durationSec: 60 };
+
+test('fal request building: veed and bria inputs, auth header, submit url', async () => {
+    assert.deepEqual(buildFalInput('veed', 'https://v', { refine: false }), { video_url: 'https://v', output_codec: 'vp9', refine_foreground_edges: false, subject_is_person: true });
+    assert.equal(buildFalInput('bria', 'https://v').background_color, 'Transparent');
+    assert.equal(buildFalInput('bria', 'https://v').output_container_and_codec, 'webm_vp9');
+    assert.throws(() => buildFalInput('nope', 'x'));
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runFalQueue({ endpoint: MODELS.veed.endpoint, input: { a: 1 }, apiKey: 'KEY', fetchFn: fake.fetchFn, sleepFn: async () => {} });
+    assert.equal(fake.calls[0].url, 'https://queue.fal.run/veed/video-background-removal');
+    assert.equal(fake.calls[0].headers.Authorization, 'Key KEY');
+    assert.equal(extractVideoUrl(out.result), 'https://v3.fal.media/o.webm');
+    assert.equal(extractVideoUrl({}), null);
+});
+
+test('fal polling waits through IN_QUEUE/IN_PROGRESS, reports failures, and times out', async () => {
+    const fake = falFake([{ status: 'IN_QUEUE' }, { status: 'IN_PROGRESS' }, { status: 'COMPLETED', metrics: { inference_time: 7 } }]);
+    const out = await runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn: fake.fetchFn, sleepFn: async () => {} });
+    assert.equal(out.inferenceSec, 7);
+    const bad = falFake([{ status: 'COMPLETED', error: 'boom' }]);
+    await assert.rejects(runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn: bad.fetchFn, sleepFn: async () => {} }), /could not process/);
+    const slow = falFake([{ status: 'IN_PROGRESS' }]);
+    let t = 0;
+    await assert.rejects(runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn: slow.fetchFn, sleepFn: async () => { t += 1000; }, now: () => t, pollMs: 1000, timeoutMs: 3000 }), /timed out/);
+    assert.ok(slow.calls.some((c) => c.method === 'PUT' && c.url.endsWith('/cancel')));
+});
+
+test('matte cache key uses source hash and model; cost estimates', () => {
+    assert.equal(matteKey('u', 'h1', 'veed', { refine: true }), 'editor/mattes/u/h1/veed-refine.webm');
+    assert.notEqual(matteKey('u', 'h1', 'veed', { refine: false }), matteKey('u', 'h1', 'veed', { refine: true }));
+    assert.equal(matteKey('u', 'h1', 'bria'), 'editor/mattes/u/h1/bria.webm');
+    assert.equal(estimateCostUsd('veed', 60, { fps: 30, refine: false }), 0.9);
+    assert.equal(estimateCostUsd('veed', 60, { refine: true }), 1.35);
+    assert.equal(estimateCostUsd('bria', 60), 3);
+});
+
+test('matte step: stores the result, then a cache hit makes no fal call', async () => {
+    resetBillingLockForTests();
+    const log = memStorage();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const deps = matteDeps(fake);
+    const first = await runMatteStep(matteJob, deps);
+    assert.equal(first.status, 'ok');
+    assert.equal(first.key, 'editor/mattes/u1/abc/veed-refine.webm');
+    assert.ok(log.some(([k, key]) => k === 'buffer' && key === first.key));
+    assert.equal(JSON.parse(fake.calls[0].body).video_url, 'https://s3/editor/mattes/u1/abc/input-720p.mp4?sig');
+    assert.equal(deps.store.rows[1].requestId, 'r1', 'request id saved right after submit');
+    const again = falFake([{ status: 'COMPLETED' }]);
+    const second = await runMatteStep(matteJob, matteDeps(again));
+    assert.deepEqual([second.status, second.cached], ['ok', true]);
+    assert.equal(again.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('matte step falls back with a plain reason: no key, too long, provider error, timeout', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    assert.deepEqual(await runMatteStep(matteJob, matteDeps(fake, { env: {} })), { status: 'skipped', reason: 'not_configured' });
+    assert.equal((await runMatteStep({ ...matteJob, durationSec: 181 }, matteDeps(fake))).reason, 'too_long');
+    const broken = { fetchFn: async () => jsonRes({}, false, 500) };
+    assert.equal((await runMatteStep(matteJob, matteDeps(broken))).reason, 'provider_error');
+    const slow = falFake([{ status: 'IN_PROGRESS' }]);
+    let t = 0;
+    const out = await runMatteStep(matteJob, matteDeps(slow, { now: () => t, sleepFn: async () => { t += 60000; }, pollMs: 1000, timeoutMs: 120000 }));
+    assert.equal(out.reason, 'timeout');
+    assert.ok(slow.calls.some((c) => c.url.endsWith('/cancel')), 'gave up: cancelled');
+    assert.equal(fake.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('re-run after a crash resumes the pending request and never submits twice', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const pending = { status: 'pending', model: 'veed', variant: 'veed-refine', sourceHash: 'abc', requestId: 'r1', statusUrl: 'https://queue.fal.run/veed/requests/r1/status', responseUrl: 'https://queue.fal.run/veed/requests/r1', cancelUrl: 'https://queue.fal.run/veed/requests/r1/cancel', submittedAt: new Date(), seconds: 60, estCostUsd: 1.35, updatedAt: new Date() };
+    const fake = falFake([{ status: 'IN_PROGRESS' }, { status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { store: memStore([pending]) }));
+    assert.equal(out.status, 'ok');
+    assert.equal(fake.calls.filter((c) => c.method === 'POST').length, 0);
+    // A failed download is retried from the response url, not a new submit.
+    memStorage();
+    const failedDl = { ...pending, status: 'failed', reason: 'download_failed' };
+    const fake2 = falFake([{ status: 'COMPLETED' }]);
+    const out2 = await runMatteStep(matteJob, matteDeps(fake2, { store: memStore([failedDl]) }));
+    assert.equal(out2.status, 'ok');
+    assert.equal(fake2.calls.filter((c) => c.method === 'POST').length, 0);
+    assert.equal(fake2.calls.filter((c) => c.url.endsWith('/status')).length, 0);
+    // A fresh claim by another job with no request id yet: do not submit.
+    memStorage();
+    const claim = { status: 'pending', sourceHash: 'abc', variant: 'veed-refine', requestId: null, updatedAt: new Date() };
+    const fake3 = falFake([{ status: 'COMPLETED' }]);
+    assert.equal((await runMatteStep(matteJob, matteDeps(fake3, { store: memStore([claim]) }))).reason, 'in_progress');
+    assert.equal(fake3.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('a failed matte is not retried within 24 hours', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const failed = { status: 'failed', reason: 'timeout', sourceHash: 'abc', variant: 'veed-refine', requestId: 'r1', updatedAt: new Date() };
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { store: memStore([failed]) }));
+    assert.deepEqual([out.status, out.reason], ['failed', 'timeout']);
+    assert.equal(fake.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('fal urls must be https on fal hosts before the key is sent', async () => {
+    for (const bad of ['http://queue.fal.run/x', 'https://evil.com/x', 'https://queue.fal.run.evil.com/x', 'https://evilfal.run/x', 'not a url']) assert.throws(() => assertFalUrl(bad), /untrusted/, bad);
+    for (const good of ['https://queue.fal.run/a', 'https://x.fal.run/a', 'https://rest.fal.ai/a']) assert.equal(assertFalUrl(good), good);
+    memStorage();
+    resetBillingLockForTests();
+    const sent = [];
+    const fetchFn = async (url, init = {}) => {
+        sent.push(url);
+        if (init.method === 'POST') return jsonRes({ request_id: 'r', status_url: 'https://evil.example/status', response_url: 'https://queue.fal.run/r' });
+        return jsonRes({});
+    };
+    const out = await runMatteStep(matteJob, matteDeps({ fetchFn }));
+    assert.equal(out.reason, 'provider_error');
+    assert.deepEqual(sent, ['https://queue.fal.run/veed/video-background-removal'], 'key only went to the submit endpoint');
+    setStorageForTests(null);
+});
+
+test('HTTP 403 is reported as billing, reported to the owner, and pauses all background removal', async () => {
+    resetBillingLockForTests();
+    memStorage();
+    const reported = [];
+    const fetchFn = async () => jsonRes({}, false, 403);
+    const out = await runMatteStep(matteJob, matteDeps({ fetchFn }, { report: (e, ctx) => reported.push(ctx.stage) }));
+    assert.equal(out.reason, 'billing');
+    assert.deepEqual(reported, ['bg_removal_billing']);
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    assert.equal((await runMatteStep({ ...matteJob, userId: 'u2' }, matteDeps(fake))).reason, 'billing');
+    assert.equal(fake.calls.length, 0);
+    resetBillingLockForTests();
+    setStorageForTests(null);
+});
+
+test('status errors after submit cancel the request', async () => {
+    const fake = falFake([{ status: 'IN_PROGRESS' }]);
+    const base = fake.fetchFn;
+    const fetchFn = async (url, init = {}) => (url.endsWith('/status') ? jsonRes({}, false, 500) : base(url, init));
+    await assert.rejects(runFalQueue({ endpoint: 'e/x', input: {}, apiKey: 'k', fetchFn, sleepFn: async () => {} }), /status failed/);
+    assert.ok(fake.calls.some((c) => c.method === 'PUT' && c.url.endsWith('/cancel')));
+});
+
+test('spend guards: paid plan only, monthly seconds per user, daily USD cap', async () => {
+    const ok = { planOf: async () => 'pro', secondsThisMonth: async () => 0, usdToday: async () => 0 };
+    const g = (deps, env = {}) => spendGuard({ userId: 'u', durationSec: 60, estCostUsd: 1.35 }, deps, env);
+    assert.equal(await g(ok), null);
+    assert.equal(await g({ ...ok, planOf: async () => 'free' }), 'plan');
+    assert.equal(await g({ ...ok, planOf: async () => 'premium' }), 'plan');
+    assert.equal(await g({ ...ok, planOf: async () => 'premium' }, { BG_REMOVAL_PLANS: 'pro,premium' }), null);
+    assert.equal(await g({ ...ok, secondsThisMonth: async () => 541 }), 'cap');
+    assert.equal(await g({ ...ok, secondsThisMonth: async () => 540 }), null);
+    assert.equal(await g({ ...ok, secondsThisMonth: async () => 540 }, { BG_REMOVAL_MONTHLY_SEC_PER_USER: '590' }), 'cap');
+    assert.equal(await g({ ...ok, usdToday: async () => 8.7 }), 'cap');
+    assert.equal(await g({ ...ok, usdToday: async () => 8.6 }), null);
+    memStorage();
+    resetBillingLockForTests();
+    const fake = falFake([{ status: 'COMPLETED' }]);
+    const out = await runMatteStep(matteJob, matteDeps(fake, { planOf: async () => 'free' }));
+    assert.deepEqual([out.status, out.reason], ['skipped', 'plan']);
+    assert.equal(fake.calls.length, 0);
+    setStorageForTests(null);
+});
+
+test('matte layers: needsBackgroundMatte and behind-person graphics only with a matte url', () => {
+    const p = plan();
+    assert.equal(needsBackgroundMatte(p), true);
+    assert.equal(needsBackgroundMatte({ ...p, framing: { mode: 'fit_blur', focusX: 0.5 } }), false);
+    assert.equal(needsBackgroundMatte({ ...p, graphics: p.graphics.filter((g) => g.type !== 'headline') }), false);
+    assert.equal(needsBackgroundMatte(p, { overlaysOff: true }), false);
+    const plain = buildRenderProps(p, {}, media(null), { density: null });
+    assert.equal(plain.matte, undefined);
+    assert.ok(plain.graphics.every((g) => !g.layer), 'no matte: unchanged');
+    const withMatte = buildRenderProps(p, {}, { ...media(null), matteUrl: 'https://s3/m.webm' }, { density: null });
+    assert.deepEqual(withMatte.matte, { url: 'https://s3/m.webm', mode: 'alpha-webm' });
+    assert.deepEqual(withMatte.graphics.filter((g) => g.layer === 'behind').map((g) => g.type), ['headline']);
+    assert.equal(buildRenderProps(p, { framingMode: 'fit_blur' }, { ...media(null), matteUrl: 'https://s3/m.webm' }, { density: null }).matte, undefined);
 });

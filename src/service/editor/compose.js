@@ -110,6 +110,8 @@ const JUMP_ZOOM = 1.08;
 const TOP_GRAPHICS = new Set(['pill', 'headline', 'counter', 'list', 'visual']);
 /** Graphics drawn in the strip under the captions. */
 const LOW_GRAPHICS = new Set(['lower_third', 'cta']);
+/** Graphics that sit behind the speaker once a background matte exists (otherwise they stay in front, as before). */
+export const BEHIND_GRAPHICS = new Set(['headline']);
 /** The shortest time an illustration may stay on screen. */
 const VISUAL_MIN_SEC = 0.9;
 /** Captions show 2-3 words on one line; the tall "impact" look shows 2. Widths match the composition's font sizes. */
@@ -239,6 +241,17 @@ export function arrangeSfx(events, durationInFrames) {
  * @param {object} edits sanitized creator changes
  * @param {{words:Array, silences:Array, durationSec:number, cutCandidates:Array}} media
  */
+/**
+ * True when this edit has graphics that belong behind the speaker (a plain full-frame layout with a
+ * behind-type graphic), so a background matte is worth paying for. Same narrowing as buildRenderProps.
+ */
+export function needsBackgroundMatte(rawPlan, edits = {}, skillId = null) {
+    if (!rawPlan || edits.overlaysOff) return false;
+    if ((edits.framingMode ?? rawPlan.framing?.mode ?? 'fill') !== 'fill') return false;
+    const drop = skillFor(activeSkillId(skillId, edits))?.render?.dropGraphicTypes ?? [];
+    return (rawPlan.graphics ?? []).some((g) => BEHIND_GRAPHICS.has(g.type) && !drop.includes(g.type));
+}
+
 /**
  * @param {object} [options]
  * @param {object|null} [options.density] DENSITY limits; null turns them off (tests of layout mechanics only)
@@ -458,6 +471,11 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
     if (sr?.musicVolume && edits.musicVolume == null) musicVolume = Math.min(sr.musicVolume.max, Math.max(sr.musicVolume.min, musicVolume));
     const music = trackId ? { trackId, volume: musicVolume, duck: speechRanges(pages) } : null;
 
+    // Graphics go behind the speaker only with a matte and a plain full-frame layout; anything else is unchanged.
+    const framing = framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true);
+    const matteUrl = typeof media.matteUrl === 'string' && media.matteUrl && framing.mode === 'fill' ? media.matteUrl : null;
+    const layered = matteUrl ? graphics.map((g) => (BEHIND_GRAPHICS.has(g.type) ? { ...g, layer: 'behind' } : g)) : graphics;
+
     return {
         ...OUTPUT,
         durationInFrames: total,
@@ -465,7 +483,8 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         captions,
         hook,
         zooms,
-        graphics,
+        graphics: layered,
+        ...(matteUrl && layered.some((g) => g.layer === 'behind') ? { matte: { url: matteUrl, mode: 'alpha-webm' } } : {}),
         // Read by the composition deployed before graphics existed (it crashes without the field).
         overlays: [],
         transitions,
@@ -475,7 +494,7 @@ export function buildRenderProps(rawPlan, edits = {}, media = {}, { density = DE
         sfx,
         music,
         ...(brand ? { brand } : {}),
-        framing: framingFor(edits.framingMode ?? plan.framing.mode, plan.framing, media.v2 === true),
+        framing,
         ...(skill ? { skill: { id: skill.id, version: skill.version, hookVariant: edits.hookVariant ?? 'white', hookLines: hook ? hookLines(hook.text) : [], ...(sr?.layout ? { layout: sceneOn ? 'scene' : 'footage' } : {}) } } : {}),
     };
 }

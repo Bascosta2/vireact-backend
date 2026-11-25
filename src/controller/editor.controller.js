@@ -17,7 +17,7 @@ import { isRenderConfigured, renderProgress, startRender } from '../service/edit
 import { uploadVideoUrlToTwelveLabsService } from '../service/video.service.js';
 import { allowedFeaturesForPlan } from '../constants.js';
 import { getOrCreateSubscription } from '../service/subscription.service.js';
-import { hasEditorAccess, isEditorFeaturesV2 } from '../config/flags.js';
+import { hasEditorAccess, isBgRemovalEnabled, isEditorFeaturesV2 } from '../config/flags.js';
 import { User } from '../model/user.model.js';
 import { buildStoryboard, storyboardBlocksExport, swapBeat } from '../service/editor/storyboard.js';
 import { BRAND_FONTS, SKILLS, brandProblem, isSkill, sanitizeBrand } from '../service/editor/skills.js';
@@ -96,6 +96,13 @@ const mediaFor = (p, brand = null) => ({
     skill: p.skill ?? null,
 });
 
+/** media for buildRenderProps plus a signed URL of the background matte (only with the flag on and a finished matte). */
+const mediaWithMatte = async (p, brand = null) => {
+    const base = mediaFor(p, brand);
+    const key = p.media?.matte?.status === 'ok' ? p.media.matte.key : null;
+    return isBgRemovalEnabled() && key ? { ...base, matteUrl: await storage.presignDownload(key, { expiresIn: 3 * 60 * 60 }) } : base;
+};
+
 const trackIdSet = async () => new Set((await SoundAsset.find({ kind: 'music', active: true }).select('slug').lean()).map((t) => t.slug));
 
 /** Summary for lists. */
@@ -133,7 +140,7 @@ async function toDetail(p, brand = null) {
         words: [],
     };
     if (p.status === EDIT_STATUS.READY && p.plan) {
-        const props = buildRenderProps(p.plan, p.edits ?? {}, mediaFor(p, brand));
+        const props = buildRenderProps(p.plan, p.edits ?? {}, await mediaWithMatte(p, brand));
         // Counts with every layer switched on, so a toggle stays visible after it is turned off.
         const full = buildRenderProps(p.plan, { ...(p.edits ?? {}), sfxOff: false, overlaysOff: false, transitionsOff: false, effectsOff: false }, mediaFor(p, brand));
         if (isEditorFeaturesV2()) detail.storyboard = buildStoryboard(p.plan, p.edits ?? {});
@@ -324,7 +331,7 @@ export const updateEdits = async (req, res, next) => {
         project.edits = edits;
         project.markModified('edits');
         await project.save();
-        const props = buildRenderProps(project.plan, edits, mediaFor(project, brandFor(req.user)));
+        const props = buildRenderProps(project.plan, edits, await mediaWithMatte(project, brandFor(req.user)));
         ok(res, 'Saved', { edits, props: { ...props, ...(await soundUrls(props)) }, ...(v2 ? { storyboard: buildStoryboard(project.plan, edits) } : {}) });
     } catch (error) {
         next(error);
@@ -362,7 +369,7 @@ export const swapStoryboardBeat = async (req, res, next) => {
         const fresh = await ownedProject(req, { status: EDIT_STATUS.READY });
         const edits = fresh.edits ?? {};
         captureServerEvent(String(req.user._id), 'edit_beat_swapped', { project_id: String(project._id), beat: beatId });
-        const props = buildRenderProps(fresh.plan, edits, mediaFor(fresh, brandFor(req.user)));
+        const props = buildRenderProps(fresh.plan, edits, await mediaWithMatte(fresh, brandFor(req.user)));
         ok(res, 'Beat swapped', { edits, storyboard: buildStoryboard(fresh.plan, edits), props: { ...props, ...(await soundUrls(props)) } });
     } catch (error) {
         next(error);
@@ -410,7 +417,7 @@ export const startEditRender = async (req, res, next) => {
         if (active) return ok(res, 'Already exporting', { renderId: active.id });
         if ((project.renders ?? []).length >= 10) throw new ApiError(429, 'This edit has been exported 10 times. Download an earlier export instead.');
 
-        const props = buildRenderProps(project.plan, project.edits ?? {}, mediaFor(project, brandFor(req.user)));
+        const props = buildRenderProps(project.plan, project.edits ?? {}, await mediaWithMatte(project, brandFor(req.user)));
         const sounds = await soundUrls(props);
         // The final render uses the full-quality render master (the original upload for older edits), not the preview proxy.
         const inputProps = { ...props, ...sounds, videoUrl: await storage.presignDownload(project.source.masterKey || project.source.key, { expiresIn: 3 * 60 * 60 }) };
