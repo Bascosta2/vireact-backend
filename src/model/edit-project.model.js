@@ -56,6 +56,14 @@ const editProjectSchema = new mongoose.Schema({
     attempts: { type: Number, default: 0 },
     error: { type: String, default: null },
 
+    /**
+     * Optional creator-written brief ("describe how you want the animation to be"). Captured on upload,
+     * passed to the planner as a top-priority CREATOR BRIEF block so Claude ties graphics, illustrations
+     * and transitions to the creator's intent (e.g. "visualize my tech workflow as numbered steps").
+     * Empty string when nothing was typed. Max 500 characters, same ceiling as regeneration notes.
+     */
+    animationNote: { type: String, default: '', maxlength: 500, trim: true },
+
     source: {
         key: String,
         contentType: String,

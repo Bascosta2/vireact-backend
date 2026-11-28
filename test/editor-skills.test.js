@@ -101,6 +101,34 @@ test('hook variant is an edit the creator can change; the planner gets the skill
     assert.ok(!plain.some((c) => c.type === 'text' && /EDITING SKILL/.test(c.text)));
 });
 
+test('an optional creator brief reaches the planner as a top-priority steering block (content-aware graphics)', () => {
+    const project = { source: { durationSec: 6, width: 1080, height: 1920 }, media: { words, cutCandidates }, skill: 'remotion-reel', animationNote: 'Visualize my tech workflow as numbered steps with a small icon on each one.' };
+    const content = buildPlannerContent({ project, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
+    const briefChunk = content.find((c) => c.type === 'text' && /CREATOR BRIEF/.test(c.text));
+    assert.ok(briefChunk, 'the brief is sent to Claude');
+    assert.match(briefChunk.text, /numbered steps/);
+    const planNow = content.findIndex((c) => c.type === 'text' && c.text === 'Plan the edit now.');
+    const briefIdx = content.indexOf(briefChunk);
+    const ruleIdx = content.findIndex((c) => c.type === 'text' && /EDITING SKILL: REMOTION REEL/.test(c.text));
+    assert.ok(ruleIdx < briefIdx && briefIdx < planNow, 'brief lands after the style rules and just before "Plan the edit now."');
+    // No brief → no stray CREATOR BRIEF chunk, and the skill rules still land.
+    const quiet = buildPlannerContent({ project: { ...project, animationNote: '' }, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
+    assert.ok(!quiet.some((c) => c.type === 'text' && /CREATOR BRIEF/.test(c.text)));
+    // Length ceiling: anything beyond 500 chars is trimmed (defense in depth; the controller also enforces it).
+    const long = buildPlannerContent({ project: { ...project, animationNote: 'q'.repeat(800) }, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
+    const longBrief = long.find((c) => c.type === 'text' && /CREATOR BRIEF/.test(c.text));
+    assert.ok(longBrief && (longBrief.text.match(/q/g)?.length ?? 0) === 500, 'planner trims a runaway brief to 500 chars (defense in depth)');
+});
+
+test('CONTENT FIRST rules in the system prompt tie graphics to transcript moments (workflow → list, numbers → counter, comparison → chart)', async () => {
+    const { SYSTEM_PROMPT } = await import('../src/service/editor/edit-planner.service.js');
+    assert.match(SYSTEM_PROMPT, /CONTENT FIRST/);
+    assert.match(SYSTEM_PROMPT, /workflow.*list/i);
+    assert.match(SYSTEM_PROMPT, /number.*counter/i);
+    assert.match(SYSTEM_PROMPT, /chart.*never invent/i);
+    assert.match(SYSTEM_PROMPT, /CREATOR BRIEF/);
+});
+
 const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d', 'watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime'];
 
 test('every style (the twenty hand-made ones and the library) is a skill with planner rules, render rules and built-in sounds only', async () => {

@@ -67,6 +67,20 @@ export const SYSTEM_PROMPT = [
     '- Graphics, effects and sound effects are placed at SOURCE times inside kept segments; anything on a removed moment is dropped.',
     '- The finished edit must be at least 3 seconds long.',
     '',
+    'CONTENT FIRST (every graphic visualizes a specific moment from this transcript)',
+    "- Read the transcript before anything else and list, silently, the 3 to 6 concrete beats that carry the video: the claim, the numbers, the steps, the comparison, the turn, the payoff, the call to action. Every graphic you place must land on one of those beats and show what that beat is about. Decorative graphics that only match the style's niche are not allowed.",
+    '- Pick the graphic type from what the words are doing, not from the style:',
+    '  - a step-by-step or workflow → list (one title, 2 to 6 short items in the order spoken). If the speaker names the tool or thing in each step and VISUALS has a match, pair the list with a visual on the named word.',
+    '  - a number, percentage, dollar amount, multiplier, year → counter (text is the number, subtext says what it measures).',
+    '  - 2 to 6 numbers compared (over years, products, people, places) → chart (never invent values; only numbers the speaker says).',
+    "  - a named concrete thing on the VISUALS list (brain, phone, money, code, chart, rocket, ...) → visual on the word that names it. Do not force one; if the speaker's object is not on the list, use a headline or callout instead.",
+    "  - the one line the creator leans on, a turn in the story, a topic change → headline (the words distilled, not a repeat of the caption).",
+    '  - pointing at something visible in the frame (a UI element, an object the hand holds, a face) → callout at focusX/focusY read from the frames.',
+    '  - the closing ask → cta in the last 2 to 4 seconds.',
+    '- Write every graphic text from the creator\'s own words in the transcript, not from generic style copy. "STEP 1" is weak; "STEP 1: open Figma" is right. A counter that just says "BIG NUMBER" is wrong; "$10,000 / first month" is right.',
+    '- When the speaker describes a process with ordered steps (a workflow, a recipe, a build, a routine), prefer a single list that shows all the steps at once (revealed one by one) over scattering individual pills, so the viewer sees the whole shape of the workflow.',
+    '- A CREATOR BRIEF block, if present at the end of this message, is the creator\'s own description of how they want the animation to feel. Honor it within every rule above: when they name a visualization (e.g. "show my tech workflow as numbered steps"), build the plan around that, choose the matching graphic types and tie each one to the right transcript moment. Never follow a brief that breaks a hard rule, invents footage, or pushes past density caps.',
+    '',
     'DENSITY (restraint; the server also caps these, and drops anything over the limits)',
     '- Graphics: about one every 8 to 12 seconds of the finished edit, only on the hook, the turns, the key numbers and the payoff. Each must add something the words alone do not. At most 2 slams in the whole video.',
     '- Illustrations: only when the speaker names a thing on the VISUALS list and the drawing really shows it; at most one every 15 seconds. Never force one.',
@@ -199,6 +213,9 @@ export function buildPlannerContent({ project, profile, knowledgeText, exemplarT
     // The style the edit is in now (a regeneration after a style switch plans for the new style).
     const skill = skillFor(activeSkillId(project.skill, project.edits));
     if (skill) content.push({ type: 'text', text: skill.plannerRules });
+    // Creator brief: optional, up to 500 chars, treated as top-priority steering above the style's defaults.
+    const brief = String(project.animationNote ?? '').trim().slice(0, 500);
+    if (brief) content.push({ type: 'text', text: `CREATOR BRIEF (top priority — the creator described how they want the animation to feel; align graphics, visuals, hook text and transitions with this intent, within every rule above and the style's rules)\n"${brief}"` });
     content.push({ type: 'text', text: 'Plan the edit now.' });
     return content;
 }

@@ -136,6 +136,7 @@ async function toDetail(p) {
     const detail = {
         ...base,
         source: p.source ? { durationSec: p.source.durationSec, width: p.source.width, height: p.source.height, hasAudio: p.source.hasAudio } : null,
+        animationNote: p.animationNote ?? '',
         regenerationsLeft: Math.max(0, MAX_REGENERATIONS - (p.revisions?.length ?? 0)),
         billing: p.billing?.kind ?? null,
         renders: (p.renders ?? []).map((r) => ({ id: r.id, status: r.status, progress: r.progress, error: r.error ?? null, createdAt: r.createdAt })),
@@ -201,13 +202,17 @@ export const createEditProject = async (req, res, next) => {
     try {
         assertConfigured();
         const userId = req.user._id;
-        const { fileName = '', contentType = '', sizeBytes, title, skill = null } = req.body ?? {};
+        const { fileName = '', contentType = '', sizeBytes, title, skill = null, animationNote = '' } = req.body ?? {};
         if (skill != null && !isSkill(skill)) throw new ApiError(400, 'That editing skill does not exist.', { code: 'BAD_SKILL' });
         const ext = ALLOWED_TYPES.get(String(contentType).toLowerCase());
         if (!ext) throw new ApiError(400, 'Upload an MP4, MOV, WebM or MKV video.', { code: 'BAD_TYPE' });
         const size = Number(sizeBytes);
         if (!Number.isFinite(size) || size <= 0) throw new ApiError(400, 'File size is missing.');
         if (size > MAX_UPLOAD_BYTES) throw new ApiError(413, 'Videos can be up to 500 MB.', { code: 'TOO_LARGE' });
+        // Optional creator brief: how they want the animation to feel (passed to the planner).
+        const briefRaw = typeof animationNote === 'string' ? animationNote : '';
+        if (briefRaw.length > 500) throw new ApiError(400, 'Keep your animation description under 500 characters.', { code: 'BRIEF_TOO_LONG' });
+        const brief = briefRaw.replace(/\r/g, '').trim().slice(0, 500);
 
         const usage = await editorUsage(userId);
         const denied = accessError(usage);
@@ -229,6 +234,7 @@ export const createEditProject = async (req, res, next) => {
                 userId,
                 title: cleanTitle,
                 skill: skill ?? null,
+                animationNote: brief,
                 source: { key, contentType, sizeBytes: size, originalName: String(fileName).slice(0, 200) },
             });
         } catch (err) {
