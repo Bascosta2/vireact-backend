@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { VISUALS, captionPreset, normalizeGraphic } from './edl.js';
 import { FPS, buildPieces, buildTimeline, captionPages, mapPoint, mapRange } from './timing.js';
 import { HOOK_VARIANTS, activeSkillId, casualCase, hookLines, isAnimationStyle, skillFor } from './skills.js';
@@ -125,6 +126,28 @@ const idList = (v, max = 200) => (Array.isArray(v) ? [...new Set(v.filter((x) =>
 const intList = (v, max = 200) => (Array.isArray(v) ? [...new Set(v.filter((x) => Number.isInteger(x) && x >= 0))].slice(0, max) : []);
 
 export const EDIT_FLAGS = ['keepOriginalOrder', 'captionsOff', 'hookOverlayOff', 'zoomsOff', 'overlaysOff', 'sfxOff', 'transitionsOff', 'effectsOff'];
+
+/**
+ * A short, stable fingerprint of every input that changes what the composition renders: the plan
+ * generation (new plan after a regenerate), the skill, the kind (upload vs storyboard), the creator's
+ * edits (including `animationStyle`), and the chosen storyboard. Stored on each render so the server
+ * can tell when a baked MP4 is behind the current edits (e.g. the creator picked a new animation style
+ * after exporting) and the UI can hide the download of a now-stale render.
+ */
+export function renderSignature(project) {
+    const raw = project?.edits ?? {};
+    // Deterministic key order so two equivalent edit objects hash the same.
+    const edits = {};
+    for (const k of Object.keys(raw).sort()) edits[k] = raw[k];
+    const seed = {
+        plan: String(project?.planGenerationId ?? ''),
+        skill: String(project?.skill ?? ''),
+        kind: String(project?.kind ?? 'upload'),
+        edits,
+        storyboardChosen: project?.storyboard?.chosen ?? null,
+    };
+    return createHash('sha1').update(JSON.stringify(seed)).digest('hex').slice(0, 16);
+}
 
 /**
  * Keep only known keys with the right types, so a PATCH can never store junk.

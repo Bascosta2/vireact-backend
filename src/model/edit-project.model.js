@@ -32,6 +32,15 @@ const renderSchema = new mongoose.Schema({
     error: String,
     createdAt: { type: Date, default: Date.now },
     finishedAt: Date,
+    /**
+     * Fingerprint of the project state this MP4 was baked from (plan generation + skill + edits).
+     * The UI compares it to the current project signature; a mismatch means the creator changed the
+     * edit (e.g. switched animation style) after this render, so the "Download" button is replaced
+     * with "Re-export with your latest changes" instead of handing back the stale MP4.
+     */
+    editsSignature: { type: String, default: '' },
+    /** Plan generation the render was based on (null for pre-signature renders). */
+    planGenerationId: { type: String, default: null },
 }, { _id: false });
 
 const editProjectSchema = new mongoose.Schema({

@@ -11,7 +11,7 @@ import { captureServerEvent } from '../lib/analytics.js';
 import { isShuttingDown } from '../queue/analysis-runtime.js';
 import { editorUsage, accessError } from '../service/editor/editor-access.service.js';
 import { publishEditJob, runEditJobGated, failProject } from '../service/editor/edit-job.service.js';
-import { buildRenderProps, sanitizeEdits } from '../service/editor/compose.js';
+import { buildRenderProps, renderSignature, sanitizeEdits } from '../service/editor/compose.js';
 import { isRenderConfigured, renderProgress, startRender } from '../service/editor/render.service.js';
 import { uploadVideoUrlToTwelveLabsService } from '../service/video.service.js';
 import { allowedFeaturesForPlan } from '../constants.js';
@@ -139,7 +139,18 @@ async function toDetail(p) {
         animationNote: p.animationNote ?? '',
         regenerationsLeft: Math.max(0, MAX_REGENERATIONS - (p.revisions?.length ?? 0)),
         billing: p.billing?.kind ?? null,
-        renders: (p.renders ?? []).map((r) => ({ id: r.id, status: r.status, progress: r.progress, error: r.error ?? null, createdAt: r.createdAt })),
+        renders: (() => {
+            const sig = renderSignature(p);
+            return (p.renders ?? []).map((r) => ({
+                id: r.id,
+                status: r.status,
+                progress: r.progress,
+                error: r.error ?? null,
+                createdAt: r.createdAt,
+                // A render with no stored signature predates this field: assume current so old links keep working.
+                stale: r.editsSignature ? r.editsSignature !== sig : false,
+            }));
+        })(),
         linkedVideoId: p.linkedVideoId ? String(p.linkedVideoId) : null,
         plan: null,
         edits: p.edits ?? {},
@@ -513,7 +524,15 @@ export const startEditRender = async (req, res, next) => {
     try {
         if (!isRenderConfigured()) throw new ApiError(503, 'Export is being set up and is not available yet.', { code: 'RENDER_UNAVAILABLE' });
         const project = await ownedProject(req, { status: EDIT_STATUS.READY });
-        const active = (project.renders ?? []).find((r) => r.status === RENDER_STATUS.RENDERING && Date.now() - new Date(r.createdAt).getTime() < 15 * 60 * 1000);
+        const sig = renderSignature(project);
+        // Dedup an in-flight render only when it is baking the exact state the user is asking for.
+        // Otherwise (they switched style or toggled an edit after clicking Export the first time) start
+        // a fresh render so the download they get is the edit they are looking at.
+        const active = (project.renders ?? []).find((r) =>
+            r.status === RENDER_STATUS.RENDERING
+            && r.editsSignature === sig
+            && Date.now() - new Date(r.createdAt).getTime() < 15 * 60 * 1000,
+        );
         if (active) return ok(res, 'Already exporting', { renderId: active.id });
         if ((project.renders ?? []).length >= 10) throw new ApiError(429, 'This edit has been exported 10 times. Download an earlier export instead.');
 
@@ -526,7 +545,16 @@ export const startEditRender = async (req, res, next) => {
         const id = crypto.randomBytes(6).toString('hex');
         const outKey = editorKey('renders', project.userId, project._id, `${id}.mp4`);
         const { remotionRenderId, bucketName } = await startRender({ inputProps, outKey });
-        project.renders.push({ id, status: RENDER_STATUS.RENDERING, progress: 0, remotionRenderId, bucketName, key: outKey });
+        project.renders.push({
+            id,
+            status: RENDER_STATUS.RENDERING,
+            progress: 0,
+            remotionRenderId,
+            bucketName,
+            key: outKey,
+            editsSignature: sig,
+            planGenerationId: project.planGenerationId ?? null,
+        });
         await project.save();
         captureServerEvent(String(req.user._id), 'edit_exported', { project_id: String(project._id), frames: props.durationInFrames });
         ok(res, 'Export started', { renderId: id }, 202);
@@ -562,11 +590,17 @@ export const getEditRender = async (req, res, next) => {
             await project.save();
         }
         const safeName = `${project.title.replace(/[^\w -]/g, '').trim().slice(0, 60) || 'vireact-edit'}.mp4`;
+        // Stale when the creator changed the edit after this render was baked (e.g. switched animation
+        // style). Pre-signature renders carry an empty editsSignature: treat them as current so legacy
+        // download links keep working.
+        const sig = renderSignature(project);
+        const stale = Boolean(render.editsSignature) && render.editsSignature !== sig;
         ok(res, 'Export', {
             id: render.id,
             status: render.status,
             progress: render.progress,
             error: render.error ?? null,
+            stale,
             downloadUrl: render.status === RENDER_STATUS.DONE ? await storage.presignDownload(render.key, { expiresIn: 60 * 60, filename: safeName }) : null,
         });
     } catch (error) {

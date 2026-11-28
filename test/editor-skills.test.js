@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateEdl } from '../src/service/editor/edl.js';
-import { buildRenderProps, sanitizeEdits } from '../src/service/editor/compose.js';
+import { buildRenderProps, renderSignature, sanitizeEdits } from '../src/service/editor/compose.js';
 import { buildCutCandidates } from '../src/service/editor/cut-candidates.js';
 import { buildPlannerContent } from '../src/service/editor/edit-planner.service.js';
 import { SKILLS, casualCase, hookLines, isSkill } from '../src/service/editor/skills.js';
@@ -127,6 +127,47 @@ test('CONTENT FIRST rules in the system prompt tie graphics to transcript moment
     assert.match(SYSTEM_PROMPT, /number.*counter/i);
     assert.match(SYSTEM_PROMPT, /chart.*never invent/i);
     assert.match(SYSTEM_PROMPT, /CREATOR BRIEF/);
+});
+
+test('renderSignature changes when the creator switches animation style (so a baked MP4 is marked stale after a style switch)', () => {
+    const base = { planGenerationId: 'gen-A', skill: 'pixel-art', kind: 'upload', edits: {}, storyboard: null };
+    const sig0 = renderSignature(base);
+    // Flipping the animation style changes the signature (this is the bug the user hit: a download
+    // that still handed back the previous style was a render whose signature no longer matched).
+    const sig1 = renderSignature({ ...base, edits: { animationStyle: 'comic-art' } });
+    assert.notEqual(sig0, sig1, 'style change produces a new signature');
+    // Equivalent edit objects with different key order hash the same (deterministic).
+    const sig2 = renderSignature({ ...base, edits: { captionsOff: true, animationStyle: 'comic-art' } });
+    const sig3 = renderSignature({ ...base, edits: { animationStyle: 'comic-art', captionsOff: true } });
+    assert.equal(sig2, sig3);
+    // A new plan (regenerate) produces a new signature too.
+    assert.notEqual(renderSignature({ ...base, planGenerationId: 'gen-B' }), sig0);
+    // Signature is short, hex and stable across calls.
+    assert.match(sig0, /^[0-9a-f]{16}$/);
+    assert.equal(renderSignature(base), sig0);
+});
+
+test('COMPLEX TOPICS rules keep one list open across a workflow and forbid fabricated chart numbers', async () => {
+    const { SYSTEM_PROMPT } = await import('../src/service/editor/edit-planner.service.js');
+    assert.match(SYSTEM_PROMPT, /COMPLEX TOPICS AND STORYBOARDS/);
+    assert.match(SYSTEM_PROMPT, /hook.*ground.*walkthrough.*payoff/i);
+    assert.match(SYSTEM_PROMPT, /ONE `list`/);
+    assert.match(SYSTEM_PROMPT, /Graphic continuity/);
+    assert.match(SYSTEM_PROMPT, /never fabricate numbers/i);
+});
+
+test('every style plannerRules in the planner carries a CONTENT TAILORING clause that forbids generic style copy', () => {
+    const project = { source: { durationSec: 6, width: 1080, height: 1920 }, media: { words, cutCandidates }, skill: 'pixel-art' };
+    const content = buildPlannerContent({ project, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
+    const styleBlock = content.find((c) => c.type === 'text' && /EDITING SKILL: PIXEL ART/.test(c.text));
+    assert.ok(styleBlock, 'the style block is in the content');
+    assert.match(styleBlock.text, /CONTENT TAILORING/);
+    assert.match(styleBlock.text, /LEVEL 1|LESSON 1|MISSION/, 'names the generic style labels it is forbidding');
+    assert.match(styleBlock.text, /creator's own words/i);
+    // Tailoring rides on top of every skill, including the standard Remotion Reel.
+    const reel = buildPlannerContent({ project: { ...project, skill: 'remotion-reel' }, profile: {}, knowledgeText: '', exemplarText: '', trackText: '', sheets: [] });
+    const reelBlock = reel.find((c) => c.type === 'text' && /EDITING SKILL: REMOTION REEL/.test(c.text));
+    assert.match(reelBlock.text, /CONTENT TAILORING/);
 });
 
 const STYLE_IDS = ['glow-sketch', 'comic-art', 'brick-build', 'pixel-art', 'chalkboard', 'retro-3d', 'flat-vector', 'minimal-line', 'cgi-motion', 'explainer-3d', 'watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime'];

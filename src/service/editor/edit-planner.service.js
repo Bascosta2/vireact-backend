@@ -81,6 +81,17 @@ export const SYSTEM_PROMPT = [
     '- When the speaker describes a process with ordered steps (a workflow, a recipe, a build, a routine), prefer a single list that shows all the steps at once (revealed one by one) over scattering individual pills, so the viewer sees the whole shape of the workflow.',
     '- A CREATOR BRIEF block, if present at the end of this message, is the creator\'s own description of how they want the animation to feel. Honor it within every rule above: when they name a visualization (e.g. "show my tech workflow as numbered steps"), build the plan around that, choose the matching graphic types and tie each one to the right transcript moment. Never follow a brief that breaks a hard rule, invents footage, or pushes past density caps.',
     '',
+    'COMPLEX TOPICS AND STORYBOARDS (hold a multi-step explanation together across the edit)',
+    "- Before writing graphics, map the storyboard out loud (in `summary` and `hookStrategy`): identify the hook, the ground (what the viewer needs to know first), the walkthrough (the steps or concepts, in the order they are explained), the payoff (the result or insight) and the close (cta or takeaway). Every graphic lands on one of those beats.",
+    '- For an ordered process (a workflow, a recipe, a build, a pipeline, a checklist, a framework), use ONE `list` opened on the setup word and reveal its items on the word that names each step. Do not swap the list for a new graphic between steps; the viewer should see the whole shape of the process build up. Items are 1 to 5 words, in the order the speaker says them, up to 6 items.',
+    '- For a pipeline or chain of named stages (A → B → C → D), write the list items with the arrow built in ("1. Ingest → raw data", "2. Transform → clean rows") so the sequence reads at a glance. Pair with a `visual` on any stage that names a concrete thing on VISUALS.',
+    '- For a comparison across named options (tool vs tool, before vs after, plan A vs plan B), use ONE `chart` with the 2 to 6 values the speaker actually says; never fabricate numbers. If the speaker gives no numbers, use a `headline` and a `list` of the options instead of a chart.',
+    '- For a cause-and-effect ("because X, we see Y"), use a `callout` or a `headline` that states the link in the speaker\'s own words; do not reach for a chart when there is no number.',
+    "- For a technical concept with sub-parts (an architecture, a model, a system), use a `headline` to name the whole and a `list` of 2 to 4 sub-parts; add `callout`s on the frames where the speaker points at the diagram, screen share or whiteboard.",
+    '- Complex video (3+ steps, or multiple concepts in one minute) gets 1 opened list that stays visible through the walkthrough, 1 to 2 counters on the key numbers and at most 1 chart; headlines mark the transitions between concepts. The rest is talking-head.',
+    '- Graphic continuity: a list, chart or visual is replaced only when the speaker has moved on to a new beat (a new concept, a new step group). Within a beat, prefer revealing items inside the same graphic to piling new ones on top of each other.',
+    '- Grounding stays strict: every number, name, tool, step and claim in a graphic must match a word the speaker actually said in the transcript. If the speaker never says a number, do not invent one to fill a chart; pick a different graphic.',
+    '',
     'DENSITY (restraint; the server also caps these, and drops anything over the limits)',
     '- Graphics: about one every 8 to 12 seconds of the finished edit, only on the hook, the turns, the key numbers and the payoff. Each must add something the words alone do not. At most 2 slams in the whole video.',
     '- Illustrations: only when the speaker names a thing on the VISUALS list and the drawing really shows it; at most one every 15 seconds. Never force one.',
@@ -212,7 +223,20 @@ export function buildPlannerContent({ project, profile, knowledgeText, exemplarT
     }
     // The style the edit is in now (a regeneration after a style switch plans for the new style).
     const skill = skillFor(activeSkillId(project.skill, project.edits));
-    if (skill) content.push({ type: 'text', text: skill.plannerRules });
+    if (skill) {
+        // Every style (Remotion Reel and every animation/painted/library style) picks up the same
+        // content-tailoring clause: the look stays the style's, the words and graphic choices come from
+        // this creator's transcript. Without this reminder, Claude falls back to the style's showcase
+        // vocabulary (generic "LEVEL 1", "MISSION", abstract flourishes) instead of the real content.
+        const tailoring = [
+            '',
+            'CONTENT TAILORING (reinforces the style above, applies to every style)',
+            "- The LOOK of the edit is this style's (grade, ambient layer, graphic shapes, sound palette, accent). The WORDS inside every graphic come from this video's transcript, written from what the speaker actually said, not from the style's showcase copy.",
+            "- Do not fall back to generic style labels (\"LEVEL 1\", \"MISSION\", \"CHAPTER 1\", \"NEW ITEM\", \"LESSON 1\") unless the speaker literally says that phrase. Rewrite each one from the creator's own words: \"LESSON 1\" becomes \"LESSON 1: PICK YOUR NICHE\" only if they talk about picking a niche in that beat.",
+            "- A visual, list item, headline, counter or chart that could appear in any other video on this channel is wrong for this one: name the actual tool, person, product, step or number the speaker names in the exact moment the graphic lands.",
+        ].join('\n');
+        content.push({ type: 'text', text: `${skill.plannerRules}${tailoring}` });
+    }
     // Creator brief: optional, up to 500 chars, treated as top-priority steering above the style's defaults.
     const brief = String(project.animationNote ?? '').trim().slice(0, 500);
     if (brief) content.push({ type: 'text', text: `CREATOR BRIEF (top priority — the creator described how they want the animation to feel; align graphics, visuals, hook text and transitions with this intent, within every rule above and the style's rules)\n"${brief}"` });
