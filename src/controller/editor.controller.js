@@ -21,7 +21,7 @@ import { hasEditorAccess } from '../config/flags.js';
 import { SKILLS, isAnimationStyle, isSkill } from '../service/editor/skills.js';
 import { chargeEdit } from '../service/editor/editor-access.service.js';
 import {
-    MAX_STORYBOARD_ROUNDS, PROMPT_LIMITS, STORYBOARD_LENGTHS, buildStoryboardEdit, decorateStoryboardProps, normalizeOption,
+    MAX_STORYBOARD_ROUNDS, PROMPT_LIMITS, STORYBOARD_LENGTHS, buildStoryboardEdit, decorateStoryboardProps, normalizeOption, subjectMatchesMascot,
 } from '../service/editor/storyboard.service.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
@@ -107,6 +107,13 @@ const storyboardView = (p) =>
             chosen: p.storyboard?.chosen ?? null,
             final: p.storyboard?.final ? { title: p.storyboard.final.title, scenes: p.storyboard.final.scenes } : null,
             roundsLeft: Math.max(0, MAX_STORYBOARD_ROUNDS - (p.storyboard?.rounds ?? 0)),
+            // The subjects Claude extracted from the creator's idea (persistent registry: characters,
+            // objects, places the story is about). Null on storyboards built before schema v2.
+            subjects: p.storyboard?.subjects ?? null,
+            // False when the style's painted mascot (a jellyfish, a koi) does not match the story's
+            // subject; the UI shows a dismissible notice and the painted scene starts off.
+            mascotFits: p.storyboard?.mascotFits ?? null,
+            autoDisabledScene: p.storyboard?.autoDisabledScene === true,
         }
         : null;
 
@@ -362,8 +369,13 @@ export const chooseStoryboard = async (req, res, next) => {
         const merged = {
             ...picked,
             title: typeof req.body?.title === 'string' && req.body.title.trim() ? req.body.title : picked.title,
+            // Preserve the subjects registry Claude extracted (storyboard schema v2); the creator's
+            // scene-text touch-ups never remove it.
+            subjects: picked.subjects ?? [],
             scenes: picked.scenes.map((sc, k) => ({
                 narration: narrations && typeof narrations[k] === 'string' && narrations[k].trim() ? narrations[k] : sc.narration,
+                subject: sc.subject ?? '',
+                action: sc.action ?? '',
                 backdrop: sc.backdrop,
                 emphasis: (sc.emphasis ?? []).join(' | '),
                 graphicType: sc.graphic?.type ?? 'none',
@@ -376,6 +388,14 @@ export const chooseStoryboard = async (req, res, next) => {
         option.musicTrackId = picked.musicTrackId;
         if (option.scenes.length < 2) throw new ApiError(400, 'Keep at least two scenes with a few words each.');
         const built = buildStoryboardEdit(option, { trackIds: await trackIdSet() });
+        // The painted scene a story-layout style draws (koi pond, jellyfish, deer, ...) is a fixed
+        // animation; it does not change with narration. When the story's subjects do not overlap the
+        // style's mascot vocabulary, start the edit with the painted scene off so the viewer sees the
+        // style's atmosphere and the graphics-driven subject, not an unrelated creature. The creator
+        // can turn it back on in the Style panel. autoDisabledScene records why, for the UI notice.
+        const mascotFits = subjectMatchesMascot(option.subjects ?? [], project.skill);
+        const autoDisabledScene = !mascotFits;
+        const startingEdits = autoDisabledScene ? { sceneOff: true } : {};
 
         const done = await EditProject.updateOne(
             { _id: project._id, status: EDIT_STATUS.CHOOSING },
@@ -388,12 +408,15 @@ export const chooseStoryboard = async (req, res, next) => {
                     error: null,
                     title: option.title.slice(0, 120),
                     plan: built.plan,
-                    edits: {},
+                    edits: startingEdits,
                     readyAt: new Date(),
                     'media.words': built.words,
                     'source.durationSec': built.durationSec,
                     'storyboard.chosen': index,
                     'storyboard.final': { ...option, timing: built.timing },
+                    'storyboard.subjects': option.subjects ?? [],
+                    'storyboard.mascotFits': mascotFits,
+                    'storyboard.autoDisabledScene': autoDisabledScene,
                 },
             }
         );

@@ -2,7 +2,7 @@ import { requestClaudeJson } from '../../lib/anthropic.js';
 import { MUSIC_MOODS } from '../../model/sound-asset.model.js';
 import { SFX_FOR_TRANSITION } from './compose.js';
 import { VISUALS, VISUAL_NAMES, validateEdl } from './edl.js';
-import { ANIMATION_STYLES, styleLayout } from './skills.js';
+import { ANIMATION_STYLES, skillFor, styleLayout } from './skills.js';
 
 /**
  * Story mode of the Skills Editor: the creator types an idea and picks an animation style; Claude writes
@@ -47,7 +47,14 @@ const str = { type: 'string' };
 const obj = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const arr = (items) => ({ type: 'array', items });
 
-/** Kept small (no enums, lists as "a | b" strings): see the grammar-size note on EDL_SCHEMA. */
+/**
+ * Kept small (no enums, lists as "a | b" strings): see the grammar-size note on EDL_SCHEMA. Schema v2
+ * (2026-11-27): each option carries a `subjects` registry extracted from the creator's prompt, and
+ * every scene names the `subject` and `action` it is about. The registry persists on the project so
+ * references stay consistent across scenes and future regenerations; the subject/action fields let
+ * the backend compute whether the style's painted mascot fits the story (if not, the ambient scene is
+ * auto-disabled so the viewer is not watching a jellyfish while hearing about a whale).
+ */
 export const STORYBOARD_SCHEMA = obj({
     options: arr(obj({
         title: str,
@@ -55,8 +62,21 @@ export const STORYBOARD_SCHEMA = obj({
         angle: str,
         mood: str,
         musicTrackId: str,
+        // Persistent subject registry for this storyboard: the characters, objects and places the
+        // story is about. Scenes refer back to these by `subject` (the name field) so one blue whale
+        // stays one blue whale across the video.
+        subjects: arr(obj({
+            name: str,          // 1 to 5 words, the name used in the story ("the blue whale")
+            description: str,   // 4 to 20 words naming shape, colour, scale, mood ("huge, slow, deep blue")
+            role: str,          // "protagonist" | "supporting" | "object" | "environment"
+            visualId: str,      // one illustration from VISUALS that approximates this subject, or ""
+        })),
         scenes: arr(obj({
             narration: str,
+            // The subject this scene is about, taken from the subjects registry (same name field).
+            subject: str,
+            // The action happening in this scene, in the creator's words ("descends into the deep").
+            action: str,
             backdrop: str,
             emphasis: str,
             graphicType: str,
@@ -84,55 +104,98 @@ export const drawsOwnScene = (styleId) => ['story', 'explainer'].includes(styleL
 
 function systemPrompt(styleId, lengthSec, tracks) {
     const s = ANIMATION_STYLES[styleId];
+    const skill = skillFor(styleId);
+    const mascotSubjects = skill?.mascotSubjects ?? [];
     const t = targetsFor(lengthSec);
     const scene = drawsOwnScene(styleId);
+    const mascotWarning = scene && mascotSubjects.length
+        ? [
+            '',
+            `TECHNICAL REALITY — the painted scene behind every scene in ${s.name} is a FIXED animation that always draws: ${mascotSubjects.join(', ')}. It does NOT change based on your narration. It renders the same whether your story is about ${mascotSubjects[0]} or about something completely different.`,
+            `- When your story IS about ${mascotSubjects.join(' or ')}, the painted scene reinforces the subject and the ambient atmosphere (colour, light, particles, layering) carries the mood. Lean into it.`,
+            `- When your story is NOT about those subjects, the painted scene becomes decorative background — the atmosphere still fits the style, but the specific creature does NOT illustrate your story. In that case, the GRAPHICS layer must carry the subject: every scene names its subject in a headline, list or visual (from the ILLUSTRATIONS vocabulary when one honestly matches), so the viewer reads what the story is about even when the painted scene is unrelated. Do not pretend the painted scene depicts the story's subject; the server auto-dims it when the subject does not match.`,
+        ].join('\n')
+        : '';
     return [
-        'You write storyboards for short vertical (9:16) animated videos. Vireact draws every frame in code in one animation style: the scenes, the on-screen words, graphics, transitions, music and sound. There is no camera footage and no voice: the words of each scene appear on screen as captions, so they are the story.',
+        'You write storyboards for short vertical (9:16) animated videos for the creator at Vireact. Vireact draws every frame in code in one animation style: the scenes, the on-screen words, graphics, transitions, music and sound. There is no camera footage and no voiceover; the words of each scene appear on screen as captions, so the captions ARE the story. The chosen storyboard is then built, rendered and shown to real viewers; it must stand on its own.',
         '',
         `STYLE: ${s.name}. Look: ${s.look}. Best for ${s.bestFor}. Motion: ${s.motion}.`,
         `LENGTH: about ${t.lengthSec} seconds: ${t.scenes[0]} to ${t.scenes[1]} scenes and about ${t.words} words of narration in total (people read about 2.4 words a second).`,
+        mascotWarning,
         '',
-        'Write EXACTLY 3 storyboard options for the creator\'s idea. Each must tell the idea well and in full, and each must take a clearly different angle, for example: a little story with a character and a turn; a punchy explainer that teaches it step by step; an emotional or surprising take that lands on a strong last line. Say the angle in a few words in `angle`.',
+        'HOW TO THINK (do this silently before you write anything)',
+        '1. NARRATIVE UNDERSTANDING. Read the creator\'s idea and extract: the main subject(s), supporting subjects, environments, key actions and events, chronology (what happens first, then, finally), emotional arc (opening feeling to closing feeling), and anything the creator explicitly asked for. Distinguish what they asked for from what you would like to add.',
+        '2. CREATIVE DIRECTION. The style sets the LOOK (colour, light, texture, pacing, sound palette). The creator\'s story sets WHAT HAPPENS. Where the style\'s defaults would push the story in a different direction than the creator\'s idea, follow the creator.',
+        '3. SCENE-BY-SCENE PLAN. Break the story into scenes, each with a single subject and a single action. The first scene is the hook; the last scene is the payoff. Scenes follow the creator\'s chronology.',
+        '',
+        'Write EXACTLY 3 storyboard options for the creator\'s idea. Each must tell the idea well and in full, each from a clearly different angle (e.g. an emotional little story with a turn; a punchy explainer that teaches it step by step; a quiet reflective take that lands on a strong last line). Say the angle in a few words in `angle`.',
         '',
         'FOR EACH OPTION',
         '- title: 2 to 6 words, shown big for the first two seconds. No emoji.',
         '- logline: one sentence saying what the video is.',
         `- mood: one of ${MOODS.join(', ')}.`,
         `- musicTrackId: the id of the track below that fits the mood best, or "" if none fits.`,
+        '- subjects: the registry of every character, object and place the story depends on, extracted from the creator\'s idea. 1 to 6 entries, each with:',
+        '    name: 1 to 5 words, the way the story names it ("the blue whale", "the squid", "the cave"); the SAME name is used in every scene that is about it, so the viewer meets ONE whale, not a new whale each scene.',
+        '    description: 4 to 20 words: shape, scale, colour, mood, anything that keeps the subject consistent across scenes ("huge, slow, deep blue with a pale underside").',
+        '    role: one of "protagonist", "supporting", "object", "environment".',
+        '    visualId: the ONE illustration from the VISUALS list below whose `about` line most closely approximates this subject, or "" when nothing in VISUALS honestly matches (do not stretch). This is a hint for the graphics layer.',
         '- scenes, in order. Each scene:',
-        '  - narration: 5 to 28 words of plain, vivid sentences, the words shown on screen for this scene. Together the scenes tell the whole story from first line to last; the first scene hooks, the last one pays off. No emoji, no hashtags, no stage directions, no "Scene 1".',
+        '  - narration: 5 to 28 words of plain, vivid sentences, the words shown on screen for this scene. Together the scenes tell the whole story from first line to last. No emoji, no hashtags, no stage directions, no "Scene 1".',
+        '  - subject: the name of the subject this scene is about, taken from the subjects registry above. One per scene.',
+        '  - action: 3 to 10 words naming what the subject is doing ("descends into the deep", "releases a cloud of ink"). Written from the narration.',
         scene
             ? `  - backdrop: "scene" (this style paints its own world behind every scene).`
             : `  - backdrop: what is behind the words, one of: ${BACKDROP_IDS.map((b) => `${b} (${BACKDROPS[b]})`).join('; ')}. Pick what fits each scene; vary them when the story moves.`,
         '  - emphasis: 1 or 2 key words from the narration, separated by " | ".',
-        `  - graphicType: one of ${GRAPHIC_KINDS.join(', ')}. Use a graphic in most scenes, but only one that shows something the words alone do not:`,
-        '    headline: graphicText a 2-6 word title, graphicSubtext optional;',
-        '    list: graphicText a short title, graphicItems 2-5 short items separated by " | ";',
-        '    counter: graphicText a number ("87%", "$10,000", "3x"), graphicSubtext what it measures;',
-        '    chart: graphicText a title, graphicItems 2-6 bars as "label: value" separated by " | " (only numbers that belong to the story);',
-        '    visual: graphicItems one illustration name from the list below, graphicText an optional 1-3 word label;',
+        `  - graphicType: one of ${GRAPHIC_KINDS.join(', ')}. Use a graphic in most scenes; it is the layer that carries the story\'s subject on screen. Pick the type by what the scene needs:`,
+        '    visual: use when the subject genuinely matches an entry in the ILLUSTRATIONS list below (check the `about` descriptions, do not stretch); graphicItems is the illustration name, graphicText is an optional 1-3 word label naming the subject in the creator\'s words ("THE BLUE WHALE", "THE SQUID");',
+        '    headline: use when no illustration fits but the scene still needs to name its subject on screen; graphicText is a 2-6 word title in the creator\'s words ("THE BLUE WHALE", "DEEP OCEAN CAVE"), graphicSubtext optional ("ascending to the surface", "bioluminescent, ancient");',
+        '    list: graphicText a short title, graphicItems 2-5 short items separated by " | ", for an ordered process or a set of elements;',
+        '    counter: graphicText a number ("87%", "$10,000", "3x"), graphicSubtext what it measures; only when the narration states that number;',
+        '    chart: graphicText a title, graphicItems 2-6 bars as "label: value" separated by " | " (only numbers that belong to the story); only when the narration compares real numbers;',
         '    slam: graphicText 1-3 punchy words, at most once per option;',
         '    pill: graphicText a 2-5 word label;',
         '    cta: only in the last scene, graphicText the closing ask ("Follow for part 2").',
+        '    none: only when the painted scene\'s mascot IS the subject AND the narration is self-sufficient; otherwise always carry the subject in a graphic.',
         '    Unused fields are "".',
         '',
-        'ILLUSTRATIONS (for visual)',
+        'ILLUSTRATIONS (for visual and for subjects.visualId; pick only when the `about` line honestly matches the subject)',
         ...VISUAL_NAMES.map((n) => `- ${n}: ${VISUALS[n].about}`),
         '',
         'MUSIC TRACKS',
         ...(tracks.length ? tracks.map((m) => `- ${m.slug}: "${m.title}", mood ${m.mood ?? '?'}, energy ${m.energy ?? '?'}/5`) : ['(none: use "")']),
         '',
         'RULES',
+        '- STORY FIRST: the creator\'s idea decides WHAT the video is about. The style decides HOW it looks and feels. When they conflict, follow the creator.',
         '- Stay true to what the creator asked for; keep facts accurate and never invent statistics; when you are unsure of a number, leave it out.',
         '- Never promise results (no "guaranteed", no "will go viral").',
         '- Keep it suitable for all audiences. If the idea asks for something harmful or hateful, write a safe, kind version of it instead.',
         '- Write in the language the creator wrote in.',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 }
+
+const SUBJECT_ROLES = new Set(['protagonist', 'supporting', 'object', 'environment']);
 
 /** Clean one option from Claude (or from the creator's touch-ups) into the shape the builder needs. */
 export function normalizeOption(o, styleId) {
     const scene = drawsOwnScene(styleId);
+    const rawSubjects = Array.isArray(o?.subjects) ? o.subjects : [];
+    const subjects = rawSubjects
+        .map((sb) => {
+            const name = clip(sb?.name, 60);
+            if (!name) return null;
+            const visualId = String(sb?.visualId ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+            return {
+                name,
+                description: clip(sb?.description, 160),
+                role: SUBJECT_ROLES.has(sb?.role) ? sb.role : 'supporting',
+                visualId: VISUAL_NAMES.includes(visualId) ? visualId : '',
+            };
+        })
+        .filter(Boolean)
+        .slice(0, 6);
+    const subjectNames = new Set(subjects.map((sb) => sb.name.toLowerCase()));
     const raw = Array.isArray(o?.scenes) ? o.scenes : [];
     const scenes = raw
         .map((sc, k) => {
@@ -155,7 +218,12 @@ export function normalizeOption(o, styleId) {
                 graphic = text ? { type, text, subtext: clip(sc?.graphicSubtext, 60), items: [] } : null;
             }
             const emphasis = String(sc?.emphasis ?? '').split('|').map(norm).filter(Boolean).slice(0, 3);
-            return { narration, backdrop: scene ? 'scene' : BACKDROP_IDS.includes(sc?.backdrop) ? sc.backdrop : 'abstract', emphasis, graphic };
+            // Scene subject only persists when it matches the registry (keeps references consistent); an
+            // unknown name still carries the scene (we fall back to the empty string).
+            const rawSubject = clip(sc?.subject, 60);
+            const subject = rawSubject && subjectNames.has(rawSubject.toLowerCase()) ? rawSubject : (subjectNames.has(rawSubject.toLowerCase()) ? rawSubject : (subjects[0]?.name ?? ''));
+            const action = clip(sc?.action, 120);
+            return { narration, subject, action, backdrop: scene ? 'scene' : BACKDROP_IDS.includes(sc?.backdrop) ? sc.backdrop : 'abstract', emphasis, graphic };
         })
         .filter(Boolean)
         .slice(0, 10);
@@ -168,8 +236,29 @@ export function normalizeOption(o, styleId) {
         angle: clip(o?.angle, 80),
         mood: MOODS.includes(o?.mood) ? o.mood : 'upbeat',
         musicTrackId: clip(o?.musicTrackId, 80),
+        subjects,
         scenes,
     };
+}
+
+/**
+ * Does the story's subject vocabulary overlap the style's painted mascot vocabulary? Simple word
+ * overlap (case-insensitive, plurals folded). When this returns false for a scene-layout style,
+ * chooseStoryboard auto-sets `edits.sceneOff: true` so the viewer isn't watching the style's fixed
+ * mascot (a jellyfish, say) while hearing about a completely different subject (a blue whale).
+ * Styles whose Scene draws a generic object (a map, a board) declare no mascot subjects and fit anything.
+ */
+export function subjectMatchesMascot(subjects, styleId) {
+    const skill = skillFor(styleId);
+    const mascot = skill?.mascotSubjects ?? [];
+    if (!mascot.length) return true;
+    const fold = (w) => String(w).toLowerCase().replace(/ies$/, 'y').replace(/s$/, '');
+    const storyWords = new Set();
+    for (const sb of subjects ?? []) {
+        for (const w of String(sb?.name ?? '').split(/\s+/)) if (w) storyWords.add(fold(w));
+        for (const w of String(sb?.description ?? '').split(/\s+/)) if (w) storyWords.add(fold(w));
+    }
+    return mascot.some((m) => storyWords.has(fold(m)));
 }
 
 /**

@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRenderProps } from '../src/service/editor/compose.js';
 import {
-    BACKDROP_IDS, STORYBOARD_OPTIONS, STORYBOARD_SCHEMA, buildStoryboardEdit, decorateStoryboardProps, drawsOwnScene, generateStoryboards, normalizeOption,
+    BACKDROP_IDS, STORYBOARD_OPTIONS, STORYBOARD_SCHEMA, buildStoryboardEdit, decorateStoryboardProps, drawsOwnScene, generateStoryboards, normalizeOption, subjectMatchesMascot,
 } from '../src/service/editor/storyboard.service.js';
+import { skillFor } from '../src/service/editor/skills.js';
 
 const rawOption = (extra = {}) => ({
     title: 'The fox who saved the forest',
@@ -86,6 +87,71 @@ test('storyboard render props: a scene per storyboard scene, transitions with so
         assert.equal(quiet.transitions.length, 0);
         assert.equal(quiet.sfx.length, 0);
     }
+});
+
+test('schema v2: storyboards carry a subjects registry; each scene names its subject and action; the registry persists through normalizeOption', () => {
+    const o = normalizeOption(rawOption({
+        subjects: [
+            { name: 'Ember', description: 'small red fox with bright eyes, fast on her feet', role: 'protagonist', visualId: 'plant' },
+            { name: 'the forest', description: 'tall pines, deep green, ancient and quiet', role: 'environment', visualId: '' },
+            { name: 'unknown', description: '', role: 'nope', visualId: 'not_a_real_visual' },
+        ],
+        scenes: [
+            { narration: 'Deep in the forest lived a small red fox named Ember.', subject: 'Ember', action: 'lives quietly in the trees', backdrop: 'nature', emphasis: 'Ember', graphicType: 'visual', graphicText: 'EMBER', graphicSubtext: '', graphicItems: 'plant' },
+            { narration: 'Smoke rose. The fox ran to meet it.', subject: 'Ember', action: 'runs toward the smoke', backdrop: 'nature', emphasis: 'smoke', graphicType: 'headline', graphicText: 'THE FIRE', graphicSubtext: '', graphicItems: '' },
+        ],
+    }), 'glow-sketch');
+    assert.equal(o.subjects.length, 3, 'registry entries are kept (even with invalid role/visualId; those are coerced)');
+    assert.equal(o.subjects[0].role, 'protagonist');
+    assert.equal(o.subjects[0].visualId, 'plant');
+    assert.equal(o.subjects[2].role, 'supporting', 'unknown role falls back');
+    assert.equal(o.subjects[2].visualId, '', 'unknown visualId is dropped');
+    assert.equal(o.scenes[0].subject, 'Ember');
+    assert.equal(o.scenes[0].action, 'lives quietly in the trees');
+    // When Claude forgets the subject field, we fall back to the first registry entry so continuity is kept.
+    const missing = normalizeOption(rawOption({
+        subjects: [{ name: 'Ember', description: 'fox', role: 'protagonist', visualId: '' }],
+        scenes: [{ narration: 'Deep in the forest lived a small red fox named Ember.', backdrop: 'nature', emphasis: '', graphicType: 'none', graphicText: '', graphicSubtext: '', graphicItems: '' }],
+    }), 'glow-sketch');
+    assert.equal(missing.scenes[0].subject, 'Ember');
+});
+
+test('subjectMatchesMascot: Paper Cut jellyfish fits an ocean-jellyfish story but not a blue-whale story; library styles never auto-disable', () => {
+    const whale = [{ name: 'the blue whale', description: 'huge, deep blue, slow and gentle', role: 'protagonist', visualId: '' }];
+    const jelly = [{ name: 'the jellyfish', description: 'a small translucent paper jellyfish', role: 'protagonist', visualId: '' }];
+    assert.equal(subjectMatchesMascot(whale, 'paper-cut'), false, 'a whale story does NOT fit the jellyfish Scene');
+    assert.equal(subjectMatchesMascot(jelly, 'paper-cut'), true, 'a jellyfish story DOES fit');
+    // Impasto Oil declares whale/sea/ocean/wave, so the whale story fits it even though Paper Cut it did not.
+    assert.equal(subjectMatchesMascot(whale, 'impasto-oil'), true);
+    // Watercolour declares koi/fish/pond: a fish story fits even when the word form differs (plural fold).
+    assert.equal(subjectMatchesMascot([{ name: 'tiny fishes in a pond', description: '', role: 'object', visualId: '' }], 'watercolour'), true);
+    // Library styles have no mascotSubjects: they never auto-disable (their Scene is generic).
+    assert.equal(subjectMatchesMascot(whale, 'whiteboard'), true);
+    // An unknown style id is permissive.
+    assert.equal(subjectMatchesMascot(whale, 'not-a-real-style'), true);
+    // Each hand-crafted storytelling style declares a mascot vocabulary (used by the UI notice).
+    for (const id of ['watercolour', 'roman-mosaic', 'sumi-e', 'impasto-oil', 'nocturne-gouache', 'botanical-plate', 'paper-cut', 'art-nouveau', 'golden-hour', 'painted-anime']) {
+        assert.ok((skillFor(id)?.mascotSubjects ?? []).length > 0, `${id} declares mascotSubjects`);
+    }
+});
+
+test('storyboard system prompt follows the story-first architecture: narrative understanding + subjects registry + mascot warning for story-layout styles', async () => {
+    const calls = [];
+    await generateStoryboards({ prompt: 'A blue whale swims toward the surface', styleId: 'paper-cut', lengthSec: 30, tracks: [] }, {
+        request: async (p) => (calls.push(p), { data: { options: [rawOption({ subjects: [{ name: 'the whale', description: 'blue', role: 'protagonist', visualId: '' }] }), rawOption({ title: 'Two', subjects: [{ name: 'x', description: 'y', role: 'object', visualId: '' }] }), rawOption({ title: 'Three', subjects: [{ name: 'x', description: 'y', role: 'object', visualId: '' }] })] }, generationId: 'g1' }),
+    });
+    assert.match(calls[0].system, /NARRATIVE UNDERSTANDING/);
+    assert.match(calls[0].system, /subjects: the registry/);
+    assert.match(calls[0].system, /subject: the name of the subject/);
+    assert.match(calls[0].system, /TECHNICAL REALITY/, 'the mascot warning is sent for story-layout styles');
+    assert.match(calls[0].system, /jellyfish/i, 'the warning names Paper Cut\'s painted subjects');
+    assert.match(calls[0].system, /STORY FIRST/);
+    // A footage-layout style (Glow Sketch) has no painted mascot: no warning.
+    const noScene = [];
+    await generateStoryboards({ prompt: 'A tech workflow', styleId: 'glow-sketch', lengthSec: 30, tracks: [] }, {
+        request: async (p) => (noScene.push(p), { data: { options: [rawOption(), rawOption({ title: 'Two' }), rawOption({ title: 'Three' })] }, generationId: 'g2' }),
+    });
+    assert.doesNotMatch(noScene[0].system, /TECHNICAL REALITY/);
 });
 
 test('Claude writes exactly three storyboards; too few usable ones are asked for again', async () => {

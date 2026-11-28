@@ -206,6 +206,11 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['shimmer', 'sweep_up', 'blip'], slam: ['impact', 'shimmer'], transition: ['sweep_up', 'shimmer'], countEnd: ['chime', 'sparkle'], listItem: ['tick'], listEnd: ['chime'], hook: 'shimmer' },
+        // What the style's painted scene depicts right now (Remotion SVG, same across every story
+        // regardless of narration). When the creator's storyboard is not about any of these, the
+        // ambient is auto-disabled so the viewer is not watching a koi pond while the words describe
+        // something else. See service/editor/storyboard.service.js subjectMatchesMascot.
+        mascotSubjects: ['koi', 'fish', 'pond', 'water', 'ripple'],
     },
     'roman-mosaic': {
         name: 'Roman Mosaic',
@@ -218,6 +223,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 15 },
         dropGraphicTypes: [],
         sfx: { graphic: ['tap', 'click', 'tick'], slam: ['thud', 'impact'], transition: ['swish', 'thud'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'tap' },
+        mascotSubjects: ['turtle', 'mosaic', 'stone', 'tile', 'roman', 'tortoise'],
     },
     'sumi-e': {
         name: 'Sumi-e',
@@ -230,6 +236,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 18, casual: true },
         dropGraphicTypes: ['slam'],
         sfx: { graphic: ['swish', 'shimmer'], transition: ['swish', 'sweep_up'], countEnd: ['chime'], listItem: ['tick'], listEnd: ['chime'], hook: null, volume: 0.8 },
+        mascotSubjects: ['crane', 'bird', 'ink', 'wash', 'mountain', 'mist'],
     },
     'impasto-oil': {
         name: 'Impasto Oil',
@@ -242,6 +249,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['whoosh', 'swoosh'], slam: ['boom', 'impact'], transition: ['whoosh', 'sweep_down'], countEnd: ['chime', 'ding'], listItem: ['tap'], listEnd: ['chime'], hook: 'impact' },
+        mascotSubjects: ['whale', 'wave', 'sea', 'ocean', 'storm', 'water'],
     },
     'nocturne-gouache': {
         name: 'Nocturne Gouache',
@@ -254,6 +262,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['shimmer', 'sparkle', 'blip'], slam: ['impact', 'shimmer'], transition: ['shimmer', 'swish'], countEnd: ['sparkle', 'chime'], listItem: ['tick'], listEnd: ['sparkle'], hook: 'sparkle', volume: 0.85 },
+        mascotSubjects: ['deer', 'firefly', 'night', 'moonlight', 'meadow', 'grass'],
     },
     'botanical-plate': {
         name: 'Botanical Plate',
@@ -266,6 +275,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 17 },
         dropGraphicTypes: [],
         sfx: { graphic: ['tap', 'page', 'tick'], slam: ['tap', 'pop'], transition: ['page', 'swish'], countEnd: ['ding'], listItem: ['tap'], listEnd: ['ding'], hook: 'page' },
+        mascotSubjects: ['butterfly', 'flower', 'plant', 'leaf', 'stem', 'botanical'],
     },
     'paper-cut': {
         name: 'Paper Cut',
@@ -278,6 +288,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['pop', 'snap', 'tap'], slam: ['pop', 'snap'], transition: ['swish', 'swoosh'], countEnd: ['ding', 'coin'], listItem: ['pop'], listEnd: ['ding'], hook: 'pop' },
+        mascotSubjects: ['jellyfish', 'ocean', 'sea', 'underwater', 'paper', 'layer'],
     },
     'art-nouveau': {
         name: 'Art Nouveau',
@@ -290,6 +301,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['chime', 'shimmer', 'page'], slam: ['impact', 'chime'], transition: ['swoosh', 'shimmer'], countEnd: ['chime'], listItem: ['tick'], listEnd: ['chime'], hook: 'chime' },
+        mascotSubjects: ['hummingbird', 'vine', 'flower', 'bird', 'halo', 'poster'],
     },
     'golden-hour': {
         name: 'Golden Hour',
@@ -302,6 +314,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['whoosh', 'swoosh', 'shimmer'], slam: ['boom', 'impact'], transition: ['sweep_up', 'whoosh'], countEnd: ['chime', 'ding'], listItem: ['tap'], listEnd: ['chime'], hook: 'shimmer' },
+        mascotSubjects: ['swallow', 'bird', 'wheat', 'field', 'sunset', 'sun'],
     },
     'painted-anime': {
         name: 'Painted Anime',
@@ -314,6 +327,7 @@ const HAND_STYLES = {
         captions: { maxWords: 3, maxChars: 16 },
         dropGraphicTypes: [],
         sfx: { graphic: ['pop', 'bubble', 'blip'], slam: ['pop', 'impact'], transition: ['swoosh', 'bubble'], countEnd: ['ding', 'coin'], listItem: ['pop'], listEnd: ['success'], hook: 'pop' },
+        mascotSubjects: ['kid', 'child', 'summer', 'field', 'cloud', 'running'],
     },
 };
 
@@ -362,6 +376,11 @@ const LIBRARY_STYLES = Object.fromEntries(
             captions: { maxWords: e.captionLimits?.[0] ?? 3, maxChars: e.captionLimits?.[1] ?? 16 },
             dropGraphicTypes: e.drop ?? [],
             sfx: SFX_PALETTES[e.sfx] ?? SFX_PALETTES.soft,
+            // Library styles declare no mascot vocabulary yet: their Scene components draw generic
+            // objects (a board, a town, a map, a model) rather than a specific creature, so the
+            // subject-fit check is conservative (never auto-disables them). The 10 hand-crafted
+            // storytelling styles above opt in explicitly through mascotSubjects.
+            mascotSubjects: [],
         },
     ]),
 );
@@ -427,6 +446,13 @@ for (const [id, s] of Object.entries(ANIMATION_STYLES)) {
         kind: 'animation',
         category: styleCategory(id),
         plannerRules: `${stylePlannerRules(s)}\n${CATEGORY_RULES[ruleKind(id)]}${styleLayout(id) === 'window' ? "\n- The footage sits in a window of the style's world, not the full frame; callouts point at things inside the footage as usual." : ''}`,
+        /**
+         * What the painted/story Scene draws in the frontend Remotion theme (Watercolour koi,
+         * Paper Cut jellyfish, Nocturne Gouache deer, ...). Used by storyboard.service.js to decide
+         * whether the fixed mascot fits the creator's story. Empty for styles whose Scene draws a
+         * generic object (a map, a board, a town).
+         */
+        mascotSubjects: Array.isArray(s.mascotSubjects) ? Object.freeze([...s.mascotSubjects]) : Object.freeze([]),
         render: {
             // Storytelling and explainer styles draw a scene in place of the camera (see compose.js);
             // explainers keep the creator in a bubble, which the composition places.
