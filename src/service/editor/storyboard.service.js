@@ -2,6 +2,7 @@ import { requestClaudeJson } from '../../lib/anthropic.js';
 import { MUSIC_MOODS } from '../../model/sound-asset.model.js';
 import { SFX_FOR_TRANSITION } from './compose.js';
 import { VISUALS, VISUAL_NAMES, validateEdl } from './edl.js';
+import { semanticMascotFitEnabled, semanticSubjectMatchesMascot } from './semantic-mascot.service.js';
 import { ANIMATION_STYLES, skillFor, styleLayout } from './skills.js';
 
 /**
@@ -262,6 +263,21 @@ export function subjectMatchesMascot(subjects, styleId) {
 }
 
 /**
+ * Async mascot-fit check: uses semantic embeddings when EDITOR_SEMANTIC_MASCOT_FIT is on and the
+ * configured provider answers; otherwise falls back to the word-overlap heuristic (`subjectMatchesMascot`
+ * above). Callers in code paths that can await (chooseStoryboard, worker jobs) should prefer this.
+ * Synchronous callers (validation, tests) keep using the overlap version.
+ */
+export async function subjectMatchesMascotAsync(subjects, styleId) {
+    if (!semanticMascotFitEnabled()) return subjectMatchesMascot(subjects, styleId);
+    const skill = skillFor(styleId);
+    const mascot = skill?.mascotSubjects ?? [];
+    const sem = await semanticSubjectMatchesMascot({ subjects, mascotSubjects: mascot });
+    if (sem !== null) return sem;
+    return subjectMatchesMascot(subjects, styleId);
+}
+
+/**
  * Ask Claude for the three storyboards. `previous` + `note` ask for three new ones that follow the
  * creator's note. Throws when fewer than three usable options come back (after one retry).
  */
@@ -367,10 +383,29 @@ export function decorateStoryboardProps(props, project, edits = {}) {
     const fps = props.fps;
     const total = props.durationInFrames;
     const timing = project.storyboard?.final?.timing ?? [];
+    // The confirmed option carries `subjects[]` (persistent registry) and `scenes[].subject` +
+    // `scenes[].action` (story-first schema v2). Thread them onto each scene so Remotion themes can
+    // draw the right subject (Step 1 of the story-first pipeline: SubjectDraw seam). Also surface
+    // the subject's generative-image assetUrl when Step 3 has populated it.
+    const finalScenes = project.storyboard?.final?.scenes ?? [];
+    const subjects = project.storyboard?.final?.subjects ?? project.storyboard?.subjects ?? [];
+    const subjectByName = new Map(subjects.map((sb) => [String(sb?.name ?? '').toLowerCase(), sb]));
     const scenes = timing.map((s, k) => {
         const startFrame = Math.round(s.start * fps);
         const endFrame = k === timing.length - 1 ? total : Math.round(timing[k + 1].start * fps);
-        return { startFrame, durationFrames: Math.max(1, endFrame - startFrame), backdrop: s.backdrop };
+        const sc = finalScenes[k] ?? {};
+        const subjectName = String(sc.subject ?? '').trim();
+        const sb = subjectByName.get(subjectName.toLowerCase()) ?? null;
+        return {
+            startFrame,
+            durationFrames: Math.max(1, endFrame - startFrame),
+            backdrop: s.backdrop,
+            subject: subjectName,
+            subjectVisualId: sb?.visualId ?? '',
+            subjectRole: sb?.role ?? '',
+            subjectAssetUrl: sb?.assetUrl ?? '',
+            action: String(sc.action ?? ''),
+        };
     });
     const styleId = props.skill?.id;
     const pool = ANIMATION_STYLES[styleId]?.sfx?.transition ?? SFX_FOR_TRANSITION.flash;
@@ -382,6 +417,6 @@ export function decorateStoryboardProps(props, project, edits = {}) {
         transitions,
         sfx,
         music: props.music ? { ...props.music, duck: [] } : null,
-        storyboard: { scenes },
+        storyboard: { scenes, subjects: subjects.map((sb) => ({ name: sb?.name ?? '', description: sb?.description ?? '', role: sb?.role ?? '', visualId: sb?.visualId ?? '', assetUrl: sb?.assetUrl ?? '' })) },
     };
 }

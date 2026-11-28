@@ -17,6 +17,7 @@ import {
     createStoryboard,
     chooseStoryboard,
     regenerateStoryboards,
+    regenerateStoryboardSceneHandler,
 } from '../controller/editor.controller.js';
 
 /** Editor tab: AI edits of the creator's own footage. The QStash job webhook is mounted in app.js. */
@@ -34,6 +35,7 @@ editorRoutes.post('/projects', createEditProject);
 editorRoutes.post('/storyboards', createStoryboard);
 editorRoutes.post('/projects/:id/storyboard/choose', chooseStoryboard);
 editorRoutes.post('/projects/:id/storyboard/regenerate', regenerateStoryboards);
+editorRoutes.post('/projects/:id/storyboard/scenes/:sceneIdx/regenerate', regenerateStoryboardSceneHandler);
 editorRoutes.get('/projects/:id', getEditProject);
 editorRoutes.post('/projects/:id/uploaded', confirmEditUpload);
 editorRoutes.patch('/projects/:id/edits', updateEdits);

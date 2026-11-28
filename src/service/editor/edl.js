@@ -71,6 +71,70 @@ export const VISUALS = Object.freeze({
     calendar: { about: 'a calendar with a marked day: a date, a schedule, consistency, a plan', sfx: 'page' },
     mountain: { about: 'a mountain with a flag on top: a challenge, a journey, a long-term goal', sfx: 'sweep_up' },
     music: { about: 'bouncing music notes: music, a song, sound, rhythm', sfx: 'chime' },
+
+    // --- Story-grade subjects (Stage 2 of the story-first pipeline) ---
+    // Marine
+    whale: { about: 'a massive blue whale swimming: whale, leviathan, ocean giant, deep sea mammal', sfx: 'whoosh' },
+    shark: { about: 'a shark cutting through water: shark, predator, fin, jaws', sfx: 'whoosh' },
+    squid: { about: 'a squid with trailing tentacles: squid, cephalopod, ink', sfx: 'bubble' },
+    octopus: { about: 'an octopus with eight arms: octopus, tentacles, cephalopod', sfx: 'bubble' },
+    dolphin: { about: 'a leaping dolphin: dolphin, porpoise, playful sea mammal', sfx: 'whoosh' },
+    turtle: { about: 'a sea turtle gliding: turtle, tortoise, shell', sfx: 'whoosh' },
+    jellyfish: { about: 'a pulsing jellyfish: jellyfish, medusa, glowing bell and tentacles', sfx: 'bubble' },
+    fish_school: { about: 'a school of small fish swimming together: fish school, shoal, swarm', sfx: 'whoosh' },
+    coral: { about: 'a coral reef: coral, reef, underwater garden', sfx: 'bubble' },
+    submarine: { about: 'a submarine underwater: submarine, submersible, underwater vessel', sfx: 'thud' },
+    underwater_cave: { about: 'an underwater cave or ruins: cave, ruins, sunken temple, grotto', sfx: 'suspense' },
+
+    // Characters
+    person: { about: 'a person standing: person, human, someone, figure', sfx: 'tap' },
+    child: { about: 'a child: kid, child, young person', sfx: 'chime' },
+    elder: { about: 'an older person: elder, grandparent, wise figure', sfx: 'chime' },
+    runner: { about: 'a person running: runner, sprint, athlete in motion', sfx: 'whoosh' },
+    silhouette: { about: 'a human silhouette: silhouette, shadow figure, outline of a person', sfx: 'whoosh' },
+    crowd: { about: 'a crowd of people: crowd, audience in person, group, gathering', sfx: 'chime' },
+
+    // Vehicles and built environment
+    car: { about: 'a car on the road: car, vehicle, automobile, drive', sfx: 'whoosh' },
+    plane: { about: 'an airplane in the sky: plane, aircraft, flight', sfx: 'whoosh' },
+    ship: { about: 'a ship on the sea: ship, boat, vessel, sail', sfx: 'whoosh' },
+    city: { about: 'a city skyline: city, skyline, buildings, urban', sfx: 'tap' },
+    bridge: { about: 'a bridge spanning a gap: bridge, crossing, span', sfx: 'thud' },
+    factory: { about: 'a factory with chimneys: factory, plant, industry, manufacturing', sfx: 'tick' },
+    desk: { about: 'a desk with work on it: desk, workspace, office table', sfx: 'tap' },
+    laptop: { about: 'an open laptop: laptop, notebook computer, screen', sfx: 'blip' },
+
+    // Nature and environment
+    tree: { about: 'a tree: tree, trunk and canopy, woodland tree', sfx: 'whoosh' },
+    forest: { about: 'a dense forest: forest, woods, many trees', sfx: 'whoosh' },
+    river: { about: 'a flowing river: river, stream, flowing water', sfx: 'drip' },
+    desert: { about: 'a desert dune: desert, sand, arid landscape', sfx: 'whoosh' },
+    storm: { about: 'a storm with dark clouds: storm, thunderstorm, tempest', sfx: 'zap' },
+    sun: { about: 'a bright sun: sun, daylight, solar', sfx: 'sparkle' },
+    moon: { about: 'a moon in the night sky: moon, lunar, night light', sfx: 'chime' },
+    stars: { about: 'a field of stars: stars, night sky, constellation', sfx: 'sparkle' },
+    cloud: { about: 'a drifting cloud: cloud, sky, weather', sfx: 'whoosh' },
+    wave: { about: 'an ocean wave cresting: wave, surf, breaker', sfx: 'whoosh' },
+    cave: { about: 'a cave entrance: cave, cavern, dark opening in rock', sfx: 'suspense' },
+
+    // Land flora and fauna
+    bird: { about: 'a bird in flight: bird, wings, flying animal', sfx: 'whoosh' },
+    wolf: { about: 'a wolf: wolf, wild canine, pack animal', sfx: 'whoosh' },
+    deer: { about: 'a deer: deer, stag, antlers', sfx: 'whoosh' },
+    fox: { about: 'a fox: fox, red fox, cunning animal', sfx: 'whoosh' },
+    horse: { about: 'a horse: horse, stallion, galloping animal', sfx: 'whoosh' },
+    lion: { about: 'a lion: lion, big cat, mane', sfx: 'whoosh' },
+    butterfly: { about: 'a butterfly: butterfly, wings, flutter', sfx: 'sparkle' },
+    bee: { about: 'a bee: bee, honeybee, pollinator', sfx: 'blip' },
+    flower: { about: 'a flower in bloom: flower, blossom, bloom', sfx: 'sparkle' },
+    seedling: { about: 'a small seedling: seedling, sprout, young plant', sfx: 'bubble' },
+
+    // Abstract / concept
+    path: { about: 'a winding path forward: path, road ahead, journey line', sfx: 'sweep_up' },
+    door: { about: 'an open door: door, doorway, entrance, opportunity', sfx: 'click' },
+    bridge_concept: { about: 'a conceptual bridge between two ideas: connecting bridge, link, span between points', sfx: 'chime' },
+    clock: { about: 'a clock face: clock, timepiece, hours', sfx: 'tick' },
+    ladder: { about: 'a ladder climbing up: ladder, steps upward, ascent', sfx: 'sweep_up' },
 });
 export const VISUAL_NAMES = Object.keys(VISUALS);
 

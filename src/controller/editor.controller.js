@@ -21,8 +21,12 @@ import { hasEditorAccess } from '../config/flags.js';
 import { SKILLS, isAnimationStyle, isSkill } from '../service/editor/skills.js';
 import { chargeEdit } from '../service/editor/editor-access.service.js';
 import {
-    MAX_STORYBOARD_ROUNDS, PROMPT_LIMITS, STORYBOARD_LENGTHS, buildStoryboardEdit, decorateStoryboardProps, normalizeOption, subjectMatchesMascot,
+    MAX_STORYBOARD_ROUNDS, PROMPT_LIMITS, STORYBOARD_LENGTHS, buildStoryboardEdit, decorateStoryboardProps, normalizeOption, subjectMatchesMascot, subjectMatchesMascotAsync,
 } from '../service/editor/storyboard.service.js';
+import { scheduleSubjectImages, subjectsForDetail } from '../service/editor/generative-images.service.js';
+import { scheduleVisualQa, visualQaEnabled, visualQaForDetail } from '../service/editor/visual-qa.service.js';
+import { makeFrameExtractor } from '../service/editor/frame-sample.service.js';
+import { regenerateStoryboardScene } from '../service/editor/scene-regenerate.service.js';
 
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const MAX_REGENERATIONS = 2;
@@ -83,6 +87,35 @@ async function soundUrls(props) {
     };
 }
 
+/**
+ * Step 3 of the story-first pipeline: rewrite `props.storyboard.subjects[*].assetUrl` into signed URLs
+ * and attach the per-scene `subjectAssetUrl` so Remotion themes with a SubjectDraw seam can draw the
+ * generated image for each scene's subject. No-op when no subject has an assetKey.
+ */
+async function signStoryboardAssets(project, props) {
+    if (props?.kind !== 'storyboard' && !props?.storyboard) return {};
+    const subjects = project.storyboard?.subjects ?? project.storyboard?.final?.subjects ?? [];
+    if (!subjects.length) return {};
+    const signedByName = new Map();
+    for (const sb of subjects) {
+        if (sb?.assetKey) {
+            const url = await sign(sb.assetKey);
+            signedByName.set(String(sb.name ?? '').toLowerCase(), url);
+        }
+    }
+    if (signedByName.size === 0) return {};
+    const storyboard = props.storyboard ?? {};
+    const scenes = (storyboard.scenes ?? []).map((sc) => ({
+        ...sc,
+        subjectAssetUrl: signedByName.get(String(sc.subject ?? '').toLowerCase()) ?? '',
+    }));
+    const sbs = (storyboard.subjects ?? []).map((sb) => ({
+        ...sb,
+        assetUrl: signedByName.get(String(sb.name ?? '').toLowerCase()) ?? '',
+    }));
+    return { storyboard: { ...storyboard, scenes, subjects: sbs } };
+}
+
 const mediaFor = (p) => ({
     words: p.media?.words ?? [],
     silences: p.media?.silences ?? [],
@@ -114,6 +147,16 @@ const storyboardView = (p) =>
             // subject; the UI shows a dismissible notice and the painted scene starts off.
             mascotFits: p.storyboard?.mascotFits ?? null,
             autoDisabledScene: p.storyboard?.autoDisabledScene === true,
+            // Step 3: per-subject generative imagery state. Off entirely when EDITOR_GENIMG_ENABLED
+            // is false; otherwise every subject reports whether its image is ready.
+            subjectImages: {
+                enabled: Boolean(p.storyboard?.subjectImagesPending || p.storyboard?.subjectImagesFinishedAt),
+                pending: Boolean(p.storyboard?.subjectImagesPending),
+                finishedAt: p.storyboard?.subjectImagesFinishedAt ?? null,
+                subjects: subjectsForDetail(p.storyboard),
+            },
+            // Step 4: visual QA advisory. Null when the feature is off or no QA has run yet.
+            visualQa: visualQaForDetail(p.storyboard),
         }
         : null;
 
@@ -189,7 +232,7 @@ async function toDetail(p) {
             graphics: full.graphics.map((g) => ({ type: g.type, text: g.text || g.items.join(', ') })),
             look: full.look,
         };
-        detail.props = { ...props, ...(await soundUrls(props)) };
+        detail.props = { ...props, ...(await soundUrls(props)), ...(await signStoryboardAssets(p, props)) };
         detail.proxyUrl = await sign(p.source?.proxyKey);
         const accepted = new Set(p.plan.acceptedCandidateIds);
         detail.candidates = (p.media?.cutCandidates ?? []).filter((c) => accepted.has(c.id)).map((c) => ({ id: c.id, kind: c.kind, start: c.start, end: c.end, text: c.text ?? null }));
@@ -393,7 +436,7 @@ export const chooseStoryboard = async (req, res, next) => {
         // style's mascot vocabulary, start the edit with the painted scene off so the viewer sees the
         // style's atmosphere and the graphics-driven subject, not an unrelated creature. The creator
         // can turn it back on in the Style panel. autoDisabledScene records why, for the UI notice.
-        const mascotFits = subjectMatchesMascot(option.subjects ?? [], project.skill);
+        const mascotFits = await subjectMatchesMascotAsync(option.subjects ?? [], project.skill);
         const autoDisabledScene = !mascotFits;
         const startingEdits = autoDisabledScene ? { sceneOff: true } : {};
 
@@ -423,8 +466,55 @@ export const chooseStoryboard = async (req, res, next) => {
         if (!done.modifiedCount) throw new ApiError(409, 'This story is already being made.');
         const charged = await chargeEdit(project._id, req.user._id);
         captureServerEvent(String(req.user._id), 'storyboard_confirmed', { project_id: String(project._id), option: index, edited: Boolean(narrations), scenes: option.scenes.length, duration_sec: built.durationSec, charged: charged ?? 'already' });
+        // Step 3 of the story-first pipeline: schedule per-subject image generation when the feature
+        // is turned on and the user's plan grants quota. This is a no-op by default; failures never
+        // block the storyboard.
+        try {
+            const subscription = await getOrCreateSubscription(req.user._id);
+            const plan = effectivePlan(subscription);
+            const reloaded = await EditProject.findById(project._id);
+            await scheduleSubjectImages({ project: reloaded, userPlan: plan });
+        } catch (_err) {
+            // Never block the success path on image scheduling.
+        }
         ok(res, 'Your video is ready', await toDetail((await EditProject.findById(project._id)).toObject()));
     } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Story mode: rewrite ONE confirmed scene from a creator note (Step 4 companion), rebuild the plan,
+ * and keep every other scene byte-identical. Used by the Visual QA "Regenerate this scene" action.
+ */
+export const regenerateStoryboardSceneHandler = async (req, res, next) => {
+    try {
+        assertConfigured();
+        const note = String(req.body?.note ?? '').trim();
+        if (note.length < 3) throw new ApiError(400, 'Tell the editor what to change in this scene.');
+        if (note.length > 500) throw new ApiError(400, 'Keep the note under 500 characters.');
+        const sceneIdx = Number(req.params.sceneIdx);
+        if (!Number.isInteger(sceneIdx) || sceneIdx < 0) throw new ApiError(400, 'Scene index must be a non-negative integer.');
+        const project = await ownedProject(req, { status: EDIT_STATUS.READY, kind: 'storyboard' });
+        const { option, built } = await regenerateStoryboardScene({ project: project.toObject(), sceneIdx, note });
+        project.plan = built.plan;
+        project.media = { ...(project.media ?? {}), words: built.words };
+        project.source = { ...(project.source ?? {}), durationSec: built.durationSec };
+        project.storyboard = {
+            ...(project.storyboard ?? {}),
+            final: { ...option, timing: built.timing },
+            subjects: option.subjects ?? project.storyboard?.subjects ?? [],
+        };
+        project.markModified('storyboard');
+        project.markModified('media');
+        project.markModified('plan');
+        await project.save();
+        captureServerEvent(String(req.user._id), 'storyboard_scene_regenerated', { project_id: String(project._id), scene_idx: sceneIdx });
+        ok(res, 'Scene updated', await toDetail(project.toObject()));
+    } catch (error) {
+        if (error?.message === 'Scene index out of range' || error?.message === 'No confirmed storyboard') {
+            return next(new ApiError(400, error.message));
+        }
         next(error);
     }
 };
@@ -602,6 +692,20 @@ export const getEditRender = async (req, res, next) => {
                 render.progress = 100;
                 render.sizeBytes = p.sizeBytes;
                 render.finishedAt = new Date();
+                // Step 4: kick off multimodal visual QA once the MP4 exists. Dark by default
+                // (EDITOR_VISUAL_QA_ENABLED); failures never affect the download path.
+                if (visualQaEnabled() && project.kind === 'storyboard' && project.storyboard?.final?.timing) {
+                    try {
+                        const extractFrames = makeFrameExtractor({
+                            renderKey: render.key,
+                            timing: project.storyboard.final.timing,
+                            fps: 30,
+                        });
+                        scheduleVisualQa({ projectId: project._id, deps: { extractFrames } });
+                    } catch (_err) {
+                        // Advisory only.
+                    }
+                }
             } else {
                 render.progress = p.progress;
                 if (Date.now() - new Date(render.createdAt).getTime() > 15 * 60 * 1000) {
